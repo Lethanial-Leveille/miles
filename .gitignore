@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 models/*.onnx
 models/*.bin
+models/voiceprint.npy

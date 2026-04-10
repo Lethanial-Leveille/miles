@@ -15,6 +15,7 @@ import anthropic
 from fishaudio import FishAudio
 from fishaudio.utils import save
 from openwakeword.model import Model
+from resemblyzer import VoiceEncoder, preprocess_wav
 
 # Suppress ALSA warnings
 import ctypes
@@ -35,7 +36,6 @@ CHUNK = 1280
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
-RECORD_SECONDS = 4
 WAKE_THRESHOLD = 0.5
 WHISPER_MODEL = os.path.expanduser("~/miles/whisper.cpp/models/ggml-base.en.bin")
 WHISPER_CLI = os.path.expanduser("~/miles/whisper.cpp/build/bin/whisper-cli")
@@ -90,6 +90,12 @@ claude = anthropic.Anthropic()
 print("Connecting to Fish Audio...")
 fish = FishAudio()
 
+print("Loading voice encoder...")
+voice_encoder = VoiceEncoder()
+voiceprint = np.load(os.path.expanduser("~/miles/models/voiceprint.npy"))
+VERIFY_THRESHOLD = 0.72  # cosine similarity, might need to tune this
+
+
 # Conversation history for multi-turn context
 conversation = []
 
@@ -118,11 +124,39 @@ stream = audio.open(
 
 def record_command():
     print("Listening...")
+    
+    VAD_FRAME = 480  # 30ms at 16kHz
+    SILENCE_THRESHOLD = 300  # amplitude below this = silence
+    SILENCE_LIMIT = 3
+    MAX_RECORD = 15
+    MIN_RECORD = 0.5
+    
     frames = []
-    num_chunks = int(RATE / CHUNK * RECORD_SECONDS)
-    for _ in range(num_chunks):
-        data = stream.read(CHUNK, exception_on_overflow=False)
+    silent_chunks = 0
+    chunks_for_silence = int(SILENCE_LIMIT / 0.03)
+    max_chunks = int(MAX_RECORD / 0.03)
+    min_chunks = int(MIN_RECORD / 0.03)
+    total_chunks = 0
+    
+    while total_chunks < max_chunks:
+        data = stream.read(VAD_FRAME, exception_on_overflow=False)
         frames.append(data)
+        total_chunks += 1
+        
+        audio_array = np.frombuffer(data, dtype=np.int16)
+        energy = np.abs(audio_array).mean()
+        
+        if energy < SILENCE_THRESHOLD:
+            silent_chunks += 1
+        else:
+            silent_chunks = 0
+        
+        if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
+            break
+    
+    duration = total_chunks * 0.03
+    print(f"Recorded {duration:.1f}s")
+    
     wf = wave.open(TEMP_WAV, 'wb')
     wf.setnchannels(CHANNELS)
     wf.setsampwidth(audio.get_sample_size(FORMAT))
@@ -177,6 +211,13 @@ def speak(text):
     except Exception as e:
         print(f"TTS error: {e}")
 
+def verify_voice(wav_path):
+    wav = preprocess_wav(wav_path)
+    embedding = voice_encoder.embed_utterance(wav)
+    similarity = np.dot(embedding, voiceprint) / (np.linalg.norm(embedding) * np.linalg.norm(voiceprint))
+    print(f"Voice similarity: {similarity:.3f}")
+    return similarity >= VERIFY_THRESHOLD
+
 # ── Main loop ──
 print("\n=== M.I.L.E.S. v0.2 — Nova is online ===")
 print("Listening for 'hey nova'... (Ctrl+C to stop)\n")
@@ -206,7 +247,15 @@ try:
                     continue
                 
                 print(f"You: {user_text}")
-                
+
+                # Verify voice
+                if not verify_voice(wav_path):
+                    print("Voice not recognized.")
+                    nova_response = "[calmly] That capability requires voice authorization. I don't recognize your voiceprint."
+                    speak(nova_response)
+                    print("Listening for 'hey nova'...")
+                    continue
+
                 # Get Nova's response
                 start = time.time()
                 nova_response = ask_nova(user_text)
