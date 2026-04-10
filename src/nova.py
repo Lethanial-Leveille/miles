@@ -12,6 +12,9 @@ import wave
 import subprocess
 import time
 import anthropic
+import sqlite3
+import re
+from datetime import datetime
 from fishaudio import FishAudio
 from fishaudio.utils import save
 from openwakeword.model import Model
@@ -42,6 +45,46 @@ WHISPER_CLI = os.path.expanduser("~/miles/whisper.cpp/build/bin/whisper-cli")
 TEMP_WAV = os.path.expanduser("~/miles/build/command.wav")
 TEMP_RESPONSE = os.path.expanduser("~/miles/build/response.wav")
 VOICE_ID = "158f6b9781b746ec8c334d9730d302f1"
+
+# ── Database ──
+DB_PATH = os.path.expanduser("~/miles/data/miles.db")
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'explicit',
+            created_at TEXT NOT NULL,
+            last_referenced TEXT,
+            relevance_score REAL NOT NULL DEFAULT 1.0
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            due_at TEXT,
+            completed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
 
 # ── Nova's personality ──
 SYSTEM_PROMPT = """You are Nova. You are the AI voice interface for M.I.L.E.S., a system Lethanial built from scratch. You are extraordinarily intelligent, composed, and self aware. Think JARVIS meets FRIDAY with a hint of Ultron's confidence but none of the villainy.
@@ -84,6 +127,9 @@ print("Starting M.I.L.E.S. v0.2...")
 print("Loading wake word model...")
 wake_model = Model(wakeword_model_paths=[os.path.expanduser("~/miles/models/hey_nova.onnx")])
 
+print("Initializing database...")
+init_db()
+
 print("Connecting to Claude...")
 claude = anthropic.Anthropic()
 
@@ -95,9 +141,6 @@ voice_encoder = VoiceEncoder()
 voiceprint = np.load(os.path.expanduser("~/miles/models/voiceprint.npy"))
 VERIFY_THRESHOLD = 0.72  # cosine similarity, might need to tune this
 
-
-# Conversation history for multi-turn context
-conversation = []
 
 # ── Audio setup ──
 audio = pyaudio.PyAudio()
@@ -127,7 +170,7 @@ def record_command():
     
     VAD_FRAME = 480  # 30ms at 16kHz
     SILENCE_THRESHOLD = 300  # amplitude below this = silence
-    SILENCE_LIMIT = 3
+    SILENCE_LIMIT = 2.5
     MAX_RECORD = 15
     MIN_RECORD = 0.5
     
@@ -173,22 +216,116 @@ def transcribe(wav_path):
     )
     return result.stdout.strip()
 
+def save_memory(content, source="explicit"):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO memories (content, source, created_at) VALUES (?, ?, ?)",
+        (content, source, datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+    print(f"Memory saved ({source}): {content}")
+
+def get_memories(limit=20):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, content FROM memories ORDER BY created_at DESC LIMIT ?",
+        (limit,)
+    )
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def save_message(role, content):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO conversation_history (role, content, created_at) VALUES (?, ?, ?)",
+        (role, content, datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+def get_recent_messages(limit=20):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "SELECT role, content FROM conversation_history ORDER BY id DESC LIMIT ?",
+        (limit,)
+    )
+    rows = c.fetchall()
+    conn.close()
+    # Rows come back newest-first, reverse to get chronological order
+    rows.reverse()
+    return [{"role": role, "content": content} for role, content in rows]
+
 def ask_nova(user_text):
-    conversation.append({"role": "user", "content": user_text})
+    # Save user message to database
+    save_message("user", user_text)
     
-    # Keep conversation history manageable (last 10 exchanges)
-    recent = conversation[-20:]
+    # Build memory context
+    memories = get_memories()
+    memory_block = ""
+    if memories:
+        memory_lines = [f"- {content}" for id, content in memories]
+        memory_block = "\nCURRENT MEMORIES (things you know about Lethanial):\n" + "\n".join(memory_lines) + "\n"
+    
+    # Build enhanced system prompt
+    enhanced_prompt = SYSTEM_PROMPT + memory_block + """
+MEMORY INSTRUCTION:
+If Lethanial shares a personal fact, preference, habit, or anything worth remembering for future conversations, include it in your response wrapped in [MEMORY: ...] tags. Examples:
+- If he says "I just started watching Naruto" you might include [MEMORY: Lethanial is currently watching Naruto]
+- If he says "my exam got moved to Thursday" include [MEMORY: Lethanial's exam moved to Thursday]
+Do NOT mention the memory tag out loud. It will be silently extracted. Only tag genuinely useful facts, not every detail. Do not tag things already in your current memories.
+
+If Lethanial explicitly says "remember" something, that will also be stored separately. You do not need to tag those.
+"""
+    
+    # Get conversation history from database
+    recent = get_recent_messages(20)
     
     response = claude.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=300,
-        system=SYSTEM_PROMPT,
+        system=enhanced_prompt,
         messages=recent
     )
     
     nova_text = response.content[0].text
-    conversation.append({"role": "assistant", "content": nova_text})
-    return nova_text
+    
+    # Extract implicit memories from response
+    clean_response, implicit_memories = extract_memories(nova_text)
+    for mem in implicit_memories:
+        save_memory(mem, source="implicit")
+    
+    # Check for explicit "remember" commands
+    lower_text = user_text.lower()
+    if "remember" in lower_text:
+        # Store everything after "remember" as explicit memory
+        remember_phrases = ["remember that ", "remember ", "remember,"]
+        memory_content = user_text
+        for phrase in remember_phrases:
+            idx = lower_text.find(phrase)
+            if idx != -1:
+                memory_content = user_text[idx + len(phrase):]
+                break
+        if memory_content.strip():
+            save_memory(memory_content.strip(), source="explicit")
+    
+    # Save Nova's clean response to database
+    save_message("assistant", clean_response)
+    
+    return clean_response
+
+def extract_memories(response_text):
+    pattern = r'\[MEMORY:\s*(.+?)\]'
+    memories = re.findall(pattern, response_text)
+    clean_response = re.sub(pattern, '', response_text).strip()
+    # Clean up any double spaces left behind
+    clean_response = re.sub(r'  +', ' ', clean_response)
+    return clean_response, memories
 
 def speak(text):
     try:
