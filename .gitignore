@@ -1,4 +1,4 @@
-build/command.wav
+build/
 whisper.cpp/
 __pycache__/
 *.pyc
