@@ -420,6 +420,68 @@ def verify_voice(wav_path):
     print(f"Voice similarity: {similarity:.3f}")
     return similarity >= VERIFY_THRESHOLD
 
+def listen_for_followup(timeout=10):
+    VAD_FRAME = 480
+    SILENCE_THRESHOLD = 300
+    SPEECH_THRESHOLD = 200
+    timeout_chunks = int(timeout / 0.03)
+    speech_detected = False
+    silent_after_speech = 0
+    chunks_for_silence = int(2.5 / 0.03)
+    max_chunks = int(15 / 0.03)
+    min_chunks = int(0.5 / 0.03)
+    
+    frames = []
+    total_chunks = 0
+    waiting_chunks = 0
+    
+    # Phase 1: wait for speech to start (up to timeout)
+    while waiting_chunks < timeout_chunks:
+        data = stream.read(VAD_FRAME, exception_on_overflow=False)
+        audio_array = np.frombuffer(data, dtype=np.int16)
+        energy = np.abs(audio_array).mean()
+        waiting_chunks += 1
+        
+        if energy > SPEECH_THRESHOLD:
+            # Speech started, switch to recording mode
+            frames.append(data)
+            speech_detected = True
+            break
+    
+    if not speech_detected:
+        return None  # Timeout, no one spoke
+    
+    # Phase 2: record until silence (same as record_command)
+    total_chunks = 1  # already have one frame
+    silent_chunks = 0
+    
+    while total_chunks < max_chunks:
+        data = stream.read(VAD_FRAME, exception_on_overflow=False)
+        frames.append(data)
+        total_chunks += 1
+        
+        audio_array = np.frombuffer(data, dtype=np.int16)
+        energy = np.abs(audio_array).mean()
+        
+        if energy < SILENCE_THRESHOLD:
+            silent_chunks += 1
+        else:
+            silent_chunks = 0
+        
+        if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
+            break
+    
+    duration = (waiting_chunks + total_chunks) * 0.03
+    print(f"Follow up recorded {duration:.1f}s")
+    
+    wf = wave.open(TEMP_WAV, 'wb')
+    wf.setnchannels(CHANNELS)
+    wf.setsampwidth(audio.get_sample_size(FORMAT))
+    wf.setframerate(RATE)
+    wf.writeframes(b''.join(frames))
+    wf.close()
+    return TEMP_WAV
+
 def speak(text):
     with speak_lock:
         try:
@@ -576,7 +638,14 @@ stream = audio.open(
 )
 
 # ── Main loop ──
-print("\n=== M.I.L.E.S. v0.5 — Nova is online ===")
+EXIT_PHRASES = ["that's all", "thats all", "thanks nova", "thank you nova",
+                "we're good", "were good", "goodbye", "good night",
+                "that is all", "i'm done", "im done", "you're dismissed",
+                "dismissed", "peace", "later", "that's it", "thats it",
+                "all good", "we're done", "were done", "i'm good", "im good",
+                "that'll be all", "nothing else", "nah i'm good", "nah im good"]
+
+print("\n=== M.I.L.E.S. v0.6 — Nova is online ===")
 print("Listening for 'hey nova'... (Ctrl+C to stop)\n")
 
 try:
@@ -619,6 +688,53 @@ try:
                 speak(nova_response)
                 tts_time = time.time() - start
                 print(f"(TTS: {tts_time:.2f}s)\n")
+
+                # ── Follow up conversation loop ──
+                in_conversation = True
+                while in_conversation:
+                    print("Listening for follow up... (10s timeout)")
+                    followup_path = listen_for_followup(timeout=10)
+                    
+
+                    if followup_path is None:
+                        print("No follow up. Returning to wake word.\n")
+                        in_conversation = False
+                        break
+
+                    followup_text = transcribe(followup_path)
+                    if not followup_text or "BLANK" in followup_text or "silence" in followup_text.lower():
+                        print("Didn't catch that.\n")
+                        continue
+
+                    print(f"You: {followup_text}")
+
+                    # Check for exit phrases
+                    cleaned = followup_text.lower().strip().rstrip('.')
+                    if cleaned in EXIT_PHRASES:
+                        print("Conversation ended by user.")
+                        farewell = "[calmly] Understood. I'll be here if you need me."
+                        speak(farewell)
+                        in_conversation = False
+                        break
+
+                    # Verify voice on follow up too
+                    if not verify_voice(followup_path):
+                        print("Voice not recognized on follow up.")
+                        nova_response = "[calmly] I don't recognize that voice. Returning to standby."
+                        speak(nova_response)
+                        in_conversation = False
+                        break
+
+                    start = time.time()
+                    nova_response = ask_nova(followup_text)
+                    api_time = time.time() - start
+                    print(f"Nova: {nova_response}")
+                    print(f"(API: {api_time:.2f}s)")
+
+                    start = time.time()
+                    speak(nova_response)
+                    tts_time = time.time() - start
+                    print(f"(TTS: {tts_time:.2f}s)\n")
 
                 print("Listening for 'hey nova'...")
 
