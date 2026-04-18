@@ -1,11 +1,59 @@
 import os
-os.environ["ONNXRUNTIME_DISABLE_GPU"] = "1"
-os.environ["JACK_NO_START_SERVER"] = "1"
+import sys
+import ctypes
 import warnings
-warnings.filterwarnings("ignore")
 import logging
+from contextlib import contextmanager
+
+# ── Environment flags (set before any audio/ML imports) ──
+os.environ["JACK_NO_START_SERVER"] = "1"
+os.environ["ORT_LOGGING_LEVEL"] = "3"  # onnxruntime: errors only
+
+# ── Python level silencing ──
+warnings.filterwarnings("ignore")
 logging.disable(logging.WARNING)
 
+# ── Native ALSA error handler (proper C signature) ──
+_ALSA_HANDLER = ctypes.CFUNCTYPE(
+    None,
+    ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p
+)
+def _alsa_silent(filename, line, function, err, fmt):
+    pass
+_alsa_cb = _ALSA_HANDLER(_alsa_silent)
+try:
+    _asound = ctypes.cdll.LoadLibrary("libasound.so.2")
+    _asound.snd_lib_error_set_handler(_alsa_cb)
+except OSError:
+    pass
+
+# ── Native JACK error/info handlers ──
+_JACK_HANDLER = ctypes.CFUNCTYPE(None, ctypes.c_char_p)
+def _jack_silent(msg):
+    pass
+_jack_cb = _JACK_HANDLER(_jack_silent)
+try:
+    _jack = ctypes.cdll.LoadLibrary("libjack.so.0")
+    _jack.jack_set_error_function(_jack_cb)
+    _jack.jack_set_info_function(_jack_cb)
+except OSError:
+    pass
+
+# ── Context manager to swallow native stderr for noisy calls ──
+@contextmanager
+def silence_stderr():
+    sys.stderr.flush()
+    saved = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
+        os.close(devnull)
+
+# ── Imports ──
 import pyaudio
 import numpy as np
 import wave
@@ -20,8 +68,11 @@ import threading
 from datetime import datetime
 from fishaudio import FishAudio
 from fishaudio.utils import save
-from openwakeword.model import Model
-from resemblyzer import VoiceEncoder, preprocess_wav
+
+# Wrap imports that probe devices or load ONNX models so init noise is swallowed
+with silence_stderr():
+    from openwakeword.model import Model
+    from resemblyzer import VoiceEncoder, preprocess_wav
 
 # ── Config ──
 CHUNK = 1280
@@ -430,50 +481,50 @@ def listen_for_followup(timeout=10):
     chunks_for_silence = int(2.5 / 0.03)
     max_chunks = int(15 / 0.03)
     min_chunks = int(0.5 / 0.03)
-    
+
     frames = []
     total_chunks = 0
     waiting_chunks = 0
-    
+
     # Phase 1: wait for speech to start (up to timeout)
     while waiting_chunks < timeout_chunks:
         data = stream.read(VAD_FRAME, exception_on_overflow=False)
         audio_array = np.frombuffer(data, dtype=np.int16)
         energy = np.abs(audio_array).mean()
         waiting_chunks += 1
-        
+
         if energy > SPEECH_THRESHOLD:
             # Speech started, switch to recording mode
             frames.append(data)
             speech_detected = True
             break
-    
+
     if not speech_detected:
         return None  # Timeout, no one spoke
-    
+
     # Phase 2: record until silence (same as record_command)
     total_chunks = 1  # already have one frame
     silent_chunks = 0
-    
+
     while total_chunks < max_chunks:
         data = stream.read(VAD_FRAME, exception_on_overflow=False)
         frames.append(data)
         total_chunks += 1
-        
+
         audio_array = np.frombuffer(data, dtype=np.int16)
         energy = np.abs(audio_array).mean()
-        
+
         if energy < SILENCE_THRESHOLD:
             silent_chunks += 1
         else:
             silent_chunks = 0
-        
+
         if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
             break
-    
+
     duration = (waiting_chunks + total_chunks) * 0.03
     print(f"Follow up recorded {duration:.1f}s")
-    
+
     wf = wave.open(TEMP_WAV, 'wb')
     wf.setnchannels(CHANNELS)
     wf.setsampwidth(audio.get_sample_size(FORMAT))
@@ -497,8 +548,9 @@ def speak(text):
             )
             audio_bytes = audio_stream.collect()
             save(audio_bytes, TEMP_RESPONSE)
-            subprocess.run(["aplay", "-D", "plughw:2,0", TEMP_RESPONSE],
-                           capture_output=True)
+            with silence_stderr():
+                subprocess.run(["aplay", "-D", "plughw:2,0", TEMP_RESPONSE],
+                               capture_output=True)
         except Exception as e:
             print(f"TTS error: {e}")
 
@@ -598,9 +650,10 @@ Do NOT invent weather data or any external data. Always use the action tag and w
     return clean_response
 
 # ── Initialize ──
-print("Starting M.I.L.E.S. v0.5...")
+print("Starting M.I.L.E.S. v0.6...")
 print("Loading wake word model...")
-wake_model = Model(wakeword_model_paths=[os.path.expanduser("~/miles/models/hey_nova.onnx")])
+with silence_stderr():
+    wake_model = Model(wakeword_model_paths=[os.path.expanduser("~/miles/models/hey_nova.onnx")])
 
 print("Initializing database...")
 init_db()
@@ -612,10 +665,13 @@ print("Connecting to Fish Audio...")
 fish = FishAudio()
 
 print("Loading voice encoder...")
-voice_encoder = VoiceEncoder()
+with silence_stderr():
+    voice_encoder = VoiceEncoder()
 voiceprint = np.load(os.path.expanduser("~/miles/models/voiceprint.npy"))
 
-audio = pyaudio.PyAudio()
+with silence_stderr():
+    audio = pyaudio.PyAudio()
+
 mic_index = None
 for i in range(audio.get_device_count()):
     info = audio.get_device_info_by_index(i)
@@ -628,14 +684,15 @@ if mic_index is None:
     print("Razer mic not found!")
     exit(1)
 
-stream = audio.open(
-    format=FORMAT,
-    channels=CHANNELS,
-    rate=RATE,
-    input=True,
-    input_device_index=mic_index,
-    frames_per_buffer=CHUNK
-)
+with silence_stderr():
+    stream = audio.open(
+        format=FORMAT,
+        channels=CHANNELS,
+        rate=RATE,
+        input=True,
+        input_device_index=mic_index,
+        frames_per_buffer=CHUNK
+    )
 
 # ── Main loop ──
 EXIT_PHRASES = ["that's all", "thats all", "thanks nova", "thank you nova",
@@ -694,7 +751,7 @@ try:
                 while in_conversation:
                     print("Listening for follow up... (10s timeout)")
                     followup_path = listen_for_followup(timeout=10)
-                    
+
 
                     if followup_path is None:
                         print("No follow up. Returning to wake word.\n")
