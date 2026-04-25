@@ -89,3 +89,30 @@ def get_recent_messages(limit=20):
     conn.close()
     rows.reverse()
     return [{"role": role, "content": content} for role, content in rows]
+
+
+def delete_memory(memory_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    return deleted > 0
+
+
+def get_history(limit: int = 50, offset: int = 0) -> list:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "SELECT role, content, created_at, source_device FROM conversation_history"
+        " ORDER BY id DESC LIMIT ? OFFSET ?",
+        (limit, offset)
+    )
+    rows = c.fetchall()
+    conn.close()
+    rows.reverse()
+    return [
+        {"role": r, "content": c, "created_at": t, "source_device": d}
+        for r, c, t, d in rows
+    ]
