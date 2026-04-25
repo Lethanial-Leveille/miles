@@ -6,3 +6,5 @@ models/*.onnx
 models/*.bin
 models/voiceprint.npy
 data/
+CLAUDE.md
+.env
