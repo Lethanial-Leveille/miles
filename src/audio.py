@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import ctypes
 import warnings
 import logging
@@ -56,8 +57,7 @@ import pyaudio
 import numpy as np
 import wave
 import subprocess
-from fishaudio import FishAudio
-from fishaudio.utils import save
+from elevenlabs.client import ElevenLabs
 
 with silence_stderr():
     from openwakeword.model import Model
@@ -65,10 +65,14 @@ with silence_stderr():
 
 from config import (
     CHUNK, CHANNELS, RATE,
-    WHISPER_MODEL, WHISPER_CLI, TEMP_WAV, TEMP_RESPONSE,
+    WHISPER_MODEL, WHISPER_CLI, TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH,
-    VOICE_ID, SPEAKER_DEVICE, speak_lock,
+    ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID,
+    DEFAULT_TTS_MODEL, TTS_OUTPUT_FORMAT,
+    EMMA_NEUTRAL, SPEAKER_DEVICE, speak_lock,
 )
+
+_BRACKET_CUE = re.compile(r'\[.*?\]')
 
 FORMAT = pyaudio.paInt16
 
@@ -82,8 +86,8 @@ with silence_stderr():
     voice_encoder = VoiceEncoder()
 voiceprint = np.load(VOICEPRINT_PATH)
 
-print("Connecting to Fish Audio...")
-fish = FishAudio()
+print("Connecting to ElevenLabs...")
+_elevenlabs = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 with silence_stderr():
     _audio = pyaudio.PyAudio()
@@ -225,33 +229,46 @@ def verify_voice(wav_path):
     return similarity >= VERIFY_THRESHOLD
 
 
-def speak(text):
+def speak(text, voice_settings=None, model=None):
     with speak_lock:
-        clean = text.strip()
+        clean = _BRACKET_CUE.sub('', text).strip()
+        if not clean:
+            return
         if not clean.endswith(('?', '!', '.')):
             clean += '.'
 
+        settings  = voice_settings or EMMA_NEUTRAL
+        tts_model = model or DEFAULT_TTS_MODEL
+
         try:
-            audio_stream = fish.tts.stream(
+            audio_iter = _elevenlabs.text_to_speech.stream(
+                voice_id=ELEVENLABS_VOICE_ID,
                 text=clean,
-                reference_id=VOICE_ID,
-                format="wav",
-                latency="balanced",
+                model_id=tts_model,
+                voice_settings=settings,
+                output_format=TTS_OUTPUT_FORMAT,
             )
-            audio_bytes = audio_stream.collect()
         except Exception as e:
-            print(f"TTS error (Fish Audio): {e}")
+            print(f"TTS error (ElevenLabs): {e}")
             return
+
+        aplay = subprocess.Popen(
+            [
+                "aplay", "-D", SPEAKER_DEVICE,
+                "-f", "S16_LE", "-r", "22050", "-c", "1",
+                "--buffer-size=8192", "--period-size=1024",
+            ],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
 
         try:
-            save(audio_bytes, TEMP_RESPONSE)
+            for chunk in audio_iter:
+                if chunk:
+                    aplay.stdin.write(chunk)
+                    aplay.stdin.flush()
         except Exception as e:
-            print(f"TTS error (saving WAV): {e}")
-            return
-
-        result = subprocess.run(
-            ["aplay", "-D", SPEAKER_DEVICE, TEMP_RESPONSE],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            print(f"aplay error: {result.stderr.strip()}")
+            print(f"TTS playback error: {e}")
+        finally:
+            aplay.stdin.close()
+            aplay.wait()
