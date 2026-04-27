@@ -53,11 +53,7 @@ try:
             start        = time.time()
             nova_response = ask_nova(user_text)
             print(f"Nova: {nova_response}")
-            print(f"(API: {time.time() - start:.2f}s)")
-
-            start = time.time()
-            audio.speak(nova_response)
-            print(f"(TTS: {time.time() - start:.2f}s)\n")
+            print(f"(Total: {time.time() - start:.2f}s)\n")
 
             # ── Follow up conversation loop ──
             in_conversation = True
@@ -93,11 +89,7 @@ try:
                 start        = time.time()
                 nova_response = ask_nova(followup_text)
                 print(f"Nova: {nova_response}")
-                print(f"(API: {time.time() - start:.2f}s)")
-
-                start = time.time()
-                audio.speak(nova_response)
-                print(f"(TTS: {time.time() - start:.2f}s)\n")
+                print(f"(Total: {time.time() - start:.2f}s)\n")
 
             print("Listening for 'hey nova'...")
 
