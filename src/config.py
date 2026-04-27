@@ -1,5 +1,6 @@
 import os
 import threading
+from elevenlabs import VoiceSettings
 
 # ── Audio hardware ──
 CHUNK = 1280          # 80ms frames, required by openWakeWord
@@ -18,7 +19,34 @@ VOICEPRINT_PATH = os.path.expanduser("~/miles/models/voiceprint.npy")
 DB_PATH         = os.path.expanduser("~/miles/data/miles.db")
 
 # ── External services ──
-VOICE_ID         = "158f6b9781b746ec8c334d9730d302f1"
+
+# ROLLBACK: Fish Audio config preserved for emergency rollback
+# VOICE_ID = "158f6b9781b746ec8c334d9730d302f1"
+
+# ElevenLabs TTS configuration (v0.7.1)
+ELEVENLABS_API_KEY    = os.environ.get("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID   = os.environ.get("ELEVENLABS_VOICE_ID")
+DEFAULT_TTS_MODEL     = "eleven_flash_v2_5"
+EXPRESSIVE_TTS_MODEL  = "eleven_v3"
+TTS_OUTPUT_FORMAT     = "pcm_22050"
+LOOKAHEAD_CHARS       = 50
+ACTION_PREFIX         = "[ACTION:"
+
+EMMA_NEUTRAL = VoiceSettings(
+    stability=0.50, similarity_boost=0.75, style=0.00,
+    use_speaker_boost=True, speed=1.00,
+)
+
+EMMA_WITTY = VoiceSettings(
+    stability=0.30, similarity_boost=0.75, style=0.35,
+    use_speaker_boost=True, speed=1.05,
+)
+
+EMMA_SERIOUS = VoiceSettings(
+    stability=0.65, similarity_boost=0.80, style=0.00,
+    use_speaker_boost=True, speed=0.95,
+)
+
 WEATHER_API_KEY  = os.environ.get("WEATHER_API_KEY")
 DEFAULT_LOCATION = "Gainesville"
 SPEAKER_DEVICE   = "plughw:0,0"
