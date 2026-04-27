@@ -72,7 +72,10 @@ from config import (
     EMMA_NEUTRAL, SPEAKER_DEVICE, speak_lock,
 )
 
-_BRACKET_CUE = re.compile(r'\[.*?\]')
+CHIME_PATH = os.path.expanduser("~/miles/assets/wake_chime.wav")
+
+_BRACKET_CUE  = re.compile(r'\[.*?\]')
+_MILES_ACRONYM = re.compile(r'\b(?:M\.I\.L\.E\.S\.?|MILES)\b')
 
 FORMAT = pyaudio.paInt16
 
@@ -229,9 +232,20 @@ def verify_voice(wav_path):
     return similarity >= VERIFY_THRESHOLD
 
 
+def play_chime():
+    # Fire-and-forget: no speak_lock so it never blocks timer/reminder threads.
+    # record_command() starts immediately while the chime plays in the background.
+    subprocess.Popen(
+        ["aplay", "-D", SPEAKER_DEVICE, CHIME_PATH],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def speak(text, voice_settings=None, model=None):
     with speak_lock:
         clean = _BRACKET_CUE.sub('', text).strip()
+        clean = _MILES_ACRONYM.sub('Miles', clean)
         if not clean:
             return
         if not clean.endswith(('?', '!', '.')):

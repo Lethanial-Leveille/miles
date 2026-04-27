@@ -35,6 +35,7 @@ try:
                 audio.stream.read(CHUNK, exception_on_overflow=False)
             audio.wake_model.reset()
 
+            audio.play_chime()
             wav_path  = audio.record_command()
             user_text = audio.transcribe(wav_path)
 
