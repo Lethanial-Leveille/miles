@@ -2,122 +2,164 @@
 
 **Modular Intelligent Learning and Execution System**
 
-A voice activated personal AI assistant running on a Raspberry Pi 5, featuring custom wake word detection, on device speech recognition, speaker verification, persistent memory, and an extensible action system for external integrations.
+A voice activated personal AI assistant running on a Raspberry Pi 5, featuring custom wake word detection, on device speech recognition, speaker verification, persistent memory, Claude API streaming, ElevenLabs TTS, and a native Swift companion app accessible from anywhere in the world.
 
-Built from the ground up as an exploration of full stack systems engineering, spanning embedded hardware, real time audio processing, machine learning inference, cloud APIs, and (in progress) a native Swift companion app.
+Built from the ground up as an exploration of full stack systems engineering, spanning embedded hardware, real time audio processing, machine learning inference, cloud APIs, and a native iOS mobile app.
 
 ---
 
 ## Demo
 
-*Video demo coming soon*
+Watch the full system demo (voice + companion app): [linkedin.com/in/lethanial-lee-leveille](https://www.linkedin.com/in/lethanial-lee-leveille)
+
+Companion app repo: [github.com/Lethanial-Leveille/miles-app](https://github.com/Lethanial-Leveille/miles-app)
 
 ---
 
 ## What It Does
 
-Say "Hey Nova" and the Pi wakes up, listens to your command, verifies your voice matches the registered user, processes the request through an LLM, and speaks a response back through the speaker. Nova handles multi turn conversations without requiring the wake word between follow ups, remembers facts across sessions, manages timers and reminders, and fetches real world data like weather.
+Say "Hey Nova" and the Pi wakes up, plays a 320ms audio chime, listens to your command, verifies your voice matches the registered user, streams the request through Claude, and speaks a natural response back through the speaker via ElevenLabs Emma. Nova handles multi turn conversations without requiring the wake word between follow ups, remembers facts across sessions, and manages timers and reminders.
+
+You can also text Nova from anywhere in the world through the native iOS companion app, which shares the same backend brain on the Pi.
 
 Sample interactions:
-- "Hey Nova, what's the weather in Miami?"
-- "Set a timer for fifteen minutes."
-- "Remind me to push my code at nine pm."
-- "I just finished episode thirty of Bleach." *(silently stored as a memory for future conversations)*
+
+* "Hey Nova, what's the weather in Miami?"
+* "Set a timer for fifteen minutes."
+* "Remind me to push my code at nine pm."
+* "I just finished episode thirty of Bleach." *(stored as a memory for future conversations)*
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Raspberry Pi 5 (8GB)                        │
-│                                                                  │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────────┐  │
-│  │  USB Mic │──▶│ Wake Word│──▶│  Whisper │──▶│  Resemblyzer │  │
-│  │          │   │ (ONNX)   │   │  (C++)   │   │  (Speaker    │  │
-│  │          │   │          │   │          │   │   Verify)    │  │
-│  └──────────┘   └──────────┘   └──────────┘   └──────┬───────┘  │
-│                                                       │          │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────▼───────┐  │
-│  │  Speaker │◀──│Fish Audio│◀──│  Claude  │◀──│   SQLite     │  │
-│  │          │   │   TTS    │   │   API    │   │  (Memory +   │  │
-│  │          │   │          │   │          │   │   History)   │  │
-│  └──────────┘   └──────────┘   └──────────┘   └──────────────┘  │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                    ┌─────────┴──────────┐
-                    │  External Services │
-                    │  • OpenWeatherMap  │
-                    │  • Claude (LLM)    │
-                    │  • Fish Audio (TTS)│
-                    └────────────────────┘
++------------------------------------------------------------------+
+|                      Raspberry Pi 5 (8GB)                        |
+|                                                                  |
+|  +----------+   +----------+   +----------+   +--------------+  |
+|  |  USB Mic |-->| Wake Word|-->|  Whisper |-->|  Resemblyzer |  |
+|  |  (Razer) |   | (ONNX)   |   |  .cpp    |   |  (Speaker    |  |
+|  |          |   |          |   |          |   |   Verify)    |  |
+|  +----------+   +----------+   +----------+   +------+-------+  |
+|                                                       |          |
+|  +----------+   +----------+   +----------+   +------v-------+  |
+|  |  Speaker |<--|ElevenLabs|<--|  Claude  |<--|   SQLite     |  |
+|  |  (aplay) |   |   TTS    |   |Streaming |   |  (Memory +   |  |
+|  |          |   |  (Emma)  |   |   API    |   |   History)   |  |
+|  +----------+   +----------+   +----------+   +--------------+  |
+|                                                                  |
+|  +------------------------------------------------------------+  |
+|  | FastAPI + JWT -- Cloudflare Tunnel -- miles.lethanial.com  |  |
+|  +------------------------------------------------------------+  |
++------------------------------------------------------------------+
+                              |
+                    +---------+----------+
+                    |  External Services |
+                    |  * Anthropic Claude|
+                    |  * ElevenLabs Emma |
+                    |  * OpenWeatherMap  |
+                    +--------------------+
 ```
 
 ---
 
 ## Pipeline
 
-1. **Wake Word Detection** — openWakeWord runs a custom ONNX model continuously on the CPU, listening for "Hey Nova" (90.4% recall, 2.7 false activations per hour).
-2. **Voice Activity Detection** — Energy based VAD records until 2.5 seconds of silence, with dynamic duration (0.5s minimum, 15s maximum) instead of a fixed window.
-3. **Speech to Text** — Whisper.cpp compiled from source with NEON ARM optimizations, using the base.en model with greedy decoding. Sub one second latency for typical voice commands.
-4. **Speaker Verification** — Resemblyzer generates a 256 dimensional voice embedding and compares it against the registered voiceprint using cosine similarity. Unauthorized voices are politely rejected.
-5. **LLM Processing** — Claude Sonnet receives the transcribed command along with injected long term memories and recent conversation history. A structured tag system lets Claude request external actions (weather lookups, timers, reminders) inline.
-6. **Action Execution** — Regex parser extracts action tags, dispatches to handlers, and for data fetching actions, makes a second LLM call with real world data so the response is delivered naturally.
-7. **Text to Speech** — Fish Audio S2 Pro synthesizes audio with emotion tags for natural prosody. Streaming response with thread safe audio playback.
-8. **Multi Turn Conversation** — After responding, Nova stays active for ten seconds, listening for follow ups without requiring the wake word again.
+1. **Wake Word Detection** — openWakeWord runs a custom ONNX model (hey_nova.onnx, 90.4% recall) continuously on CPU, listening for "Hey Nova."
+2. **Wake Chime** — A 320ms two note ascending tone (C5 to G5) plays immediately on detection via aplay, before recording begins. Gives instant feedback.
+3. **Voice Activity Detection** — Energy based VAD records until silence, with dynamic duration.
+4. **Speech to Text** — Whisper.cpp compiled from source with NEON ARM optimizations, base.en model, greedy decoding. On device, no cloud dependency.
+5. **Speaker Verification** — Resemblyzer generates a 256 dimensional voice embedding and compares against the registered voiceprint via cosine similarity (threshold: 0.65). Unauthorized voices are rejected.
+6. **LLM Streaming** — Claude claude-sonnet-4-5 receives the command with injected memories and conversation history. Uses stop_sequences for action tag detection. StreamRouter buffers the first 50 characters to guard against false bracket matches before flushing to TTS.
+7. **Action Execution** — Action tags trigger a second Claude call with real world data (weather, timer state, etc.) so responses are delivered naturally with context.
+8. **TTS Streaming** — ElevenLabs Emma (Flash v2.5, pcm_22050) streams audio chunks directly to aplay via stdin. stdin.flush() after every chunk eliminates 1.5s phantom buffer latency. Time to first audio: ~520ms after VAD endpoint.
+9. **Multi Turn** — Nova stays active post response, listening for follow ups without requiring the wake word.
 
 ---
 
 ## Tech Stack
 
 **Hardware**
-- Raspberry Pi 5 (8GB)
-- Razer Seiren V3 Mini USB condenser microphone
-- USB speakers via 3.5mm audio adapter
+* Raspberry Pi 5 (8GB), headless Raspberry Pi OS Lite 64-bit
+* Razer Seiren V3 Mini USB condenser microphone
+* USB speakers via 3.5mm audio adapter
 
 **Languages**
-- Python (main pipeline, orchestration)
-- C++ (Whisper.cpp inference engine)
-- Swift / SwiftUI (companion app, in progress)
+* Python 3.13 (pipeline, backend, orchestration)
+* Swift / SwiftUI (companion app, separate repo)
 
 **ML / Audio**
-- openWakeWord (custom wake word, ONNX runtime)
-- Whisper.cpp (on device speech recognition)
-- Resemblyzer (speaker verification via voice embeddings)
+* openWakeWord (custom hey_nova.onnx, ONNX runtime)
+* Whisper.cpp (on device STT, NEON ARM optimized)
+* Resemblyzer (speaker verification via voice embeddings)
+* PyAudio (mic input)
+* aplay / ALSA (audio output)
 
-**Backend / APIs**
-- Anthropic Claude API (LLM)
-- Fish Audio (text to speech)
-- OpenWeatherMap (transitioning to Apple WeatherKit in v0.7)
+**Backend**
+* FastAPI (REST + WebSocket server)
+* JWT authentication (HS256, 7 day tokens)
+* SQLite with WAL mode (memory, history, reminders)
+* Cloudflare Tunnel (secure remote access at miles.lethanial.com)
+* systemd (three services on boot: voice loop, server, tunnel)
 
-**Data**
-- SQLite with WAL mode (memory, conversation history, reminders)
-
-**In Progress (v0.7)**
-- FastAPI (REST + WebSocket server for cross device access)
-- JWT authentication
-- Cloudflare Tunnel (secure remote access)
-- Swift companion app with FaceID
+**APIs**
+* Anthropic Claude claude-sonnet-4-5 (LLM, streaming)
+* ElevenLabs Emma Flash v2.5 (TTS, streaming PCM)
+* OpenWeatherMap (weather data)
 
 ---
 
 ## Key Engineering Decisions
 
-**Latency optimization: 9s → sub 1s transcription**
-Switched Whisper from default beam search to greedy decoding and selected the base.en model as the right tradeoff between accuracy and speed for the Pi's CPU constraints.
+**Sub 520ms time to first audio**
+Achieved through greedy Whisper decoding over beam search, streaming TTS with direct aplay pipe instead of file writes, and a 50 character StreamRouter lookahead that begins TTS before the full Claude response completes.
+
+**Hybrid stop_sequences + StreamRouter pattern**
+Claude streaming uses stop_sequences=["[ACTION:"] to halt generation at action tags, while StreamRouter handles false positive brackets in prose via lookahead buffering. Both problems need different solutions and were solved independently.
 
 **LLM driven intent classification**
-Instead of regex keyword matching for memory storage and action triggering, all classification is delegated to Claude via prompt engineering. The system understands "what's it like outside" as a weather request without containing the word "weather."
-
-**Extensible action system**
-New integrations (timers, reminders, weather) require only three changes: a handler function, an elif branch in the router, and a line in the system prompt. Designed to scale to 25+ integrations over future versions.
+Intent detection is delegated entirely to Claude via prompt engineering. The system understands "what's it like outside" as a weather request without hardcoded keyword matching. New intents require only a system prompt update.
 
 **On device voice biometrics**
-Speaker verification runs locally with no cloud dependency. A 256 dimensional voice embedding is compared via cosine similarity on every command, including follow up messages in multi turn conversations.
+Speaker verification runs locally via Resemblyzer. A 256 dimensional embedding is compared via cosine similarity on every command, including follow up turns in multi turn conversations.
 
-**Thread safety for concurrent audio**
-Background timer and reminder threads use a shared lock to prevent audio collision when alerts fire during active conversations.
+**Dashboard managed Cloudflare Tunnel**
+Migrated from local YAML config to Cloudflare Zero Trust dashboard management. No local config files to maintain, no port forwarding, no home network exposure.
+
+**ElevenLabs stdin.flush() discovery**
+Omitting flush() after every audio chunk write caused a 1.5 second phantom buffer delay even with streaming enabled. Flushing after each chunk reduced TTFA by approximately 1.5 seconds with no other changes.
+
+---
+
+## API Endpoints
+
+The FastAPI server is live at `https://miles.lethanial.com`.
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/auth/login` | POST | No | Issue JWT |
+| `/auth/refresh` | POST | Yes | Refresh token |
+| `/chat` | POST | Yes | Send message, get Nova response |
+| `/memories` | GET | Yes | Fetch persistent memory bank |
+| `/memories/{id}` | DELETE | Yes | Remove a memory |
+| `/history` | GET | Yes | Paginated conversation log |
+| `/status` | GET | Yes | Backend health and version |
+| `/ws` | WebSocket | Yes | Real time connection (auth via first message) |
+| `/docs` | GET | No | Swagger UI |
+
+---
+
+## Performance
+
+| Metric | Value |
+|--------|-------|
+| Wake word recall | 90.4% |
+| False activations | ~2.7 per hour |
+| Whisper transcription (base.en, greedy) | 0.8 to 1.5 seconds |
+| Time to first audio after VAD endpoint | ~520ms |
+| Voice verification cosine similarity (registered) | 0.65 to 0.85 |
+| ElevenLabs Flash v2.5 model TTFB | ~50ms |
 
 ---
 
@@ -131,20 +173,10 @@ Background timer and reminder threads use a shared lock to prevent audio collisi
 | v0.4 | Persistent memory + conversation history | Complete |
 | v0.5 | Action system (weather, timers, reminders) | Complete |
 | v0.6 | Multi turn conversations | Complete |
-| v0.7 | Swift companion app + remote access | In Progress |
-| v0.8+ | Scheduled briefings, Mac control, Apple ecosystem integrations | Planned |
-
----
-
-## Performance
-
-| Metric | Value |
-|--------|-------|
-| Wake word recall | 90.4% |
-| Whisper transcription (base.en, greedy) | 0.8 to 1.9 seconds |
-| Claude API response | 1.5 to 4.0 seconds |
-| Voice verification (cosine similarity) | 0.60 to 0.85 for registered voice |
-| End to end latency | 4 to 20 seconds |
+| v0.7 | FastAPI backend + Cloudflare Tunnel + JWT | Complete |
+| v0.7.1 | ElevenLabs migration + StreamRouter + wake chime | Complete |
+| v0.8 | Nova iOS companion app shipped | Complete |
+| v0.9+ | ESP32 satellite mics, Apple ecosystem, GPU satellite compute | Planned |
 
 ---
 
@@ -153,25 +185,39 @@ Background timer and reminder threads use a shared lock to prevent audio collisi
 ```
 miles/
 ├── src/
-│   ├── nova.py              Main voice pipeline
-│   ├── enroll.py            Voice enrollment script
-│   ├── wake_test.py         Wake word testing utility
-│   └── claude_test.py       Claude API connection test
-├── models/
-│   ├── hey_nova.onnx        Custom wake word model
-│   └── voiceprint.npy       Registered voiceprint (gitignored)
-├── data/
-│   └── miles.db             SQLite database (gitignored)
+│   ├── voice_main.py        Main voice pipeline entry point
+│   ├── config.py            Environment config and constants
+│   ├── brain.py             Claude API integration and streaming
+│   ├── stream_router.py     50-char lookahead TTS buffer router
+│   ├── audio.py             Mic capture, playback, VAD
+│   ├── server.py            FastAPI app, all endpoints
+│   ├── auth.py              JWT issue and verification
+│   ├── database.py          SQLite memory and history operations
+│   ├── parsing.py           Action tag extraction and dispatch
+│   ├── actions.py           Action handlers (weather, timers, etc.)
+│   ├── prompts.py           System prompt definitions
+│   └── enroll.py            Voice enrollment utility
+├── assets/
+│   └── wake_chime.wav       320ms two-note ascending chime
 ├── .gitignore
 └── README.md
 ```
 
-Sensitive files (API keys, voiceprint, database, compiled Whisper binaries) are gitignored.
+Sensitive files (`.env` with API keys, `voiceprint.npy`, `miles.db`, Whisper binaries) are gitignored.
 
 ---
 
-## Author
+## Companion App
 
-**Lethanial Leveille**
-Computer Engineering, University of Florida, Class of 2029
+The Nova iOS companion app is a separate repo:
+[github.com/Lethanial-Leveille/miles-app](https://github.com/Lethanial-Leveille/miles-app)
+
+Native SwiftUI, zero third party dependencies, FaceID auth, Keychain JWT storage, speech input via SFSpeechRecognizer. Both the room mic and the app talk to the same FastAPI backend.
+
+---
+
+## About
+
+Built by **Lethanial Leveille**, Computer Engineering student at the University of Florida, Class of 2029. Targeting embedded and firmware engineering.
+
 [LinkedIn](https://www.linkedin.com/in/lethanial-lee-leveille/) · [GitHub](https://github.com/Lethanial-Leveille)
