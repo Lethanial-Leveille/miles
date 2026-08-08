@@ -9,7 +9,7 @@ from stream_router import StreamRouter
 
 claude = anthropic.AsyncAnthropic()
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-sonnet-4-5-20250929"
 
 
 async def _tts_consumer(queue: asyncio.Queue, text_parts: list) -> None:
