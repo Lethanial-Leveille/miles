@@ -1,15 +1,16 @@
 import time
 import numpy as np
 
-# audio import triggers hardware init and ALSA silencing
+# audio import triggers mic/wake word hardware init and ALSA silencing
 import audio
+import tts
 import actions
 from brain import ask_nova
 from database import init_db
 from config import CHUNK, WAKE_THRESHOLD, EXIT_PHRASES
 
 # Wire the speak callback so timer/reminder alerts play audio
-actions.set_speak_fn(audio.speak)
+actions.set_speak_fn(tts.speak)
 
 print("Starting M.I.L.E.S. v0.7...")
 print("Initializing database...")
@@ -35,7 +36,7 @@ try:
                 audio.stream.read(CHUNK, exception_on_overflow=False)
             audio.wake_model.reset()
 
-            audio.play_chime()
+            tts.play_chime()
             wav_path  = audio.record_command()
             user_text = audio.transcribe(wav_path)
 
@@ -47,7 +48,7 @@ try:
 
             if not audio.verify_voice(wav_path):
                 print("Voice not recognized.")
-                audio.speak("[calmly] That capability requires voice authorization. I don't recognize your voiceprint.")
+                tts.speak("[calmly] That capability requires voice authorization. I don't recognize your voiceprint.")
                 print("Listening for 'hey nova'...")
                 continue
 
@@ -77,13 +78,13 @@ try:
                 cleaned = followup_text.lower().strip().rstrip('.')
                 if cleaned in EXIT_PHRASES:
                     print("Conversation ended by user.")
-                    audio.speak("[calmly] Understood. I'll be here if you need me.")
+                    tts.speak("[calmly] Understood. I'll be here if you need me.")
                     in_conversation = False
                     break
 
                 if not audio.verify_voice(followup_path):
                     print("Voice not recognized on follow up.")
-                    audio.speak("[calmly] I don't recognize that voice. Returning to standby.")
+                    tts.speak("[calmly] I don't recognize that voice. Returning to standby.")
                     in_conversation = False
                     break
 

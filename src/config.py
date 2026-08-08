@@ -49,7 +49,11 @@ EMMA_SERIOUS = VoiceSettings(
 
 WEATHER_API_KEY  = os.environ.get("WEATHER_API_KEY")
 DEFAULT_LOCATION = "Gainesville"
-SPEAKER_DEVICE   = "plughw:0,0"
+
+# ALSA card numbers shift between boots, so the speaker is resolved by name
+# at runtime in tts.py rather than hardcoded here. This is just the name to
+# search for in /proc/asound/cards.
+SPEAKER_NAME_HINT = "AB13X"
 
 # ── Shared state ──
 speak_lock = threading.Lock()

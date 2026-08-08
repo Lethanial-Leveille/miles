@@ -1,7 +1,7 @@
 import os
 import sys
-import re
 import ctypes
+import fcntl
 import warnings
 import logging
 from contextlib import contextmanager
@@ -57,7 +57,6 @@ import pyaudio
 import numpy as np
 import wave
 import subprocess
-from elevenlabs.client import ElevenLabs
 
 with silence_stderr():
     from openwakeword.model import Model
@@ -67,15 +66,7 @@ from config import (
     CHUNK, CHANNELS, RATE,
     WHISPER_MODEL, WHISPER_CLI, TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH,
-    ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID,
-    DEFAULT_TTS_MODEL, TTS_OUTPUT_FORMAT,
-    EMMA_NEUTRAL, SPEAKER_DEVICE, speak_lock,
 )
-
-CHIME_PATH = os.path.expanduser("~/miles/assets/wake_chime.wav")
-
-_BRACKET_CUE  = re.compile(r'\[.*?\]')
-_MILES_ACRONYM = re.compile(r'\b(?:M\.I\.L\.E\.S\.?|MILES)\b')
 
 FORMAT = pyaudio.paInt16
 
@@ -89,8 +80,26 @@ with silence_stderr():
     voice_encoder = VoiceEncoder()
 voiceprint = np.load(VOICEPRINT_PATH)
 
-print("Connecting to ElevenLabs...")
-_elevenlabs = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+# ── Mic lock ──
+# Exclusive OS level lock, held for the life of this process. Guards against
+# a future regression where some other process (like the FastAPI server)
+# tries to open the mic again. Without this, a conflict shows up as PyAudio
+# silently dropping the busy device from its enumeration, which then looks
+# like a missing microphone instead of the real cause.
+MIC_LOCK_PATH = os.path.expanduser("~/miles/build/mic.lock")
+
+def _acquire_mic_lock():
+    lock_fd = open(MIC_LOCK_PATH, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"Mic is already locked by another process. See {MIC_LOCK_PATH}. Refusing to open a second capture stream.")
+        raise SystemExit(1)
+    lock_fd.write(str(os.getpid()))
+    lock_fd.flush()
+    return lock_fd
+
+_mic_lock_fd = _acquire_mic_lock()
 
 with silence_stderr():
     _audio = pyaudio.PyAudio()
@@ -230,59 +239,3 @@ def verify_voice(wav_path):
     )
     print(f"Voice similarity: {similarity:.3f}")
     return similarity >= VERIFY_THRESHOLD
-
-
-def play_chime():
-    # Fire-and-forget: no speak_lock so it never blocks timer/reminder threads.
-    # record_command() starts immediately while the chime plays in the background.
-    subprocess.Popen(
-        ["aplay", "-D", SPEAKER_DEVICE, CHIME_PATH],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-
-def speak(text, voice_settings=None, model=None):
-    with speak_lock:
-        clean = _BRACKET_CUE.sub('', text).strip()
-        clean = _MILES_ACRONYM.sub('Miles', clean)
-        if not clean:
-            return
-        if not clean.endswith(('?', '!', '.')):
-            clean += '.'
-
-        settings  = voice_settings or EMMA_NEUTRAL
-        tts_model = model or DEFAULT_TTS_MODEL
-
-        try:
-            audio_iter = _elevenlabs.text_to_speech.stream(
-                voice_id=ELEVENLABS_VOICE_ID,
-                text=clean,
-                model_id=tts_model,
-                voice_settings=settings,
-                output_format=TTS_OUTPUT_FORMAT,
-            )
-        except Exception as e:
-            print(f"TTS error (ElevenLabs): {e}")
-            return
-
-        aplay = subprocess.Popen(
-            [
-                "aplay", "-D", SPEAKER_DEVICE,
-                "-f", "S16_LE", "-r", "22050", "-c", "1",
-                "--buffer-size=8192", "--period-size=1024",
-            ],
-            stdin=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-
-        try:
-            for chunk in audio_iter:
-                if chunk:
-                    aplay.stdin.write(chunk)
-                    aplay.stdin.flush()
-        except Exception as e:
-            print(f"TTS playback error: {e}")
-        finally:
-            aplay.stdin.close()
-            aplay.wait()

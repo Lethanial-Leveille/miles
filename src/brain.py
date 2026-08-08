@@ -1,6 +1,6 @@
 import asyncio
 import anthropic
-from audio import speak
+from tts import speak
 from prompts import build_enhanced_prompt, SYSTEM_PROMPT
 from database import save_message, get_memories, get_recent_messages, save_memory
 from parsing import extract_memories
