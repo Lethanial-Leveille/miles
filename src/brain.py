@@ -1,9 +1,9 @@
 import asyncio
 import anthropic
 from tts import speak
-from prompts import build_enhanced_prompt, SYSTEM_PROMPT
-from database import save_message, get_memories, get_recent_messages, save_memory
-from parsing import extract_memories
+from prompts import build_enhanced_prompt
+from database import save_message, get_seed_memories, get_episodic_memories, get_recent_messages, save_memory
+from parsing import extract_memories, strip_leading_bracket_cue
 from actions import execute_actions
 from stream_router import StreamRouter
 
@@ -19,6 +19,7 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list) -> None:
         sentence = await queue.get()
         if sentence is None:
             break
+        sentence = strip_leading_bracket_cue(sentence)
         text_parts.append(sentence)
         # speak() blocks (holds speak_lock + waits for aplay), so run in a thread
         await loop.run_in_executor(None, speak, sentence)
@@ -43,8 +44,9 @@ def _parse_action_tag(tag: str) -> dict:
 
 async def ask_nova_async(user_text: str, device: str = "pi") -> str:
     save_message("user", user_text, device=device)
-    memory_rows     = get_memories()
-    enhanced_prompt = build_enhanced_prompt(memory_rows)
+    seed_rows       = get_seed_memories()
+    episodic_rows   = get_episodic_memories()
+    enhanced_prompt = build_enhanced_prompt(seed_rows, episodic_rows, device)
     recent          = get_recent_messages(20)
 
     sentence_queue = asyncio.Queue()
@@ -57,7 +59,7 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
     accumulated = ""
     async with claude.messages.stream(
         model=MODEL,
-        max_tokens=300,
+        max_tokens=1000,
         system=enhanced_prompt,
         messages=recent,
     ) as stream:
@@ -66,10 +68,11 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
             await router.feed(text)
 
     accumulated, explicit_mems, implicit_mems = extract_memories(accumulated)
+    accumulated = strip_leading_bracket_cue(accumulated)
     for mem in explicit_mems:
-        save_memory(mem, source="explicit")
+        save_memory(mem, source="explicit", status="active")
     for mem in implicit_mems:
-        save_memory(mem, source="implicit")
+        save_memory(mem, source="implicit", status="pending")
 
     if router.action_tag:
         await router.finalize()
@@ -106,8 +109,8 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
             final_text = ""
             async with claude.messages.stream(
                 model=MODEL,
-                max_tokens=300,
-                system=SYSTEM_PROMPT,
+                max_tokens=1000,
+                system=enhanced_prompt,
                 messages=followup_messages,
             ) as stream2:
                 async for text in stream2.text_stream:
@@ -117,6 +120,7 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
             await router2.finalize()
             await tts_task2
             final_text, _, _ = extract_memories(final_text)
+            final_text = strip_leading_bracket_cue(final_text)
         else:
             # Timer / reminder / cancel: TTS already spoke the confirmation
             final_text = " ".join(spoken_parts) or "Done."

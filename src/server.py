@@ -10,8 +10,8 @@ from jose import JWTError
 from auth import verify_password, create_token, decode_token
 from brain import ask_nova
 from database import (
-    init_db, get_memories, delete_memory,
-    get_history,
+    init_db, get_active_memories, get_pending_memories,
+    approve_memory, delete_memory, get_history,
 )
 
 app = FastAPI(title="M.I.L.E.S. API", version="0.7")
@@ -70,8 +70,27 @@ def chat(body: ChatRequest, user: str = Depends(get_current_user)):
 
 @app.get("/memories")
 def list_memories(user: str = Depends(get_current_user)):
-    rows = get_memories(limit=100)
-    return [{"id": row[0], "content": row[1]} for row in rows]
+    rows = get_active_memories(limit=100)
+    return [
+        {"id": r[0], "content": r[1], "category": r[2], "source": r[3], "confidence": r[4], "status": r[5]}
+        for r in rows
+    ]
+
+
+@app.get("/memories/pending")
+def list_pending_memories(user: str = Depends(get_current_user)):
+    rows = get_pending_memories(limit=100)
+    return [
+        {"id": r[0], "content": r[1], "category": r[2], "source": r[3], "confidence": r[4]}
+        for r in rows
+    ]
+
+
+@app.post("/memories/{memory_id}/approve")
+def approve_pending_memory(memory_id: int, user: str = Depends(get_current_user)):
+    if not approve_memory(memory_id):
+        raise HTTPException(status_code=404, detail="Pending memory not found")
+    return {"approved": True}
 
 
 @app.delete("/memories/{memory_id}")

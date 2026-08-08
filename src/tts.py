@@ -25,7 +25,7 @@ def _resolve_speaker_device(name_hint, fallback="plughw:0,0"):
         with open("/proc/asound/cards") as f:
             cards = f.read()
     except OSError:
-        print(f"Could not read /proc/asound/cards, falling back to {fallback}")
+        print(f"Could not read /proc/asound/cards, falling back to {fallback}", flush=True)
         return fallback
 
     # Each card is two lines: " N [ID  ]: driver - description" then an
@@ -36,10 +36,10 @@ def _resolve_speaker_device(name_hint, fallback="plughw:0,0"):
         if match and name_hint in block:
             card_num = int(match.group(1))
             device = f"plughw:{card_num},0"
-            print(f"Found speaker: {name_hint} ({device})")
+            print(f"Found speaker: {name_hint} ({device})", flush=True)
             return device
 
-    print(f"Speaker '{name_hint}' not found, falling back to {fallback}")
+    print(f"Speaker '{name_hint}' not found, falling back to {fallback}", flush=True)
     return fallback
 
 
@@ -77,7 +77,7 @@ def speak(text, voice_settings=None, model=None):
                 output_format=TTS_OUTPUT_FORMAT,
             )
         except Exception as e:
-            print(f"TTS error (ElevenLabs): {e}")
+            print(f"TTS error (ElevenLabs): {e}", flush=True)
             return
 
         aplay = subprocess.Popen(
@@ -96,7 +96,7 @@ def speak(text, voice_settings=None, model=None):
                     aplay.stdin.write(chunk)
                     aplay.stdin.flush()
         except Exception as e:
-            print(f"TTS playback error: {e}")
+            print(f"TTS playback error: {e}", flush=True)
         finally:
             aplay.stdin.close()
             aplay.wait()

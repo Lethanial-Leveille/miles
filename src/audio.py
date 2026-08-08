@@ -71,11 +71,11 @@ from config import (
 FORMAT = pyaudio.paInt16
 
 # ── Hardware init ──
-print("Loading wake word model...")
+print("Loading wake word model...", flush=True)
 with silence_stderr():
     wake_model = Model(wakeword_model_paths=[WAKE_MODEL_PATH])
 
-print("Loading voice encoder...")
+print("Loading voice encoder...", flush=True)
 with silence_stderr():
     voice_encoder = VoiceEncoder()
 voiceprint = np.load(VOICEPRINT_PATH)
@@ -93,7 +93,7 @@ def _acquire_mic_lock():
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        print(f"Mic is already locked by another process. See {MIC_LOCK_PATH}. Refusing to open a second capture stream.")
+        print(f"Mic is already locked by another process. See {MIC_LOCK_PATH}. Refusing to open a second capture stream.", flush=True)
         raise SystemExit(1)
     lock_fd.write(str(os.getpid()))
     lock_fd.flush()
@@ -109,11 +109,11 @@ for i in range(_audio.get_device_count()):
     info = _audio.get_device_info_by_index(i)
     if "Razer" in info["name"] or "Seiren" in info["name"]:
         mic_index = i
-        print(f"Found mic: {info['name']} (index {i})")
+        print(f"Found mic: {info['name']} (index {i})", flush=True)
         break
 
 if mic_index is None:
-    print("Razer mic not found!")
+    print("Razer mic not found!", flush=True)
     raise SystemExit(1)
 
 with silence_stderr():
@@ -130,7 +130,7 @@ with silence_stderr():
 # ── Audio functions ──
 
 def record_command():
-    print("Listening...")
+    print("Listening...", flush=True)
 
     VAD_FRAME         = 480
     SILENCE_THRESHOLD = 200
@@ -159,7 +159,7 @@ def record_command():
         if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
             break
 
-    print(f"Recorded {total_chunks * 0.03:.1f}s")
+    print(f"Recorded {total_chunks * 0.03:.1f}s", flush=True)
     _write_wav(frames)
     return TEMP_WAV
 
@@ -207,7 +207,7 @@ def listen_for_followup(timeout=10):
         if total_chunks > min_chunks and silent_chunks >= int(SILENCE_LIMIT / 0.03):
             break
 
-    print(f"Follow up recorded {(waiting_chunks + total_chunks) * 0.03:.1f}s")
+    print(f"Follow up recorded {(waiting_chunks + total_chunks) * 0.03:.1f}s", flush=True)
     _write_wav(frames)
     return TEMP_WAV
 
@@ -237,5 +237,5 @@ def verify_voice(wav_path):
     similarity = np.dot(embedding, voiceprint) / (
         np.linalg.norm(embedding) * np.linalg.norm(voiceprint)
     )
-    print(f"Voice similarity: {similarity:.3f}")
+    print(f"Voice similarity: {similarity:.3f}", flush=True)
     return similarity >= VERIFY_THRESHOLD
