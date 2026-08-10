@@ -5,6 +5,9 @@ __pycache__/
 models/*.onnx
 models/*.bin
 models/voiceprint.npy
+models/enrollment.npz
+*.npy
+*.npz
 data/
 CLAUDE.md
 .env

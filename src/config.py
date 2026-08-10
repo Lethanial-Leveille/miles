@@ -9,6 +9,51 @@ RATE = 16000
 WAKE_THRESHOLD = 0.4
 VERIFY_THRESHOLD = 0.5
 
+# ── Voice activity detection ──
+# webrtcvad replaces the bare amplitude threshold that used to gate capture.
+# Amplitude cannot tell speech from a running AC unit, which is what drove the
+# runaway follow up loop on Aug 10 2026.
+#
+# Mode runs 0 (permissive) to 3 (aggressive about rejecting non speech).
+# Resemblyzer uses 3 internally for offline trimming, where clipping a soft
+# onset costs nothing. Live capture is less forgiving, so 2 here.
+VAD_MODE = 2
+
+# Audio retained from before speech onset is detected. Without this, the frames
+# containing a soft leading consonant are discarded before capture starts, which
+# is what truncated "What year do I graduate?" down to "year do I graduate?".
+VAD_PREROLL_MS = 300
+
+# Consecutive speech frames required to declare onset, so a single click or
+# keyboard tap cannot open a recording.
+VAD_ONSET_FRAMES = 2
+
+# Discarded from the mic after Nova finishes speaking, on top of draining
+# whatever accumulated during playback.
+#
+# aplay's ALSA buffer holds roughly 185ms after writing stops, and in a shared
+# enclosure the mic will also pick up structure borne ring after the cone
+# stops moving. Raise this once there is an enclosure to measure: record Nova
+# speaking, find where her energy actually ends in the mic signal relative to
+# when aplay exits, and set the margin above that.
+TTS_FLUSH_MARGIN_MS = 250
+
+# ── Enrollment ──
+# Resemblyzer embeddings are unstable below roughly three seconds of voiced
+# audio. The previous voiceprint was poisoned by a sample ("Lock in") that
+# trimmed to well under a second, so this is enforced at record time.
+MIN_VOICED_SECONDS    = 4.0
+ENROLL_RECORD_SECONDS = 8
+
+# ── Mic gain ──
+# Tuned Aug 10 2026 to peak -10.3 dBFS on worst case close range projected
+# speech, persisted with alsactl store. Checked at startup and logged, because
+# a silent revert corrupts collected data in a way that only shows up days
+# later as inexplicably low scores.
+EXPECTED_MIC_GAIN    = 23
+MIC_MIXER_CARD       = "0"
+MIC_MIXER_CONTROL    = "Mic"
+
 # ── Paths ──
 WHISPER_MODEL   = os.path.expanduser("~/miles/whisper.cpp/models/ggml-base.en.bin")
 WHISPER_CLI     = os.path.expanduser("~/miles/whisper.cpp/build/bin/whisper-cli")
@@ -16,6 +61,10 @@ TEMP_WAV        = os.path.expanduser("~/miles/build/command.wav")
 TEMP_RESPONSE   = os.path.expanduser("~/miles/build/response.wav")
 WAKE_MODEL_PATH = os.path.expanduser("~/miles/models/hey_nova.onnx")
 VOICEPRINT_PATH = os.path.expanduser("~/miles/models/voiceprint.npy")
+# Individual enrollment embeddings plus condition labels, kept so the centroid
+# can be recomputed or analyzed without re recording. The old enrollment saved
+# only the mean, which is why a poisoned sample could not be identified later.
+ENROLLMENT_DATA_PATH = os.path.expanduser("~/miles/models/enrollment.npz")
 DB_PATH         = os.path.expanduser("~/miles/data/miles.db")
 
 # ── External services ──
@@ -57,6 +106,14 @@ SPEAKER_NAME_HINT = "AB13X"
 
 # ── Shared state ──
 speak_lock = threading.Lock()
+
+# ── Conversation loop ──
+# Hard ceiling on consecutive follow up turns before the loop returns to wake
+# word state, independent of what the VAD decides. Bounds the blast radius of
+# a runaway loop to a fixed number of Claude calls and TTS syntheses. Six sits
+# above the deepest genuine conversation observed in production (four follow
+# ups) with headroom to spare.
+MAX_FOLLOWUP_TURNS = 6
 
 # ── Conversation exit phrases ──
 EXIT_PHRASES = [

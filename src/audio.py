@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import ctypes
 import fcntl
@@ -57,18 +58,71 @@ import pyaudio
 import numpy as np
 import wave
 import subprocess
+from collections import deque
 
 with silence_stderr():
     from openwakeword.model import Model
     from resemblyzer import VoiceEncoder, preprocess_wav
+    from resemblyzer.hparams import sampling_rate as RESEMBLYZER_SR
+    import webrtcvad
 
 from config import (
     CHUNK, CHANNELS, RATE,
     WHISPER_MODEL, WHISPER_CLI, TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH,
+    VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES,
+    EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL,
+    TTS_FLUSH_MARGIN_MS,
 )
+from database import log_verification
 
 FORMAT = pyaudio.paInt16
+
+# ── Voice activity detection ──
+# webrtcvad accepts only 10, 20, or 30ms frames. 480 samples at 16kHz is
+# exactly 30ms, which is what the capture loops already read, so the frame
+# size did not have to change to adopt this.
+VAD_FRAME     = 480
+VAD_FRAME_MS  = 30
+_vad          = webrtcvad.Vad(VAD_MODE)
+
+PREROLL_FRAMES = VAD_PREROLL_MS // VAD_FRAME_MS
+
+
+def _is_speech(frame):
+    """True when webrtcvad classifies this 30ms frame as speech.
+
+    Spectral rather than amplitude based, so steady broadband noise (an AC
+    unit) reads as non speech no matter how loud it is. Not speaker aware:
+    a television still counts as speech."""
+    return _vad.is_speech(frame, RATE)
+
+
+def flush_input(margin_ms=None):
+    """Discard buffered mic input after Nova speaks.
+
+    The input stream fills the whole time she is talking, so her own voice is
+    waiting in the buffer when the next listen begins. webrtcvad classifies it
+    as speech, correctly, and opens a recording on it. That is the same
+    runaway the AC used to cause, except a spectral VAD cannot reject this one
+    because Nova's voice really is speech. A shared mic and speaker enclosure
+    makes it worse by adding a structure borne path.
+
+    Drains what is queued rather than discarding a fixed duration: a ten
+    second response leaves ten seconds buffered, and a fixed flush would leave
+    most of it in place."""
+    margin_ms = TTS_FLUSH_MARGIN_MS if margin_ms is None else margin_ms
+
+    while True:
+        available = stream.get_read_available()
+        if available < VAD_FRAME:
+            break
+        # Capped at what is actually available so this can never block.
+        stream.read(min(available, 4096), exception_on_overflow=False)
+
+    # Reading in real time both waits out the tail and throws it away.
+    for _ in range(int(margin_ms / VAD_FRAME_MS)):
+        stream.read(VAD_FRAME, exception_on_overflow=False)
 
 # ── Hardware init ──
 print("Loading wake word model...", flush=True)
@@ -132,8 +186,6 @@ with silence_stderr():
 def record_command():
     print("Listening...", flush=True)
 
-    VAD_FRAME         = 480
-    SILENCE_THRESHOLD = 200
     SILENCE_LIMIT     = 3.0
     MAX_RECORD        = 15
     MIN_RECORD        = 1.0
@@ -150,11 +202,13 @@ def record_command():
         frames.append(data)
         total_chunks += 1
 
-        energy = np.abs(np.frombuffer(data, dtype=np.int16)).mean()
-        if energy < SILENCE_THRESHOLD:
-            silent_chunks += 1
-        else:
+        # Endpoint on speech absence rather than quiet. Room noise loud enough
+        # to stay above an amplitude floor used to hold the recording open
+        # until MAX_RECORD.
+        if _is_speech(data):
             silent_chunks = 0
+        else:
+            silent_chunks += 1
 
         if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
             break
@@ -165,49 +219,61 @@ def record_command():
 
 
 def listen_for_followup(timeout=10):
-    VAD_FRAME         = 480
-    SILENCE_THRESHOLD = 200
-    SPEECH_THRESHOLD  = 150
     SILENCE_LIMIT     = 3.0
     timeout_chunks    = int(timeout / 0.03)
     max_chunks        = int(15 / 0.03)
     min_chunks        = int(0.5 / 0.03)
 
-    frames         = []
+    # Sized to hold the full pre roll plus the frames that confirm onset, so
+    # the kept audio starts VAD_PREROLL_MS before the first speech frame
+    # rather than at it.
+    preroll = deque(maxlen=PREROLL_FRAMES + VAD_ONSET_FRAMES)
+
     waiting_chunks = 0
+    speech_chunks  = 0
     speech_started = False
 
     # Phase 1: wait up to timeout for speech to begin
     while waiting_chunks < timeout_chunks:
-        data   = stream.read(VAD_FRAME, exception_on_overflow=False)
-        energy = np.abs(np.frombuffer(data, dtype=np.int16)).mean()
+        data = stream.read(VAD_FRAME, exception_on_overflow=False)
+        preroll.append(data)
         waiting_chunks += 1
-        if energy > SPEECH_THRESHOLD:
-            frames.append(data)
+
+        if _is_speech(data):
+            speech_chunks += 1
+        else:
+            speech_chunks = 0
+
+        if speech_chunks >= VAD_ONSET_FRAMES:
             speech_started = True
             break
 
     if not speech_started:
         return None
 
+    frames = list(preroll)
+
     # Phase 2: record until silence (mirrors record_command)
-    total_chunks  = 1
+    total_chunks  = len(frames)
     silent_chunks = 0
     while total_chunks < max_chunks:
         data   = stream.read(VAD_FRAME, exception_on_overflow=False)
         frames.append(data)
         total_chunks += 1
 
-        energy = np.abs(np.frombuffer(data, dtype=np.int16)).mean()
-        if energy < SILENCE_THRESHOLD:
-            silent_chunks += 1
-        else:
+        if _is_speech(data):
             silent_chunks = 0
+        else:
+            silent_chunks += 1
 
         if total_chunks > min_chunks and silent_chunks >= int(SILENCE_LIMIT / 0.03):
             break
 
-    print(f"Follow up recorded {(waiting_chunks + total_chunks) * 0.03:.1f}s", flush=True)
+    # Counts written frames only. This used to add waiting_chunks, reporting
+    # time spent waiting for speech as though it were recorded audio, which is
+    # why the logs showed follow ups of 11 to 13 seconds that were nothing of
+    # the sort. The wav itself was always correct.
+    print(f"Follow up recorded {total_chunks * 0.03:.1f}s", flush=True)
     _write_wav(frames)
     return TEMP_WAV
 
@@ -230,12 +296,171 @@ def transcribe(wav_path):
     return result.stdout.strip()
 
 
-def verify_voice(wav_path):
+_MIXER_VALUE = re.compile(r'Capture (\d+) \[(\d+)%\](?: \[([-\d.]+)dB\])?')
+
+
+def log_mic_gain():
+    """Print the capture gain at startup and shout if it has drifted.
+
+    ALSA settings can revert on a kernel or firmware update, or if alsactl
+    restore runs against a stale state file. A silent revert does not fail
+    loudly, it just quietly halves the data quality of everything recorded
+    afterward, so it gets checked where it will be seen."""
+    try:
+        result = subprocess.run(
+            ["amixer", "-c", MIC_MIXER_CARD, "sget", MIC_MIXER_CONTROL],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"Mic gain check failed to run: {exc}", flush=True)
+        return None
+
+    match = _MIXER_VALUE.search(result.stdout)
+    if not match:
+        print(f"Mic gain check could not parse amixer output for "
+              f"card {MIC_MIXER_CARD} control {MIC_MIXER_CONTROL}.", flush=True)
+        return None
+
+    value   = int(match.group(1))
+    percent = match.group(2)
+    db      = match.group(3)
+    detail  = f"{value} [{percent}%]" + (f" [{db}dB]" if db else "")
+
+    if value == EXPECTED_MIC_GAIN:
+        print(f"Mic gain: {detail}", flush=True)
+    else:
+        print(f"WARNING: mic gain is {detail}, expected {EXPECTED_MIC_GAIN}. "
+              f"Capture level has changed and logged data from this session is "
+              f"not comparable to earlier runs. Restore with: "
+              f"amixer -c {MIC_MIXER_CARD} sset {MIC_MIXER_CONTROL} "
+              f"{EXPECTED_MIC_GAIN} && sudo alsactl store", flush=True)
+    return value
+
+
+def measure_acoustics(wav_path):
+    """Level, signal to noise ratio, and spectral tilt of a captured clip.
+
+    These separate variables that are confounded in normal use. Distance,
+    loudness, and vocal effort all move together when you step back from the
+    mic and raise your voice to compensate, so block labels cannot tell them
+    apart. These three can.
+
+    snr_db compares loud frames to quiet ones within the same clip, so it
+    tracks how far the speech sits above the room rather than how loud it is
+    in absolute terms. Raising mic gain lifts both and leaves this unchanged,
+    which is exactly the property that makes it the useful number.
+
+    spectral_tilt is energy above 1kHz over energy below it, in dB. Projecting
+    flattens the glottal pulse and pushes relative energy upward, so tilt
+    rises with vocal effort. Distance barely touches it at room scale, so it
+    separates "loud because close" from "loud because projecting"."""
+    with wave.open(wav_path, 'rb') as wf:
+        rate = wf.getframerate()
+        samples = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+
+    if samples.size < 480:
+        return None, None, None
+
+    x = samples.astype(np.float64) / 32768.0
+
+    rms = np.sqrt(np.mean(x ** 2))
+    rms_dbfs = 20 * np.log10(rms) if rms > 0 else None
+
+    # Frame energies, then loud versus quiet percentiles. Avoids needing a
+    # separate noise recording or a VAD pass to find the silent stretches.
+    frames = np.array([
+        np.sqrt(np.mean(x[i:i + 480] ** 2)) for i in range(0, len(x) - 480, 480)
+    ])
+    snr_db = None
+    if frames.size >= 4:
+        loud  = np.percentile(frames, 90)
+        quiet = np.percentile(frames, 10)
+        if quiet > 0 and loud > 0:
+            snr_db = float(20 * np.log10(loud / quiet))
+
+    spectrum = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
+    freqs = np.fft.rfftfreq(len(x), 1.0 / rate)
+    low  = spectrum[(freqs >= 100) & (freqs < 1000)].sum()
+    high = spectrum[(freqs >= 1000) & (freqs < 8000)].sum()
+    spectral_tilt = float(10 * np.log10(high / low)) if low > 0 and high > 0 else None
+
+    return (float(rms_dbfs) if rms_dbfs is not None else None), snr_db, spectral_tilt
+
+
+# verify_voice outcomes. NO_AUDIO is distinct from REJECTED on purpose: one
+# means "not your voice", the other means "there was no voice to compare".
+VERIFIED = 'verified'
+REJECTED = 'rejected'
+NO_AUDIO = 'no_audio'
+
+# Resemblyzer computes one partial utterance per 1.6s window and zero pads the
+# last one. Below roughly a third of that there is not enough voiced audio for
+# the embedding to mean anything.
+MIN_EMBED_SECONDS = 0.5
+
+
+def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence=None):
     from config import VERIFY_THRESHOLD
-    wav       = preprocess_wav(wav_path)
+
+    wav = preprocess_wav(wav_path)
+
+    with wave.open(wav_path, 'rb') as wf:
+        duration_seconds = wf.getnframes() / wf.getframerate()
+    embedded_duration_seconds = len(wav) / RESEMBLYZER_SR
+
+    rms_dbfs, snr_db, spectral_tilt = measure_acoustics(wav_path)
+
+    # Guard before embedding, not after. embed_utterance() zero pads whatever
+    # it is handed up to one partial and returns a confident looking vector
+    # for silence, so there is no downstream signal that the input was empty.
+    if embedded_duration_seconds < MIN_EMBED_SECONDS:
+        print(f"No voiced audio to verify ({embedded_duration_seconds:.2f}s "
+              f"after trim, need {MIN_EMBED_SECONDS}s).", flush=True)
+        log_verification(
+            similarity=0.0,
+            accepted=False,
+            threshold_used=VERIFY_THRESHOLD,
+            transcript=transcript,
+            duration_seconds=duration_seconds,
+            embedded_duration_seconds=embedded_duration_seconds,
+            turn_type=turn_type,
+            wake_confidence=wake_confidence,
+            outcome=NO_AUDIO,
+            rms_dbfs=rms_dbfs,
+            snr_db=snr_db,
+            spectral_tilt=spectral_tilt,
+        )
+        return NO_AUDIO
+
     embedding = voice_encoder.embed_utterance(wav)
     similarity = np.dot(embedding, voiceprint) / (
         np.linalg.norm(embedding) * np.linalg.norm(voiceprint)
     )
     print(f"Voice similarity: {similarity:.3f}", flush=True)
-    return similarity >= VERIFY_THRESHOLD
+    accepted = similarity >= VERIFY_THRESHOLD
+
+    log_verification(
+        similarity=float(similarity),
+        accepted=accepted,
+        threshold_used=VERIFY_THRESHOLD,
+        transcript=transcript,
+        duration_seconds=duration_seconds,
+        embedded_duration_seconds=embedded_duration_seconds,
+        turn_type=turn_type,
+        wake_confidence=wake_confidence,
+        outcome='scored',
+        rms_dbfs=rms_dbfs,
+        snr_db=snr_db,
+        spectral_tilt=spectral_tilt,
+    )
+
+    # Any of these can be None for a degenerate clip, so format defensively
+    # rather than letting a log line take down the voice loop.
+    def _fmt(value, spec):
+        return format(value, spec) if value is not None else "n/a"
+
+    print(f"  level {_fmt(rms_dbfs, '.1f')} dBFS, "
+          f"SNR {_fmt(snr_db, '.1f')} dB, "
+          f"tilt {_fmt(spectral_tilt, '+.1f')} dB", flush=True)
+
+    return VERIFIED if accepted else REJECTED
