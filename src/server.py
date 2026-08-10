@@ -69,12 +69,15 @@ def chat(body: ChatRequest, user: str = Depends(get_current_user)):
 
 
 @app.get("/memories")
-def list_memories(user: str = Depends(get_current_user)):
-    rows = get_active_memories(limit=100)
-    return [
-        {"id": r[0], "content": r[1], "category": r[2], "source": r[3], "confidence": r[4], "status": r[5]}
-        for r in rows
-    ]
+def list_memories(limit: int = 50, offset: int = 0, user: str = Depends(get_current_user)):
+    rows, total = get_active_memories(limit=limit, offset=offset)
+    return {
+        "total": total,
+        "memories": [
+            {"id": r[0], "content": r[1], "category": r[2], "source": r[3], "confidence": r[4], "status": r[5]}
+            for r in rows
+        ],
+    }
 
 
 @app.get("/memories/pending")

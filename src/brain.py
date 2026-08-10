@@ -12,14 +12,14 @@ claude = anthropic.AsyncAnthropic()
 MODEL = "claude-sonnet-4-5-20250929"
 
 
-async def _tts_consumer(queue: asyncio.Queue, text_parts: list) -> None:
+async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set) -> None:
     """Pull sentences off the queue and speak them sequentially."""
     loop = asyncio.get_running_loop()
     while True:
         sentence = await queue.get()
         if sentence is None:
             break
-        sentence = strip_leading_bracket_cue(sentence)
+        sentence = strip_leading_bracket_cue(sentence, leaks_seen)
         text_parts.append(sentence)
         # speak() blocks (holds speak_lock + waits for aplay), so run in a thread
         await loop.run_in_executor(None, speak, sentence)
@@ -53,8 +53,9 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
     router         = StreamRouter(sentence_queue)
     spoken_parts   = []
     loop           = asyncio.get_running_loop()
+    leaks_seen     = set()  # shared across both TTS consumers and the returned-text strips this turn
 
-    tts_task = asyncio.create_task(_tts_consumer(sentence_queue, spoken_parts))
+    tts_task = asyncio.create_task(_tts_consumer(sentence_queue, spoken_parts, leaks_seen))
 
     accumulated = ""
     async with claude.messages.stream(
@@ -68,7 +69,7 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
             await router.feed(text)
 
     accumulated, explicit_mems, implicit_mems = extract_memories(accumulated)
-    accumulated = strip_leading_bracket_cue(accumulated)
+    accumulated = strip_leading_bracket_cue(accumulated, leaks_seen)
     for mem in explicit_mems:
         save_memory(mem, source="explicit", status="active")
     for mem in implicit_mems:
@@ -103,7 +104,7 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
             router2         = StreamRouter(sentence_queue2)
             spoken_parts2   = []
             tts_task2       = asyncio.create_task(
-                _tts_consumer(sentence_queue2, spoken_parts2)
+                _tts_consumer(sentence_queue2, spoken_parts2, leaks_seen)
             )
 
             final_text = ""
@@ -120,7 +121,7 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
             await router2.finalize()
             await tts_task2
             final_text, _, _ = extract_memories(final_text)
-            final_text = strip_leading_bracket_cue(final_text)
+            final_text = strip_leading_bracket_cue(final_text, leaks_seen)
         else:
             # Timer / reminder / cancel: TTS already spoke the confirmation
             final_text = " ".join(spoken_parts) or "Done."
