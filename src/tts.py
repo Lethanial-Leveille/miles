@@ -16,7 +16,12 @@ from config import (
 CHIME_PATH = os.path.expanduser("~/miles/assets/wake_chime.wav")
 
 _BRACKET_CUE   = re.compile(r'\[.*?\]')
-_MILES_ACRONYM = re.compile(r'\b(?:M\.I\.L\.E\.S\.?|MILES)\b')
+# The dotted form has no trailing \b on purpose. With one, "M.I.L.E.S. is
+# online" matched only "M.I.L.E.S" and left the final period behind, producing
+# "Miles. is online" and a full stop read aloud in the middle of the sentence.
+# There is no word boundary between "." and " ", so the boundary anchor could
+# never sit where it was assumed to.
+_MILES_ACRONYM = re.compile(r'\bM\.I\.L\.E\.S\.?|\bMILES\b')
 
 
 def normalize_pronunciation(text):
@@ -35,9 +40,24 @@ def normalize_pronunciation(text):
 
     Case is matched insensitively but the alias is substituted verbatim: the
     synthesizer is reading sound, not spelling, so preserving the original
-    capitalization would mean nothing to it."""
-    for grapheme, alias in get_pronunciations():
-        text = re.sub(rf'\b{re.escape(grapheme)}\b', alias, text,
+    capitalization would mean nothing to it.
+
+    A failure here returns the text unchanged rather than raising. Aliases are
+    user data added at runtime, and mispronouncing a word is a far smaller
+    problem than a bad row taking down every turn."""
+    try:
+        rows = get_pronunciations()
+    except Exception as e:
+        print(f"Pronunciation lookup failed, speaking as written: {e}", flush=True)
+        return text
+
+    for grapheme, alias in rows:
+        # The replacement is a lambda, not the alias string, because re.sub
+        # interprets backslash escapes in a replacement template. An alias
+        # containing \1 raised "invalid group reference" and one containing \n
+        # would have silently inserted a newline. Aliases are phonetic
+        # respellings typed by hand, so they must be substituted literally.
+        text = re.sub(rf'\b{re.escape(grapheme)}\b', lambda _, a=alias: a, text,
                       flags=re.IGNORECASE)
     return text
 
