@@ -16,9 +16,8 @@ class StreamRouter:
     def __init__(self, sentence_queue: asyncio.Queue):
         self._buf             = ""
         self._lookahead_done  = False
-        self._action_detected = False
         self._sentence_queue  = sentence_queue
-        self.action_tag       = None   # set when [ACTION:...] is found
+        self.action_tags      = []     # every [ACTION:...] found, in order
         # Counted rather than inferred from queue size: the TTS consumer runs
         # on the same event loop and can drain the queue between feeds, so
         # qsize() is not a reliable "has anything been emitted yet" signal.
@@ -27,43 +26,45 @@ class StreamRouter:
     async def feed(self, delta: str) -> None:
         self._buf += delta
 
-        if self._action_detected:
-            # Continue flushing bridge sentences that arrive after the action tag
-            await self._flush_sentences()
-            return
-
         if not self._lookahead_done:
-            if len(self._buf) < LOOKAHEAD_CHARS:
+            # The lookahead guards against a stray "[" in prose being mistaken
+            # for a tag. ACTION_PREFIX is specific enough that its presence is
+            # not ambiguous, so seeing it ends the wait early. Without this, a
+            # response shorter than the lookahead never gets scanned at all,
+            # and the prompt instructs the tag to come first.
+            if len(self._buf) < LOOKAHEAD_CHARS and ACTION_PREFIX not in self._buf:
                 return
             self._lookahead_done = True
 
-        if ACTION_PREFIX in self._buf:
-            await self._handle_action()
-            return
+        self._extract_actions()
 
-        await self._flush_sentences()
+        # An incomplete tag may still be sitting at the tail, waiting for the
+        # rest of itself to arrive. Flush only what precedes it, or the tag
+        # text gets spoken aloud one fragment at a time.
+        idx = self._buf.find(ACTION_PREFIX)
+        if idx == -1:
+            await self._flush_sentences()
+        elif idx > 0:
+            pending, self._buf = self._buf[idx:], self._buf[:idx]
+            await self._flush_sentences()
+            self._buf += pending
 
-    async def _handle_action(self) -> None:
-        self._action_detected = True
-        idx = self._buf.index(ACTION_PREFIX)
+    def _extract_actions(self) -> None:
+        """Strip every complete [ACTION:...] tag out of the buffer, in order.
 
-        pre = self._buf[:idx].strip()
-        if pre:
-            await self._sentence_queue.put(pre)
-            self.sentences_emitted += 1
-
-        tag_buf = self._buf[idx:]
-        close   = tag_buf.find(']')
-
-        if close == -1:
-            self.action_tag = tag_buf.strip()
-            self._buf = ""
-        else:
-            self.action_tag = tag_buf[:close + 1]
-            # Set buf to post-] text so feed() keeps flushing the bridge sentence
-            self._buf = tag_buf[close + 1:]
-
-        await self._flush_sentences()
+        A tag that has not received its closing bracket yet is left in place
+        rather than committed. Deltas do not respect tag boundaries, so a tag
+        routinely arrives split across two chunks; committing on the first
+        chunk truncated it mid word and left the remainder to be spoken."""
+        while True:
+            idx = self._buf.find(ACTION_PREFIX)
+            if idx == -1:
+                return
+            close = self._buf.find(']', idx)
+            if close == -1:
+                return
+            self.action_tags.append(self._buf[idx:close + 1].strip())
+            self._buf = self._buf[:idx] + self._buf[close + 1:]
 
     async def _flush_sentences(self) -> None:
         while True:
@@ -79,7 +80,17 @@ class StreamRouter:
 
     async def finalize(self) -> None:
         """Flush remaining buffer after stream ends, then send sentinel."""
-        remaining = re.sub(r'\[.*$', '', self._buf).strip()
+        # Backstop: a stream that ended before the lookahead released still has
+        # its tags sitting in the buffer, and the strip below would delete them
+        # along with any genuinely incomplete tag.
+        self._extract_actions()
+
+        # Drop only a trailing incomplete tag. Every complete one is already
+        # out, so anything left starting with ACTION_PREFIX is a fragment. The
+        # old rule cut from any "[" to the end, which silently swallowed the
+        # rest of a sentence containing an ordinary bracket.
+        pending  = self._buf.find(ACTION_PREFIX)
+        remaining = (self._buf[:pending] if pending != -1 else self._buf).strip()
         if remaining:
             await self._sentence_queue.put(remaining)
             self.sentences_emitted += 1

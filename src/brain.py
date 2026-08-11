@@ -131,14 +131,16 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
     for mem in implicit_mems:
         save_memory(mem, source="implicit", status="pending")
 
-    if router.action_tag:
+    if router.action_tags:
         action_start = time.monotonic()
         await router.finalize()
-        action = _parse_action_tag(router.action_tag)
+        actions = [_parse_action_tag(tag) for tag in router.action_tags]
 
-        # Run the action and drain bridge-sentence TTS at the same time
+        # Run every action and drain bridge-sentence TTS at the same time.
+        # execute_actions already loops, so a turn asking for two things at
+        # once dispatches both instead of silently dropping the second.
         results, _ = await asyncio.gather(
-            loop.run_in_executor(None, execute_actions, [action]),
+            loop.run_in_executor(None, execute_actions, actions),
             tts_task,
         )
 
@@ -150,7 +152,7 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
             )
             bridge_text = " ".join(spoken_parts)
             followup_messages = recent + [
-                {"role": "assistant", "content": bridge_text or router.action_tag},
+                {"role": "assistant", "content": bridge_text or " ".join(router.action_tags)},
                 {"role": "user", "content": (
                     f"[SYSTEM: Here is the data you requested]\n{data_block}\n"
                     "Deliver this information naturally as Nova. Stay in character. Keep it concise."
