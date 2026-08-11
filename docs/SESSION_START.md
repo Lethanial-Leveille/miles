@@ -443,3 +443,38 @@ Tests 136 to 166. Prefix 5942, margin +1846.
 - **Not built: Hevy and Google Calendar.** Blocked on scoping, credentials, and
   a decision about what a calendar write is permitted to do. Not inventing an
   API contract for a service that writes to a real calendar.
+
+
+### Live testing found four defects the tests could not (Aug 11 2026) (DONE)
+
+Every one of these passed a green suite of 166 tests and failed in the room.
+
+- **Fire and forget tools were silent.** `final_text = " ".join(spoken_parts) or
+  "Done."` assigned the fallback to the *returned* string and never spoke it.
+  When the model said nothing alongside the call, which it usually does, the
+  turn produced no audio at all while the database recorded a confirmation that
+  was never heard. Timers, reminders and cancellations all landed this way and
+  read as the tool having failed when it had worked. The fallback is now spoken.
+  - Confirmed in data before fixing: `tts_first_audio_ms` and
+    `total_perceived_ms` were both null on those three turns.
+- **`tool_ms` was measuring the wrong thing.** It wrapped
+  `asyncio.gather(tool, tts_task)`, so it reported whichever finished last. A
+  weather call taking 580ms logged 6006ms, because it was really timing the
+  bridge sentence playing. Now the tool is awaited and timed on its own; both
+  still overlap because the TTS task is already scheduled.
+  - This one mattered beyond accuracy: the bridge sentence decision was
+    explicitly deferred until `tool_ms` could be read, and the column was
+    unusable for that.
+- **The bridge sometimes answered the question before the tool ran.** The model
+  occasionally emits a full spoken answer *and* a `tool_use` in one response, so
+  Lethanial heard a guess and then the real reading. Added `TOOL_SPEECH` to the
+  prompt: never state a value before the call, say nothing or say a phrase that
+  commits to nothing, and do not restate afterwards.
+  - Non deterministic, which is why it survived several reruns before showing up.
+- **`get_system_state` reported the core temperature in Celsius** while weather
+  answered in Fahrenheit, so one conversation carried two scales. Now
+  `core_temp_f`.
+
+Also: `FOLLOWUP_TIMEOUT` is a config constant at 6 seconds, down from a bare 10
+in `voice_main.py`. Ten seconds is a long time to stand in a quiet room deciding
+whether you are done, and every expiry costs a full window of dead air.

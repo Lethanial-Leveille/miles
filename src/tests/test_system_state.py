@@ -24,7 +24,7 @@ def test_returns_every_field(db, monkeypatch):
     out = system_state.get_system_state()
     assert set(out) == {
         "uptime_hours", "turns_served", "median_latency_ms", "whisper_model",
-        "active_memories", "core_temp_c", "voice_service_restarts", "git_commit",
+        "active_memories", "core_temp_f", "voice_service_restarts", "git_commit",
     }
 
 
@@ -34,7 +34,7 @@ def test_whisper_model_is_a_basename_not_a_path():
 
 
 @pytest.mark.parametrize("reader", [
-    "_uptime_hours", "_core_temp_c", "_git_commit", "_service_restarts", "_db_stats",
+    "_uptime_hours", "_core_temp_f", "_git_commit", "_service_restarts", "_db_stats",
 ])
 def test_a_failing_reader_yields_null_rather_than_raising(monkeypatch, reader):
     def boom():

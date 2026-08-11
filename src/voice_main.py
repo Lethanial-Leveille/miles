@@ -9,7 +9,7 @@ import actions
 from brain import ask_nova
 from database import init_db
 from parsing import is_noise_transcript
-from config import CHUNK, WAKE_THRESHOLD, MAX_FOLLOWUP_TURNS
+from config import CHUNK, WAKE_THRESHOLD, MAX_FOLLOWUP_TURNS, FOLLOWUP_TIMEOUT
 
 # Wire the speak callback so timer/reminder alerts play audio
 actions.set_speak_fn(tts.speak)
@@ -92,9 +92,9 @@ try:
                           "Returning to wake word.\n", flush=True)
                     break
 
-                print("Listening for follow up... (10s timeout)", flush=True)
+                print(f"Listening for follow up... ({FOLLOWUP_TIMEOUT}s timeout)", flush=True)
                 timing.begin_turn('followup')
-                followup_path = audio.listen_for_followup(timeout=10)
+                followup_path = audio.listen_for_followup(timeout=FOLLOWUP_TIMEOUT)
                 followup_turns += 1
                 recording = (audio.archive_recording(followup_path, 'followup')
                              if followup_path else None)

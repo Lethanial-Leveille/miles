@@ -269,12 +269,20 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> TurnResult:
         # Run the tools and drain the bridge sentence at the same time, so the
         # text Nova already produced alongside the call plays while the work
         # happens rather than after it.
-        tool_start = time.monotonic()
-        results, _ = await asyncio.gather(
-            loop.run_in_executor(None, _run_tools, tool_uses, model),
-            tts_task,
-        )
+        # The tool is timed on its own, then the bridge is drained. Both still
+        # overlap, because tts_task is already a scheduled task and the tool
+        # runs on an executor thread, but the measurement now covers only the
+        # tool.
+        #
+        # Previously this awaited asyncio.gather(tool, tts_task) inside the
+        # stopwatch, so tool_ms reported whichever finished last. A weather call
+        # that took 580ms logged 6006ms, because what it was really measuring
+        # was the bridge sentence playing through the speaker.
+        tool_future = loop.run_in_executor(None, _run_tools, tool_uses, model)
+        tool_start  = time.monotonic()
+        results     = await tool_future
         timing.note_tool((time.monotonic() - tool_start) * 1000.0)
+        await tts_task
 
         # dismiss is a state change, not work. The tool executes nothing; the
         # transition happens here. Read before filtering so a turn that both
@@ -364,7 +372,17 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> TurnResult:
             # Timer, reminder, cancel, dismiss: the text Nova said alongside
             # the call is the answer. A second round trip here would spend a
             # second of latency rephrasing "Timer set."
-            final_text = " ".join(spoken_parts) or "Done."
+            final_text = " ".join(spoken_parts).strip()
+
+            # The model does not always say anything alongside a fire and
+            # forget call. When it does not, this turn used to be completely
+            # silent: the fallback was assigned to the returned string but
+            # never spoken, so the database recorded a confirmation that was
+            # never heard. Timers, reminders and cancellations all landed this
+            # way, which read as the tool having failed when it had worked.
+            if not final_text:
+                final_text = "Done."
+                await loop.run_in_executor(None, speak, final_text)
 
         timing.note_action((time.monotonic() - action_start) * 1000.0)
     else:

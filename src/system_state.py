@@ -37,9 +37,14 @@ def _uptime_hours():
         return round(float(f.read().split()[0]) / 3600, 1)
 
 
-def _core_temp_c():
+def _core_temp_f():
+    """Fahrenheit, because that is the only scale Lethanial uses and the tool
+    output is read aloud verbatim. Reporting Celsius here meant Nova announcing
+    "fifty seven degrees Celsius" alongside a weather answer in Fahrenheit,
+    which is two scales in one conversation."""
     with open("/sys/class/thermal/thermal_zone0/temp") as f:
-        return round(int(f.read().strip()) / 1000.0, 1)
+        celsius = int(f.read().strip()) / 1000.0
+    return round(celsius * 9 / 5 + 32, 1)
 
 
 def _git_commit():
@@ -82,7 +87,7 @@ def _db_stats():
     description=(
         "Nova's own operational state: uptime, how many turns she has served, "
         "her median response latency over recent turns, the speech model she is "
-        "running, how many memories she is holding, the Pi's core temperature, "
+        "running, how many memories she is holding, the Pi's core temperature in Fahrenheit, "
         "how many times the voice service has restarted, and the git commit she "
         "is running. Call this when Lethanial asks how she is doing, how she is "
         "running, whether she is healthy, how warm the Pi is, how fast she has "
@@ -102,7 +107,7 @@ def get_system_state():
         "median_latency_ms": stats.get("median_latency_ms"),
         "whisper_model": os.path.basename(WHISPER_MODEL),
         "active_memories": stats.get("memories"),
-        "core_temp_c": _read(_core_temp_c),
+        "core_temp_f": _read(_core_temp_f),
         "voice_service_restarts": _read(_service_restarts),
         "git_commit": _read(_git_commit),
     }

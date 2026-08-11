@@ -79,6 +79,14 @@ If someone other than Lethanial is speaking, maintain the same professional comp
 # reminder example in her own prompt and every reminder was dated months in the
 # past.
 
+TOOL_SPEECH = """USING TOOLS:
+Anything you say before calling a tool is spoken aloud immediately, while the tool is still running. You have not seen the result yet at that point, so you cannot know it.
+
+Never state a value, a number, or a conclusion before the call. Saying "ninety five degrees" and then being handed the real reading means Lethanial hears the answer twice, the first one guessed. Either say nothing before the call, which is fine and common, or say at most a short phrase that commits to nothing.
+
+After the result comes back, answer it directly. Do not restate what you already said and do not narrate that you looked something up."""
+
+
 MEMORY_INSTRUCTIONS = """MEMORY INSTRUCTION:
 When Lethanial shares a personal fact, preference, habit, schedule detail, or anything worth remembering for future conversations, include it in your response wrapped in memory tags.
 
@@ -171,7 +179,8 @@ def build_enhanced_prompt(seed_rows, episodic_rows, device="pi"):
     capability_block = registry.capability_prose()
 
     middle = "\n\n".join(
-        block for block in (MEMORY_INSTRUCTIONS, capability_block, CLOCK_INSTRUCTIONS)
+        block for block in (MEMORY_INSTRUCTIONS, capability_block, TOOL_SPEECH,
+                            CLOCK_INSTRUCTIONS)
         if block
     )
 

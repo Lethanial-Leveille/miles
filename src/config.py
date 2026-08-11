@@ -264,6 +264,17 @@ PROMPT_CACHING = True
 # ups) with headroom to spare.
 MAX_FOLLOWUP_TURNS = 6
 
+# How long the follow up window stays open after Nova finishes speaking.
+#
+# Was a bare 10 in voice_main.py. Ten seconds is a long time to stand in a quiet
+# room deciding whether you are done, and every expiry costs a full window of
+# dead air before the wake word comes back. Six is comfortably past a normal
+# beat of hesitation without leaving the mic open on an empty room.
+#
+# Lower bound is set by thinking time, not by speech: the window has to survive
+# the pause between deciding to say something and starting to say it.
+FOLLOWUP_TIMEOUT = 6
+
 # Conversation exit is no longer a phrase list. Twenty six exact strings could
 # not match "alright thanks Nova" or "that's all for now", and seven of them
 # ("later", "peace", "all good", "i'm good", "that's it", "dismissed",
