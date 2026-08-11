@@ -86,9 +86,9 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Whether `stop_sequences` is passed to the API | `grep -rn "stop_sequences" src/` (expect zero hits) | Aug 11 2026 |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (113) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (136) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
-| Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (4836, +740) |
+| Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (4836 flag off, 4991 flag on) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
 | Speaker device resolution | `grep -n SPEAKER src/config.py src/tts.py` | Aug 11 2026 (by name, not device string) |
 | Which modules exist | `ls src/*.py` | Aug 11 2026 (20 modules) |
@@ -357,10 +357,45 @@ capability block generated from the registry. `brain.py` untouched. Tests 100 to
   deleting the action instructions is roughly 4186, about +90. That is not a
   margin. **The deletion and the tool schemas must land in the same commit.**
 
-### Weather return shape (Aug 11 2026) (NEXT, step 3)
+### Weather as the first registered tool, Phase 1 step 3 (Aug 11 2026) (DONE)
 
-Not addressed in step 2, deliberately. `get_weather` returns a finished English
-sentence containing four facts, so Nova reads the sentence aloud. The fix is the
-return value rather than the prompt, and it only matters once weather is a
-registered tool, so it belongs with step 3 along with the forecast endpoint for
-"is rain coming".
+`get_weather` split three ways, forecast lookup added, geocode cached. Tests 113
+to 136.
+
+- **The verbosity fix is the return value, not the prompt.** The old function
+  returned a finished English paragraph carrying four facts, so Nova read the
+  paragraph aloud whatever was asked. Instructions to be brief fought the data
+  she was handed. `_fetch_weather` now returns a dict, which cannot be read as a
+  paragraph.
+  - Generalized lesson, same shape as the history trimming finding: **when the
+    model is over reporting, look at what you handed it before you look at the
+    prompt.**
+- **Three functions, not two.** `_fetch_weather` returns the dict, the
+  registered tool returns it unchanged, and `get_weather` formats a short line
+  for the legacy bracket path. The legacy formatter exists so the verbosity fix
+  lands now rather than waiting on `NATIVE_TOOLS`, and it dies with the tag
+  system in Phase 2.
+- **Humidity and wind stay in the payload**, with the restraint written into the
+  tool description rather than enforced by withholding.
+  - Reason: withholding means "is it windy" hits the capability gap joke when
+    the data was right there. Wrong answer, and the joke stops being funny when
+    it is covering for a design choice.
+- **Precipitation comes from `/data/2.5/forecast`**, same free key, three hour
+  steps, four blocks of lookahead for twelve hours.
+  - Honest limit recorded: this cannot say "it stops in twenty minutes". Minute
+    level precipitation is One Call 3.0, a separate signup with a card on file.
+    Take the coarse version until it actually annoys someone.
+  - Condition id boundary is 700. Below is falling out of the sky, at or above
+    is not. Getting this wrong makes Nova announce rain on a foggy morning,
+    which is why there is a parametrized test walking the boundary.
+  - A failed forecast returns None rather than failing the lookup. Current
+    conditions are still worth answering with.
+- **`precip: None` is the common case and the description says to say nothing
+  at all**, rather than announcing that it will not rain. A tool that always
+  returns a rain field invites rain talk on a clear day.
+- **Geocode cached per process.** Coordinates for a place name do not change and
+  it was being re resolved on every request. Removes one HTTP call, roughly
+  paying for the forecast call added.
+- Prefix after registration: 4991 with the flag on, margin +895. Weather's
+  schema and capability line cost 805 tokens. The Phase 2 squeeze recorded in
+  the step 2 entry resolves itself once tools exist.
