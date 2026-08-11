@@ -56,11 +56,10 @@ def is_noise_transcript(text):
 def strip_leading_bracket_cue(text, seen=None):
     """Strip a leading bracketed cue Nova should not be emitting, e.g. "[clearly]".
 
-    SURVIVES THE TOOL USE MIGRATION. Phase 2 deletes `extract_actions` and
-    `_parse_action_tag`, not bracket handling as a whole. This function exists
-    for emotion cues, which are a rendering hint with no side effect and were
-    never part of the action system. They are not migrating to tool use and
-    this stays regardless of what the Phase 2 commit message says.
+    SURVIVED THE TOOL USE MIGRATION. extract_actions and _parse_action_tag
+    were deleted; bracket handling as a whole was not. This exists for emotion
+    cues, which are a rendering hint with no side effect and were never part of
+    the action system.
 
     Leaves ACTION/MEMORY tags alone (defensive: they should already be gone
     by the time this runs, but this must never eat a real tag).
@@ -85,7 +84,7 @@ def strip_leading_bracket_cue(text, seen=None):
 
 
 def extract_memories(response_text):
-    """SURVIVES THE TOOL USE MIGRATION. Do not delete alongside extract_actions.
+    """SURVIVED THE TOOL USE MIGRATION. Not deleted with extract_actions.
 
     Memory tags were considered for migration to a `remember` tool and
     deliberately deferred. The reason is not round trip cost, since a tool with
@@ -108,35 +107,3 @@ def extract_memories(response_text):
     clean = re.sub(r'  +', ' ', clean).strip()
 
     return clean, explicit_memories, implicit_memories
-
-
-def extract_actions(response_text):
-    """DELETED IN PHASE 2 of the tool use migration, along with
-    brain._parse_action_tag. These two are the only casualties in this module:
-    strip_leading_bracket_cue and extract_memories both stay, for reasons
-    documented on each."""
-    param_pattern  = r'\[ACTION:\s*(\w+)\s*\|\s*(.+?)\]'
-    simple_pattern = r'\[ACTION:\s*(\w+)\s*\]'
-
-    actions = re.findall(param_pattern, response_text)
-    clean   = re.sub(param_pattern, '', response_text)
-
-    simple_actions = re.findall(simple_pattern, clean)
-    clean = re.sub(simple_pattern, '', clean)
-    clean = re.sub(r'  +', ' ', clean).strip()
-
-    parsed = []
-    for action_type, params_str in actions:
-        params = {}
-        for param in params_str.split(','):
-            if ':' in param:
-                key, value = param.split(':', 1)
-                params[key.strip()] = value.strip()
-            else:
-                params['value'] = param.strip()
-        parsed.append({"type": action_type.lower(), "params": params})
-
-    for action_type in simple_actions:
-        parsed.append({"type": action_type.lower(), "params": {}})
-
-    return clean, parsed

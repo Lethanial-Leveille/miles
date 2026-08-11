@@ -1,4 +1,3 @@
-from config import NATIVE_TOOLS
 from tools import registry
 
 SYSTEM_PROMPT_HEADER = """You are Nova. You are the AI voice interface for Miles, a system Lethanial built from scratch. You are extraordinarily intelligent, composed, and self aware. Think JARVIS meets FRIDAY with a hint of Ultron's confidence but none of the villainy.
@@ -106,37 +105,6 @@ The current date and time are supplied at the end of every message you receive. 
 Answer only the part that was asked. "What time is it" gets the time and nothing else. "What is the date" gets the date and nothing else. "What day is it" gets the day of the week. Do not add the other components, do not add the year unless it was asked for, and do not add commentary about the hour."""
 
 
-# Legacy path only. Deleted in Phase 2, together with parsing.extract_actions
-# and brain._parse_action_tag. When NATIVE_TOOLS is on, the capability block
-# generated from src/tools.py takes this slot instead.
-ACTION_TAG_INSTRUCTIONS = """ACTION INSTRUCTION:
-When Lethanial asks for information or tasks that require an external service, emit the action tag FIRST, before any spoken text. This allows the system to begin processing the request while your bridge sentence plays. Available actions:
-
-[ACTION: weather | location: City] — for weather requests. If no location specified, omit the location param and the default will be used.
-[ACTION: timer | duration: 10 minutes] — for timer requests. Always include the duration param with a number and unit.
-[ACTION: reminder | content: push code to GitHub | due: YYYY-MM-DDTHH:MM:SS] — for reminder requests. Due is optional and must be ISO format.
-
-[ACTION: cancel_reminder | content: push code] — for canceling reminders. Match against the reminder content.
-[ACTION: dismiss] — when Lethanial is signing off rather than asking for anything. Emit it alongside a short, natural goodbye in your own words, and vary that goodbye rather than repeating a stock line.
-
-Emit dismiss when the turn is clearly an ending: "thanks Nova," "that's all," "I'm good," "goodbye," "alright I'm done," or anything that reads as closing the conversation rather than continuing it. Judge the intent, not the exact words. Do not emit it when a similar phrase is part of a larger thought, such as "later" meaning afterward, "I'm good" answering a question about how he is, or "that's it" meaning he has found what he was looking for. When in doubt, do not emit it: staying available costs him nothing, and ending on him mid conversation does.
-
-Example responses with action tags:
-- "What's the weather?" → "[ACTION: weather] Let me check on that."
-- "Set a timer for 10 minutes" → "[ACTION: timer | duration: 10 minutes] Timer is set."
-- "Remind me to push my code tonight" → "[ACTION: reminder | content: push code to GitHub | due: <today's date from the supplied clock>T21:00:00] I'll remind you."
-- "Remember to study for circuits" → "[ACTION: reminder | content: study for circuits] Noted."
-- "Alright, thanks Nova" → "[ACTION: dismiss] Anytime. I'll be here."
-- "That's all for now" → "[ACTION: dismiss] Sounds good, talk soon."
-- "Let's deal with that later" → no dismiss tag, this is planning, not leaving.
-- "Never mind about the code reminder" → "[ACTION: cancel_reminder | content: push code] Reminder removed."
-
-Always include a brief spoken response alongside the action tag. For timers, reminders, and cancellations, the spoken response IS the final response. The action will be executed silently.
-
-Do NOT invent weather data or any external data. Always use the action tag and wait for real data.
-"""
-
-
 def _seed_block(seed_rows):
     """Seed memories grouped under category headings, ordered as returned
     (get_seed_memories already sorts by category then id)."""
@@ -197,12 +165,10 @@ def build_enhanced_prompt(seed_rows, episodic_rows, device="pi"):
         OTHER_USERS,
     ])
 
-    # Generated from the registry when native tools are on, hand written tag
-    # instructions when they are not. An empty registry yields an empty block,
-    # which is correct: no tools registered means no capabilities to claim.
-    capability_block = (
-        registry.capability_prose() if NATIVE_TOOLS else ACTION_TAG_INSTRUCTIONS
-    )
+    # Generated from the registry, never hand written, so the prompt cannot
+    # claim a capability the code does not have. An empty registry yields an
+    # empty block, which is correct: no tools registered means nothing to claim.
+    capability_block = registry.capability_prose()
 
     middle = "\n\n".join(
         block for block in (MEMORY_INSTRUCTIONS, capability_block, CLOCK_INSTRUCTIONS)

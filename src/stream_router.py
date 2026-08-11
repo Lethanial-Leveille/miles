@@ -1,23 +1,33 @@
 import re
 import asyncio
-from config import LOOKAHEAD_CHARS, ACTION_PREFIX
 
 # Sentence boundary: . ! ? not preceded by abbreviation (Dr.) or decimal (3.14)
 _SENTENCE_END = re.compile(r'(?<![A-Z][a-z])(?<!\d)[.!?](?=\s|$)')
 
 
 class StreamRouter:
-    """
-    Accumulates streaming text deltas, flushes complete sentences to a queue,
-    and detects [ACTION:...] tags so brain.py can dispatch them without
-    accidentally speaking the tag aloud.
+    """Accumulates streaming text deltas and flushes complete sentences to a
+    queue for TTS.
+
+    Previously this also detected [ACTION:...] tags mid stream and buffered
+    LOOKAHEAD_CHARS before emitting anything, so a stray "[" in prose could not
+    be mistaken for the start of a tag. Native tool use removed the need for
+    both: tool calls arrive as their own content blocks and never appear in the
+    text stream, so text is only ever text.
+
+    Dropping the lookahead is a latency win as well as a simplification. The
+    first sentence used to wait for 50 characters to accumulate before it could
+    be considered at all, and that wait sat directly on the path to first
+    audio. Now a short first sentence flushes as soon as it is complete.
+
+    Emotion cue leakage is still possible ("[calmly] Right away") and is still
+    handled, but downstream: strip_leading_bracket_cue runs per sentence in the
+    TTS consumer, which is where it always ran.
     """
 
     def __init__(self, sentence_queue: asyncio.Queue):
-        self._buf             = ""
-        self._lookahead_done  = False
-        self._sentence_queue  = sentence_queue
-        self.action_tags      = []     # every [ACTION:...] found, in order
+        self._buf            = ""
+        self._sentence_queue = sentence_queue
         # Counted rather than inferred from queue size: the TTS consumer runs
         # on the same event loop and can drain the queue between feeds, so
         # qsize() is not a reliable "has anything been emitted yet" signal.
@@ -25,46 +35,7 @@ class StreamRouter:
 
     async def feed(self, delta: str) -> None:
         self._buf += delta
-
-        if not self._lookahead_done:
-            # The lookahead guards against a stray "[" in prose being mistaken
-            # for a tag. ACTION_PREFIX is specific enough that its presence is
-            # not ambiguous, so seeing it ends the wait early. Without this, a
-            # response shorter than the lookahead never gets scanned at all,
-            # and the prompt instructs the tag to come first.
-            if len(self._buf) < LOOKAHEAD_CHARS and ACTION_PREFIX not in self._buf:
-                return
-            self._lookahead_done = True
-
-        self._extract_actions()
-
-        # An incomplete tag may still be sitting at the tail, waiting for the
-        # rest of itself to arrive. Flush only what precedes it, or the tag
-        # text gets spoken aloud one fragment at a time.
-        idx = self._buf.find(ACTION_PREFIX)
-        if idx == -1:
-            await self._flush_sentences()
-        elif idx > 0:
-            pending, self._buf = self._buf[idx:], self._buf[:idx]
-            await self._flush_sentences()
-            self._buf += pending
-
-    def _extract_actions(self) -> None:
-        """Strip every complete [ACTION:...] tag out of the buffer, in order.
-
-        A tag that has not received its closing bracket yet is left in place
-        rather than committed. Deltas do not respect tag boundaries, so a tag
-        routinely arrives split across two chunks; committing on the first
-        chunk truncated it mid word and left the remainder to be spoken."""
-        while True:
-            idx = self._buf.find(ACTION_PREFIX)
-            if idx == -1:
-                return
-            close = self._buf.find(']', idx)
-            if close == -1:
-                return
-            self.action_tags.append(self._buf[idx:close + 1].strip())
-            self._buf = self._buf[:idx] + self._buf[close + 1:]
+        await self._flush_sentences()
 
     async def _flush_sentences(self) -> None:
         while True:
@@ -79,18 +50,11 @@ class StreamRouter:
             self._buf = self._buf[end:]
 
     async def finalize(self) -> None:
-        """Flush remaining buffer after stream ends, then send sentinel."""
-        # Backstop: a stream that ended before the lookahead released still has
-        # its tags sitting in the buffer, and the strip below would delete them
-        # along with any genuinely incomplete tag.
-        self._extract_actions()
+        """Flush whatever is left after the stream ends, then send the sentinel.
 
-        # Drop only a trailing incomplete tag. Every complete one is already
-        # out, so anything left starting with ACTION_PREFIX is a fragment. The
-        # old rule cut from any "[" to the end, which silently swallowed the
-        # rest of a sentence containing an ordinary bracket.
-        pending  = self._buf.find(ACTION_PREFIX)
-        remaining = (self._buf[:pending] if pending != -1 else self._buf).strip()
+        The tail matters: a response ending without terminal punctuation, or
+        cut off by max_tokens, would otherwise never be spoken at all."""
+        remaining = self._buf.strip()
         if remaining:
             await self._sentence_queue.put(remaining)
             self.sentences_emitted += 1

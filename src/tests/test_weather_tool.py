@@ -186,24 +186,3 @@ def test_different_locations_are_cached_separately(api):
     actions._fetch_weather("Orlando")
     geo_calls = [u for u in api["urls"] if "geo/1.0/direct" in u]
     assert len(geo_calls) == 2
-
-
-# ── legacy prose path ──
-
-def test_legacy_path_is_short(api):
-    """Still prose, because the bracket path needs a string, but no longer the
-    four fact paragraph that caused the verbosity complaint."""
-    line = actions.get_weather("Gainesville")
-    assert line == "Gainesville: 91 degrees, feels like 99, clear sky."
-    assert "Humidity" not in line
-    assert "Wind" not in line
-
-
-def test_legacy_path_mentions_rain_when_there_is_rain(api):
-    api["forecast"] = _forecast(800, 500, 800, 800, start_hour=16)
-    assert "rain likely around 7 PM" in actions.get_weather("Gainesville")
-
-
-def test_legacy_path_reports_errors_as_a_string(api):
-    api["geo"] = []
-    assert "Could not find location" in actions.get_weather("Atlantis")

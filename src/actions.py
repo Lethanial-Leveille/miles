@@ -128,11 +128,22 @@ def _fetch_weather(location=None):
 @tool(
     name="get_weather",
     description=(
-        "Current outdoor conditions for a place, plus whether rain is starting "
-        "or stopping in the next twelve hours. Call this whenever Lethanial "
-        "asks about the weather, the temperature, whether it is going to rain, "
-        "whether rain will stop, or whether he needs a jacket or an umbrella. "
-        "Omit the location to use his default. "
+        "Current outdoor conditions, plus whether rain is starting or stopping "
+        "in the next twelve hours. Call this whenever Lethanial asks about the "
+        "weather, the temperature, whether it is going to rain, whether rain "
+        "will stop, or whether he needs a jacket or an umbrella. "
+        # Interpolated rather than written out, so the description and
+        # DEFAULT_LOCATION can never disagree. Naming the city explicitly is
+        # load bearing: Lethanial's memories mention more than one place he
+        # lives, so "his home location" was genuinely ambiguous and the model
+        # correctly refused to guess, asking him where every single time
+        # instead of calling the tool.
+        f"Location is optional. When he does not name one, omit the parameter "
+        f"and {DEFAULT_LOCATION}, where he lives during the school year, is "
+        f"used. Never ask him which place he means, even though his memories "
+        f"mention more than one: an unqualified weather question always means "
+        f"{DEFAULT_LOCATION}, and asking spends a whole turn of his to learn "
+        f"something already known. "
         "Returns temperature and feels_like in Fahrenheit, a condition "
         "description, humidity as a percentage, wind_mph, and precip. "
         "Report only what was actually asked: temperature and the precip "
@@ -146,9 +157,10 @@ def _fetch_weather(location=None):
         "properties": {
             "location": {
                 "type": "string",
-                "description": "City name only, no state or country. The "
-                               "geocoder works best that way. Omit for the "
-                               "default location.",
+                "description": "City name only, no state or country, since "
+                               "the geocoder works best that way. Omit this "
+                               "entirely unless he named a different city; "
+                               f"omitting it uses {DEFAULT_LOCATION}.",
             },
         },
         "required": [],
@@ -158,25 +170,6 @@ def _fetch_weather(location=None):
 )
 def get_weather_tool(location=None):
     return _fetch_weather(location)
-
-
-def get_weather(location=None):
-    """Legacy bracket action path. Deleted in Phase 2 along with the tag system.
-
-    Kept short on purpose rather than left as the old four fact paragraph, so
-    the verbosity fix lands now instead of waiting on NATIVE_TOOLS."""
-    try:
-        data = _fetch_weather(location)
-        if "error" in data:
-            return data["error"]
-
-        line = (f"{data['location']}: {data['temp']} degrees, feels like "
-                f"{data['feels_like']}, {data['condition']}")
-        if data["precip"]:
-            line += f", {data['precip']}"
-        return line + "."
-    except Exception as e:
-        return f"Weather lookup failed: {e}"
 
 
 # ── Timer ──
@@ -277,29 +270,117 @@ def cancel_reminder(content):
     return f"No active reminders found matching '{content}'."
 
 
-# ── Dispatcher ──
+# ── Tool registrations for the fire and forget actions ──
+#
+# All four carry returns_to_model=False. Nothing they return is worth a second
+# Claude call: the confirmation Nova already said alongside the call is the
+# answer, and a follow up round trip would add a second of latency to "set a
+# timer for ten minutes" in exchange for rephrasing "Timer set."
+#
+# Each wraps the existing implementation rather than replacing it, so the
+# parsing and threading that were already tested stay tested.
 
-def execute_actions(actions):
-    results = []
-    for action in actions:
-        atype = action["type"]
-        params = action["params"]
+@tool(
+    name="set_timer",
+    description=(
+        "Start a countdown timer that speaks aloud when it finishes. Call this "
+        "when Lethanial asks to set a timer or to be told when some amount of "
+        "time has passed. The timer announces itself, so the spoken "
+        "confirmation is all that is needed from you."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "amount": {"type": "integer", "description": "How many units, e.g. 10"},
+            "unit": {"type": "string", "enum": ["seconds", "minutes", "hours"]},
+        },
+        "required": ["amount", "unit"],
+    },
+    permission=Permission.WRITE,
+    returns_to_model=False,
+)
+def set_timer_tool(amount, unit):
+    # Reuses the string parser rather than duplicating the threading, and a
+    # structured amount plus unit always satisfies it, so the word number
+    # fallback inside it is now dead weight the tag path still needs.
+    return set_timer(f"{amount} {unit}")
 
-        if atype == "weather":
-            loc = params.get("location") or params.get("value")
-            results.append({"type": "weather", "data": get_weather(loc)})
 
-        elif atype == "timer":
-            duration = params.get("duration") or params.get("value", "")
-            results.append({"type": "timer", "data": set_timer(duration)})
+@tool(
+    name="set_reminder",
+    description=(
+        "Save a reminder, optionally with a time at which it speaks aloud. "
+        "Call this when Lethanial asks to be reminded of something. Compute "
+        "due from the clock supplied with his message, never from an example "
+        "and never from a guess: a reminder dated in the past is saved and "
+        "then never fires, which fails silently. Omit due when he gives no "
+        "time, which saves the reminder without scheduling it."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "content": {"type": "string",
+                        "description": "What to remind him about, in his words"},
+            "due": {"type": "string",
+                    "description": "ISO 8601, YYYY-MM-DDTHH:MM:SS, computed "
+                                   "from the supplied clock. A time in the "
+                                   "past never fires."},
+        },
+        "required": ["content"],
+    },
+    permission=Permission.WRITE,
+    returns_to_model=False,
+)
+def set_reminder_tool(content, due=None):
+    return set_reminder(content, due)
 
-        elif atype == "reminder":
-            content  = params.get("content") or params.get("value", "")
-            due_time = params.get("due", None)
-            results.append({"type": "reminder", "data": set_reminder(content, due_time)})
 
-        elif atype == "cancel_reminder":
-            content = params.get("content") or params.get("value", "")
-            results.append({"type": "cancel_reminder", "data": cancel_reminder(content)})
+@tool(
+    name="cancel_reminder",
+    description=(
+        "Delete saved reminders matching a phrase. Call this when Lethanial "
+        "cancels, removes, or says never mind about a reminder. Match on the "
+        "distinctive words of the reminder rather than the whole sentence."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "content": {"type": "string",
+                        "description": "Words to match against saved reminders"},
+        },
+        "required": ["content"],
+    },
+    permission=Permission.WRITE,
+    returns_to_model=False,
+)
+def cancel_reminder_tool(content):
+    return cancel_reminder(content)
 
-    return results
+
+@tool(
+    name="dismiss",
+    description=(
+        "End the conversation. Call this when Lethanial is signing off rather "
+        "than asking for anything: thanks, that's all, I'm good, goodbye, "
+        "alright I'm done, or anything that reads as closing rather than "
+        "continuing. Judge the intent, not the words. Do not call it when a "
+        "similar phrase sits inside a larger thought, such as later meaning "
+        "afterward, or I'm good answering how he is. When in doubt do not call "
+        "it: staying available costs him nothing and cutting him off mid "
+        "thought does. Say a short natural goodbye alongside it, varied rather "
+        "than a stock line."
+    ),
+    input_schema={"type": "object", "properties": {}, "required": []},
+    permission=Permission.CONTROL,
+    returns_to_model=False,
+)
+def dismiss_tool():
+    """Executes nothing. The state transition happens in brain.py, which reads
+    the call and exits the follow up loop.
+
+    It is a tool rather than a bracket tag because it is a real state change,
+    unlike an emotion cue, and because keeping it as a tag would have meant
+    keeping the whole tag parser alive for exactly one case. As a tool it also
+    lands in tool_call_log, which finally makes it measurable how often Nova
+    ends a session while Lethanial is still talking."""
+    return "dismissed"

@@ -103,6 +103,34 @@ def note_cache(read_tokens, creation_tokens):
         _turn["stages"].setdefault("cache_creation_tokens", creation_tokens)
 
 
+def note_tool(tool_ms):
+    """Time spent inside the tool itself, separate from the model call that
+    speaks about the result.
+
+    The old single action_ms bundled both, so a slow action turn could not be
+    attributed. Weather is two HTTP round trips; a timer is a thread spawn and
+    effectively free. Whether a bridge sentence is worth its verbosity depends
+    on this number, so it is measured before that is decided rather than
+    guessed at from which tools feel slow."""
+    with _lock:
+        if _turn is None:
+            return
+        _turn["action_fired"] = True
+        _turn["stages"].setdefault("tool_ms", tool_ms)
+
+
+def note_second_ttft(second_ttft_ms):
+    """Time to first token on the follow up call that reads a tool result back.
+
+    Only set for tools with returns_to_model. Fire and forget tools never make
+    this call, and a null here is the signal that the turn took the cheap
+    path."""
+    with _lock:
+        if _turn is None:
+            return
+        _turn["stages"].setdefault("second_ttft_ms", second_ttft_ms)
+
+
 def note_action(action_ms):
     """Record the extra work an action turn does: dispatching the action and
     making the second Claude call. Flags the turn so action turns can be
@@ -174,6 +202,8 @@ def end_turn(transcript=None, response=None):
         cache_creation_tokens=stages.get("cache_creation_tokens"),
         first_sentence_ms=stages.get("first_sentence_ms"),
         max_pause_ms=stages.get("max_pause_ms"),
+        tool_ms=stages.get("tool_ms"),
+        second_ttft_ms=stages.get("second_ttft_ms"),
     )
 
     total = stages.get("total_perceived_ms")

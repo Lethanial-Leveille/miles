@@ -20,15 +20,8 @@ def reg():
 
 @pytest.fixture
 def native(monkeypatch, reg):
-    """NATIVE_TOOLS on, with an isolated registry."""
-    monkeypatch.setattr(prompts, "NATIVE_TOOLS", True)
-    monkeypatch.setattr(prompts, "registry", reg)
-    return reg
-
-
-@pytest.fixture
-def legacy(monkeypatch, reg):
-    monkeypatch.setattr(prompts, "NATIVE_TOOLS", False)
+    """An isolated registry in place of the production singleton, so these
+    tests do not depend on which tools happen to be registered."""
     monkeypatch.setattr(prompts, "registry", reg)
     return reg
 
@@ -50,13 +43,6 @@ def _build():
 
 
 # ── flag routing ──
-
-def test_legacy_path_uses_action_tag_instructions(legacy):
-    prompt = _build()
-    assert "ACTION INSTRUCTION:" in prompt
-    assert "[ACTION: weather" in prompt
-    assert "YOUR TOOLS:" not in prompt
-
 
 def test_native_path_uses_the_generated_block(native):
     _register(native, "get_weather", "Current outdoor conditions. More detail.")
@@ -88,30 +74,24 @@ def test_prompt_can_only_claim_registered_tools(native):
 
 # ── blocks that survive both paths ──
 
-@pytest.mark.parametrize("path", ["native", "legacy"])
-def test_memory_instructions_survive_both_paths(request, path):
-    request.getfixturevalue(path)
+def test_memory_instructions_survive_the_migration(native):
     prompt = _build()
     assert "MEMORY INSTRUCTION:" in prompt
     assert "[MEMORY-EXPLICIT:" in prompt
 
 
-@pytest.mark.parametrize("path", ["native", "legacy"])
-def test_clock_instructions_survive_both_paths(request, path):
+def test_clock_instructions_survive_the_migration(native):
     """Regression guard for 5ad97de. The clock paragraph used to sit inside the
     action tag block; deleting that block in Phase 2 would have taken it along
     and Nova would go back to copying the date out of her own prompt, dating
     every reminder months in the past so none could ever fire."""
-    request.getfixturevalue(path)
     prompt = _build()
     assert "CLOCK:" in prompt
     assert "supplied at the end of every message" in prompt
     assert "A reminder dated in the past will never fire" in prompt
 
 
-@pytest.mark.parametrize("path", ["native", "legacy"])
-def test_clock_block_asks_for_only_what_was_requested(request, path):
-    request.getfixturevalue(path)
+def test_clock_block_asks_for_only_what_was_requested(native):
     prompt = _build()
     assert "Answer only the part that was asked" in prompt
 

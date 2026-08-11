@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import datetime
 from config import DB_PATH
@@ -167,6 +168,44 @@ def _migration_009_recording_path(conn):
     conn.execute("ALTER TABLE verification_log ADD COLUMN recording_path TEXT")
 
 
+def _migration_010_tool_use(conn):
+    """Tool call timing on timing_log, plus a log of the calls themselves.
+
+    tool_ms is the tool's own execution: the HTTP round trips for weather, the
+    thread spawn for a timer. second_ttft_ms is time to first token on the
+    follow up call that speaks about the result, which only happens for tools
+    with returns_to_model set. Separating them answers the question the old
+    single action_ms could not: when an action turn feels slow, was it the tool
+    or was it Claude reading the result back.
+
+    tool_call_log is a sibling of verification_log and timing_log, one row per
+    call. Tool results are neither conversation nor memory: putting them in
+    conversation_history would replay last Tuesday's weather into the prompt as
+    context, and putting them in memories would mix facts about the world at one
+    instant with facts about Lethanial. They are here for the same reason the
+    other two logs exist, to make a subsystem tunable from data rather than
+    from feel.
+
+    arguments and result are stored as text. result is truncated on write; the
+    full payload is not worth keeping and a calendar entry or a workout log is
+    personal data that should not accumulate without a reason."""
+    for column in ("tool_ms REAL", "second_ttft_ms REAL"):
+        conn.execute(f"ALTER TABLE timing_log ADD COLUMN {column}")
+
+    conn.execute("""
+        CREATE TABLE tool_call_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            arguments TEXT,
+            result TEXT,
+            is_error INTEGER NOT NULL DEFAULT 0,
+            duration_ms REAL,
+            model TEXT
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -177,7 +216,12 @@ MIGRATIONS = [
     (7, _migration_007_response_length_and_cache),
     (8, _migration_008_max_pause),
     (9, _migration_009_recording_path),
+    (10, _migration_010_tool_use),
 ]
+
+# Tool results are capped rather than kept whole. Weather from three weeks ago
+# has no value, and once Calendar lands these rows carry real event contents.
+TOOL_RESULT_MAX_CHARS = 500
 
 
 def _run_migrations(conn):
@@ -397,7 +441,7 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
                tts_ttfb_ms, tts_first_audio_ms, action_ms, total_perceived_ms,
                model=None, response=None, cache_read_tokens=None,
                cache_creation_tokens=None, first_sentence_ms=None,
-               max_pause_ms=None):
+               max_pause_ms=None, tool_ms=None, second_ttft_ms=None):
     # Derived here rather than at every call site so the count and the text it
     # describes can never drift apart.
     response_words = len(response.split()) if response else None
@@ -410,14 +454,51 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
             speech_end_to_endpoint_ms, transcribe_ms, verify_ms,
             claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
             action_ms, total_perceived_ms, model, response, response_words,
-            cache_read_tokens, cache_creation_tokens, first_sentence_ms, max_pause_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            cache_read_tokens, cache_creation_tokens, first_sentence_ms, max_pause_ms,
+            tool_ms, second_ttft_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (datetime.now().isoformat(), turn_type, int(action_fired), transcript,
          speech_end_to_endpoint_ms, transcribe_ms, verify_ms,
          claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
          action_ms, total_perceived_ms, model, response, response_words,
          cache_read_tokens, cache_creation_tokens, first_sentence_ms,
-         max_pause_ms)
+         max_pause_ms, tool_ms, second_ttft_ms)
+    )
+    conn.commit()
+    conn.close()
+
+
+def log_tool_call(tool_name, arguments, result, is_error=False,
+                  duration_ms=None, model=None):
+    """One row per tool call. Truncates the result on write.
+
+    Failures are logged too, with is_error set. A tool that errored is the most
+    interesting row in the table: it is the one that explains why Nova said
+    something strange."""
+    text = "" if result is None else str(result)
+    if len(text) > TOOL_RESULT_MAX_CHARS:
+        text = text[:TOOL_RESULT_MAX_CHARS] + "..."
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """INSERT INTO tool_call_log
+           (created_at, tool_name, arguments, result, is_error, duration_ms, model)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (datetime.now().isoformat(), tool_name, json.dumps(arguments or {}),
+         text, int(is_error), duration_ms, model)
+    )
+    conn.commit()
+    conn.close()
+
+
+def prune_tool_call_log(max_rows=2000):
+    """Cap the table by row count, oldest first, the way ARCHIVE_MAX_FILES caps
+    recordings. Called opportunistically rather than on a schedule."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "DELETE FROM tool_call_log WHERE id NOT IN "
+        "(SELECT id FROM tool_call_log ORDER BY id DESC LIMIT ?)",
+        (max_rows,)
     )
     conn.commit()
     conn.close()

@@ -85,14 +85,14 @@ new drift is caught.
 | Claim | How to check | Last verified |
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
-| Whether `stop_sequences` is passed to the API | `grep -rn "stop_sequences" src/` (expect zero hits) | Aug 11 2026 |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (136) |
+| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Aug 11 2026 (6) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (166) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
-| Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (4836 flag off, 4991 flag on) |
+| Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
 | Speaker device resolution | `grep -n SPEAKER src/config.py src/tts.py` | Aug 11 2026 (by name, not device string) |
 | Which modules exist | `ls src/*.py` | Aug 11 2026 (20 modules) |
-| Schema version | `grep -c "^    (" src/database.py` around `MIGRATIONS` | Aug 11 2026 (9) |
+| Schema version | `grep -c "^    (" src/database.py` around `MIGRATIONS` | Aug 11 2026 (10) |
 
 ### Why these specific ones drifted
 
@@ -399,3 +399,47 @@ to 136.
 - Prefix after registration: 4991 with the flag on, margin +895. Weather's
   schema and capability line cost 805 tokens. The Phase 2 squeeze recorded in
   the step 2 entry resolves itself once tools exist.
+
+
+### Phase 2 and 3: tool use is live (Aug 11 2026) (DONE)
+
+Bracket action tags deleted, six tools registered, `NATIVE_TOOLS` flag removed.
+Tests 136 to 166. Prefix 5942, margin +1846.
+
+- **Deleted:** `ACTION_TAG_INSTRUCTIONS`, `parsing.extract_actions`,
+  `brain._parse_action_tag`, `actions.execute_actions`, the legacy prose
+  `get_weather`, `ACTION_PREFIX`, `LOOKAHEAD_CHARS`, and StreamRouter's tag
+  detection. **Survived:** `strip_leading_bracket_cue` for emotion cues and
+  `extract_memories`, both with a note on the function saying why.
+- **Dropping the lookahead is a latency win, not just a simplification.** The
+  router used to buffer 50 characters before considering anything, and that
+  wait sat directly on the path to first audio. It existed only to stop a stray
+  "[" being read as a tag. Tool calls arrive in their own content blocks, so a
+  short first sentence now flushes immediately.
+- **The follow up call is a bounded loop, not one call.** Treating it as
+  guaranteed to produce speech was a real bug: it intermittently re-called
+  `get_weather` instead of reading the result back, which yielded no text and
+  returned an empty turn. `MAX_TOOL_ROUNDS` bounds it and the final round is
+  made without `tools`, so the model has nothing left to reach for and must
+  answer. A hard floor rather than a hope that it converges.
+- **DIVERGENCE, caught only by a live call.** Every mocked test passed while
+  Nova refused to call `get_weather` at all, asking "where?" every time. The
+  cause was in the tool description: it said to use "his home location", and
+  the seed memories name more than one place he lives, so the ambiguity was
+  real and refusing to guess was correct behavior. Fixed by interpolating
+  `DEFAULT_LOCATION` into the description so the two can never disagree.
+  - Lesson worth keeping: **a tool description is prompt text and needs the
+    same scrutiny.** The unit tests asserted it mentioned rain and jackets.
+    They could not assert that it was unambiguous.
+- **A smoke test poisoned its own next run.** The first failed turn wrote "I
+  need a location" into `conversation_history`, and every following turn read
+  it back as an example and repeated it. Same few shot self teaching effect as
+  the verbosity finding. Smoke tests against the real database must delete
+  their rows by id afterwards.
+- Measured cost of an action turn: `tool_ms` 450 to 600ms for weather (two HTTP
+  calls), `second_ttft_ms` roughly 620ms. About 1.1s on top of a plain turn.
+  That is the figure the bridge sentence decision was deferred for; it is now
+  measurable per tool rather than guessed.
+- **Not built: Hevy and Google Calendar.** Blocked on scoping, credentials, and
+  a decision about what a calendar write is permitted to do. Not inventing an
+  API contract for a service that writes to a real calendar.
