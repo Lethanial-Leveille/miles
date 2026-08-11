@@ -155,13 +155,38 @@ DB_PATH         = os.path.expanduser("~/miles/data/miles.db")
 TTS_VOICE_ID = "qSeXEcewz7tA0Q0qk9fH"
 
 ELEVENLABS_API_KEY   = os.environ.get("ELEVENLABS_API_KEY")
-DEFAULT_TTS_MODEL    = "eleven_flash_v2_5"
 EXPRESSIVE_TTS_MODEL = "eleven_v3"   # HTTP only, no WebSocket, no speaker boost
 TTS_OUTPUT_FORMAT    = "pcm_22050"   # raw S16_LE mono, piped straight to aplay
 
+# flash_v2 rather than flash_v2_5, measured Aug 11 2026.
+#
+# v2_5 does not merely ignore <phoneme> tags, it drops the word they wrap.
+# Synthesizing "Lethanial" plain gave 0.79s of audio; wrapped in a phoneme tag
+# it gave 0.23s, and deliberately absurd phonemes gave the same 0.23s. Identical
+# output for different phoneme strings means the content is discarded.
+#
+# v2 honors them: correct phonemes matched the plain duration at 0.74s, and
+# absurd phonemes stretched to 1.21s.
+#
+# The switch is free. Median time to first byte over five runs was 349ms on v2
+# against 347ms on v2_5, which is noise. v2 is English only, and Nova speaks
+# English.
+DEFAULT_TTS_MODEL = "eleven_flash_v2"
+
+# Use the arpabet column instead of the alias respelling. Requires a model that
+# honors phoneme tags; on v2_5 this would delete the word.
+#
+# Aliases are guesses tuned by ear. Phonemes are exact. Off by default so the
+# model change can be judged on its own first: turn it on once you are happy
+# with how v2 sounds generally.
+TTS_PHONEME_TAGS = False
+
+# ElevenLabs accepts 0.7 to 1.2. Set explicitly rather than left to the API
+# default, because an unset speed is an invisible dependency on whatever the
+# API decides, and this lands directly on how long a turn occupies the room.
 TTS_VOICE_SETTINGS = VoiceSettings(
     stability=0.60, similarity_boost=0.75, style=0.00,
-    use_speaker_boost=True,
+    use_speaker_boost=True, speed=1.00,
 )
 
 # Kept for the response classification work that selects a profile per turn.

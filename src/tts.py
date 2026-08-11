@@ -9,7 +9,7 @@ import timing
 from database import get_pronunciations
 from config import (
     ELEVENLABS_API_KEY, TTS_VOICE_ID,
-    DEFAULT_TTS_MODEL, TTS_OUTPUT_FORMAT,
+    DEFAULT_TTS_MODEL, TTS_OUTPUT_FORMAT, TTS_PHONEME_TAGS,
     TTS_VOICE_SETTINGS, SPEAKER_NAME_HINT, speak_lock,
 )
 
@@ -51,14 +51,24 @@ def normalize_pronunciation(text):
         print(f"Pronunciation lookup failed, speaking as written: {e}", flush=True)
         return text
 
-    for grapheme, alias in rows:
+    for row in rows:
+        grapheme, alias = row[0], row[1]
+        arpabet = row[2] if len(row) > 2 else None
+
+        # Phonemes are exact; an alias is a respelling tuned by ear. Prefer the
+        # phonemes when the model can honor them and the row has them.
+        replacement = alias
+        if TTS_PHONEME_TAGS and arpabet:
+            replacement = (f'<phoneme alphabet="cmu-arpabet" ph="{arpabet}">'
+                           f'{grapheme}</phoneme>')
+
         # The replacement is a lambda, not the alias string, because re.sub
         # interprets backslash escapes in a replacement template. An alias
         # containing \1 raised "invalid group reference" and one containing \n
         # would have silently inserted a newline. Aliases are phonetic
         # respellings typed by hand, so they must be substituted literally.
-        text = re.sub(rf'\b{re.escape(grapheme)}\b', lambda _, a=alias: a, text,
-                      flags=re.IGNORECASE)
+        text = re.sub(rf'\b{re.escape(grapheme)}\b',
+                      lambda _, r=replacement: r, text, flags=re.IGNORECASE)
     return text
 
 _elevenlabs = ElevenLabs(api_key=ELEVENLABS_API_KEY)

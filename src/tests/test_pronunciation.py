@@ -91,7 +91,7 @@ def test_ordering_is_by_grapheme_length_not_insertion(db):
     db.upsert_pronunciation("aa", "SHORT")
     db.upsert_pronunciation("aa bb cc", "LONGEST")
     db.upsert_pronunciation("aa bb", "MIDDLE")
-    graphemes = [g for g, _ in db.get_pronunciations()]
+    graphemes = [row[0] for row in db.get_pronunciations()]
     assert graphemes == sorted(graphemes, key=len, reverse=True)
     assert tts.normalize_pronunciation("aa bb cc") == "LONGEST"
 
@@ -142,7 +142,7 @@ def test_a_new_entry_takes_effect_without_a_migration(db):
 
 def test_upsert_replaces_an_existing_alias(db):
     db.upsert_pronunciation("Lethanial", "Lethanyool", verified=False)
-    rows = dict(db.get_pronunciations())
+    rows = {row[0]: row[1] for row in db.get_pronunciations()}
     assert rows["Lethanial"] == "Lethanyool"
     assert len(rows) == 1, "grapheme is UNIQUE, so this updates rather than adds"
 

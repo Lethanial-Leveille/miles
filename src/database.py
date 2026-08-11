@@ -577,7 +577,8 @@ def get_pronunciations():
     each call site means the rule cannot be forgotten by a new caller."""
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute(
-        "SELECT grapheme, alias FROM pronunciations ORDER BY LENGTH(grapheme) DESC"
+        "SELECT grapheme, alias, arpabet FROM pronunciations "
+        "ORDER BY LENGTH(grapheme) DESC"
     ).fetchall()
     conn.close()
     return rows
