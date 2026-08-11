@@ -374,6 +374,75 @@ building, not after.
 
 ---
 
+## Latency: where it stands and what is left
+
+Perceived latency (speech end to first audio) went from **8070ms measured** to
+roughly **5000ms estimated**, without touching the capture path in any way that
+required rebuilding it. Estimated rather than measured because the last two
+changes landed after the collection window; rerun `analyze_timing.py` after a
+day of use to confirm.
+
+What actually moved it, all measured rather than predicted:
+
+| Change | Effect |
+|---|---|
+| `SILENCE_LIMIT` 3.0s to 0.9s | −2060 ms |
+| whisper `-ac 1000` | −785 ms |
+| Haiku 4.5 over Sonnet 4.5 | −614 ms |
+| Prompt caching | 1995ms to 639ms TTFT on a hit |
+
+Measured and **rejected**, so nobody spends a day rediscovering them:
+
+- **whisper-server resident**: 40ms, not the several hundred predicted. The
+  148 MB model is in page cache after first load, so reloading is nearly free.
+  It also degraded one transcript into a repetition loop.
+- **Quantizing the model to q5_0**: 158ms *slower*. Dequantization costs more
+  than the memory bandwidth it saves on ARM.
+- **Chunked whisper streaming**: would make things worse. Transcription cost is
+  per invocation, not per second of audio (1s and 15s clips both cost ~2000ms),
+  so chunking means several full invocations.
+
+### Speculative endpointing is no longer worth it
+
+Its ceiling is the endpoint delay, because all it does is overlap downstream
+work with time already spent waiting. At the old 2960ms endpoint that ceiling
+was ~2400ms and it was the single largest lever available. At 900ms it is
+**~500ms**, since triggering below 300 to 400ms of silence produces constant
+false fires.
+
+High complexity, touches the capture path, and it creates a problem it cannot
+solve on its own: firing early means Nova sometimes starts talking mid thought,
+which needs barge in to recover from. Build barge in because interrupting her
+is worth having, not to chase 500ms.
+
+**Barge in and speculative endpointing share their hard part**, which is
+cancelling in flight pipeline work, including a TTS stream already writing to
+aplay. Build that cancellation once and both become straightforward. That is
+the right unit of work if either is wanted.
+
+### Remaining ideas, ranked by payoff per unit of work
+
+1. **whisper tiny.en instead of base.en — 724ms measured.** `ggml-tiny.en.bin`
+   is already downloaded. One config line. **Do not ship it on the strength of
+   that number alone**: the accuracy check behind it is four clips from one
+   enrollment recording plus a reference sample, and the cases that matter are
+   low SNR far field turns, which already transcribe badly. Use
+   `compare_whisper.py --model ../whisper.cpp/models/ggml-tiny.en.bin
+   --worst-snr` once the recording archive has a few dozen real commands.
+2. **A second prompt cache breakpoint on conversation history — 200 to 400ms,
+   untested.** Only the system prompt is cached today; the twenty messages of
+   history sit after the breakpoint and are re prefilled every turn. Four
+   breakpoints are available and one is used. Note that trimming assistant
+   turns to thirty words already cut this cost, so measure before adding more.
+3. **Ask for a short opening sentence — 200 to 300ms, free.** The 608ms
+   sentence assembly stage is the model generating the first sentence before
+   anything can be spoken. A shorter opener starts audio sooner and serves the
+   brevity goal at the same time. Test it the way the length instruction was
+   tested, with repeated sampling.
+4. **Run verification concurrently with transcription — 275ms.** They are
+   independent and both operate on the same wav. Needs care so the transcript
+   still reaches the verification log, which is why it was not done inline.
+
 ## Not blocked, and worth doing anytime
 
 ### Multi speaker verification architecture
