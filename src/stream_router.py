@@ -19,6 +19,10 @@ class StreamRouter:
         self._action_detected = False
         self._sentence_queue  = sentence_queue
         self.action_tag       = None   # set when [ACTION:...] is found
+        # Counted rather than inferred from queue size: the TTS consumer runs
+        # on the same event loop and can drain the queue between feeds, so
+        # qsize() is not a reliable "has anything been emitted yet" signal.
+        self.sentences_emitted = 0
 
     async def feed(self, delta: str) -> None:
         self._buf += delta
@@ -46,6 +50,7 @@ class StreamRouter:
         pre = self._buf[:idx].strip()
         if pre:
             await self._sentence_queue.put(pre)
+            self.sentences_emitted += 1
 
         tag_buf = self._buf[idx:]
         close   = tag_buf.find(']')
@@ -69,6 +74,7 @@ class StreamRouter:
             sentence = self._buf[:end].strip()
             if sentence:
                 await self._sentence_queue.put(sentence)
+                self.sentences_emitted += 1
             self._buf = self._buf[end:]
 
     async def finalize(self) -> None:
@@ -76,5 +82,6 @@ class StreamRouter:
         remaining = re.sub(r'\[.*$', '', self._buf).strip()
         if remaining:
             await self._sentence_queue.put(remaining)
+            self.sentences_emitted += 1
         self._buf = ""
         await self._sentence_queue.put(None)

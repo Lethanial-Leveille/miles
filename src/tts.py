@@ -1,7 +1,10 @@
 import os
 import re
 import subprocess
+import time
 from elevenlabs.client import ElevenLabs
+
+import timing
 
 from config import (
     ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID,
@@ -68,6 +71,7 @@ def speak(text, voice_settings=None, model=None):
         settings  = voice_settings or EMMA_NEUTRAL
         tts_model = model or DEFAULT_TTS_MODEL
 
+        requested_at = time.monotonic()
         try:
             audio_iter = _elevenlabs.text_to_speech.stream(
                 voice_id=ELEVENLABS_VOICE_ID,
@@ -90,9 +94,22 @@ def speak(text, voice_settings=None, model=None):
             stderr=subprocess.DEVNULL,
         )
 
+        # Split so network time and local write time are separable: ttfb is
+        # ElevenLabs, the gap between the two is ours.
+        first_chunk_done = False
         try:
             for chunk in audio_iter:
                 if chunk:
+                    if not first_chunk_done:
+                        ttfb_ms = (time.monotonic() - requested_at) * 1000.0
+                        aplay.stdin.write(chunk)
+                        aplay.stdin.flush()
+                        timing.note_tts(
+                            ttfb_ms,
+                            (time.monotonic() - requested_at) * 1000.0,
+                        )
+                        first_chunk_done = True
+                        continue
                     aplay.stdin.write(chunk)
                     aplay.stdin.flush()
         except Exception as e:

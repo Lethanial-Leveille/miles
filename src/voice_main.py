@@ -3,6 +3,7 @@ import numpy as np
 
 # audio import triggers mic/wake word hardware init and ALSA silencing
 import audio
+import timing
 import tts
 import actions
 from brain import ask_nova
@@ -39,11 +40,13 @@ try:
             audio.wake_model.reset()
 
             tts.play_chime()
+            timing.begin_turn('initial')
             wav_path  = audio.record_command()
             user_text = audio.transcribe(wav_path)
 
             if is_noise_transcript(user_text):
                 print(f"No speech detected (transcript: {user_text!r}).\n", flush=True)
+                timing.abandon_turn()
                 continue
 
             print(f"You: {user_text}", flush=True)
@@ -55,11 +58,13 @@ try:
             # get the intruder response.
             if result == audio.NO_AUDIO:
                 print("Nothing to verify.\n", flush=True)
+                timing.abandon_turn()
                 print("Listening for 'hey nova'...", flush=True)
                 continue
 
             if result == audio.REJECTED:
                 print("Voice not recognized.", flush=True)
+                timing.abandon_turn()
                 tts.speak("[calmly] That capability requires voice authorization. I don't recognize your voiceprint.")
                 audio.flush_input()
                 print("Listening for 'hey nova'...", flush=True)
@@ -69,6 +74,7 @@ try:
             nova_response = ask_nova(user_text)
             print(f"Nova: {nova_response}", flush=True)
             print(f"(Total: {time.time() - start:.2f}s)\n", flush=True)
+            timing.end_turn(transcript=user_text, response=nova_response)
 
             # Nova's own voice is buffered on the mic by now. Left in place it
             # trips the follow up window immediately.
@@ -84,11 +90,13 @@ try:
                     break
 
                 print("Listening for follow up... (10s timeout)", flush=True)
+                timing.begin_turn('followup')
                 followup_path = audio.listen_for_followup(timeout=10)
                 followup_turns += 1
 
                 if followup_path is None:
                     print("No follow up. Returning to wake word.\n", flush=True)
+                    timing.abandon_turn()
                     in_conversation = False
                     break
 
@@ -102,6 +110,7 @@ try:
                 if is_noise_transcript(followup_text):
                     print(f"No speech detected (transcript: {followup_text!r}). "
                           "Returning to wake word.\n", flush=True)
+                    timing.abandon_turn()
                     break
 
                 print(f"You: {followup_text}", flush=True)
@@ -109,6 +118,7 @@ try:
                 cleaned = followup_text.lower().strip().rstrip('.')
                 if cleaned in EXIT_PHRASES:
                     print("Conversation ended by user.", flush=True)
+                    timing.abandon_turn()
                     tts.speak("[calmly] Understood. I'll be here if you need me.")
                     audio.flush_input()
                     in_conversation = False
@@ -119,10 +129,12 @@ try:
 
                 if followup_result == audio.NO_AUDIO:
                     print("Nothing to verify. Returning to wake word.\n", flush=True)
+                    timing.abandon_turn()
                     break
 
                 if followup_result == audio.REJECTED:
                     print("Voice not recognized on follow up.", flush=True)
+                    timing.abandon_turn()
                     tts.speak("[calmly] I don't recognize that voice. Returning to standby.")
                     audio.flush_input()
                     in_conversation = False
@@ -132,6 +144,7 @@ try:
                 nova_response = ask_nova(followup_text)
                 print(f"Nova: {nova_response}", flush=True)
                 print(f"(Total: {time.time() - start:.2f}s)\n", flush=True)
+                timing.end_turn(transcript=followup_text, response=nova_response)
 
                 audio.flush_input()
 
