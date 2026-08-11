@@ -1,6 +1,19 @@
 import os
 import threading
+from pathlib import Path
+
+from dotenv import load_dotenv
 from elevenlabs import VoiceSettings
+
+# Loaded here rather than in auth.py alone, because config.py is the one module
+# every entry point imports. systemd passes .env in through EnvironmentFile, so
+# the service always had these; a foreground `python voice_main.py` did not, and
+# the only symptom was a 401 from ElevenLabs on every sentence while the turn
+# itself worked perfectly. The two launch paths now behave the same.
+#
+# load_dotenv does not override variables that are already set, so under systemd
+# this is a no op and EnvironmentFile still wins.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ── Audio hardware ──
 CHUNK = 1280          # 80ms frames, required by openWakeWord
