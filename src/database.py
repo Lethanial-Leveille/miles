@@ -147,6 +147,16 @@ def _migration_007_response_length_and_cache(conn):
         conn.execute(f"ALTER TABLE timing_log ADD COLUMN {column}")
 
 
+def _migration_008_max_pause(conn):
+    """Longest pause the speaker took mid utterance and then spoke through.
+
+    SILENCE_LIMIT has to clear this value or turns end on hesitation rather
+    than on a finished thought. The 0.63s figure it was set against came from
+    reading a scripted enrollment phrase, and spontaneous speech pauses longer
+    than read speech, so the constant needs tuning from real conversation."""
+    conn.execute("ALTER TABLE timing_log ADD COLUMN max_pause_ms REAL")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -155,6 +165,7 @@ MIGRATIONS = [
     (5, _migration_005_timing_log),
     (6, _migration_006_timing_model),
     (7, _migration_007_response_length_and_cache),
+    (8, _migration_008_max_pause),
 ]
 
 
@@ -374,7 +385,8 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
                transcribe_ms, verify_ms, claude_ttft_ms, claude_total_ms,
                tts_ttfb_ms, tts_first_audio_ms, action_ms, total_perceived_ms,
                model=None, response=None, cache_read_tokens=None,
-               cache_creation_tokens=None, first_sentence_ms=None):
+               cache_creation_tokens=None, first_sentence_ms=None,
+               max_pause_ms=None):
     # Derived here rather than at every call site so the count and the text it
     # describes can never drift apart.
     response_words = len(response.split()) if response else None
@@ -387,13 +399,14 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
             speech_end_to_endpoint_ms, transcribe_ms, verify_ms,
             claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
             action_ms, total_perceived_ms, model, response, response_words,
-            cache_read_tokens, cache_creation_tokens, first_sentence_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            cache_read_tokens, cache_creation_tokens, first_sentence_ms, max_pause_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (datetime.now().isoformat(), turn_type, int(action_fired), transcript,
          speech_end_to_endpoint_ms, transcribe_ms, verify_ms,
          claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
          action_ms, total_perceived_ms, model, response, response_words,
-         cache_read_tokens, cache_creation_tokens, first_sentence_ms)
+         cache_read_tokens, cache_creation_tokens, first_sentence_ms,
+         max_pause_ms)
     )
     conn.commit()
     conn.close()

@@ -36,15 +36,26 @@ VAD_ONSET_FRAMES = 2
 # constant was doing nothing except adding three seconds. Now that webrtcvad
 # actually endpoints, that margin is unnecessary.
 #
-# 1.2s is set against measured behavior, not taste: frame level VAD over real
-# recordings puts the longest genuine pause inside an utterance at 0.63s, with
-# every other internal pause at or under 0.24s. This leaves roughly double the
-# worst observed pause.
+# 0.9s against a measured worst internal pause of 0.63s.
 #
-# Raise it if Nova starts cutting you off mid thought. That symptom means a
-# real pause exceeded this value, and the fix is this number rather than
-# anything in the VAD.
-SILENCE_LIMIT = 1.2
+# Caveat worth knowing: that 0.63s came from reading a scripted phrase during
+# enrollment. Spontaneous conversation carries longer thinking pauses than
+# read speech does, so this margin is thinner in practice than the number
+# suggests. max_pause_ms is logged per turn precisely so this can be tuned
+# from real conversation instead of from scripted audio: if turns start
+# ending on a pause rather than on a finished thought, that column will show
+# pauses landing near this value, and the fix is this number.
+SILENCE_LIMIT = 0.9
+
+# Hard ceiling on one recording. 15% of recordings were hitting the old 15s
+# limit, every one of them a follow up, and every one truncated mid sentence:
+# thinking out loud in conversation runs longer than issuing a command.
+#
+# Capped below the whisper audio context window (WHISPER_AUDIO_CTX of 1000
+# frames is 20 seconds), because audio past that window is not transcribed at
+# all. Raising this past 18 means raising that too, which costs transcription
+# time, so the two move together or not at all.
+MAX_RECORD = 18.0
 
 # Discarded from the mic after Nova finishes speaking, on top of draining
 # whatever accumulated during playback.

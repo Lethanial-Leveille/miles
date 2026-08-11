@@ -173,6 +173,7 @@ def end_turn(transcript=None, response=None):
         cache_read_tokens=stages.get("cache_read_tokens"),
         cache_creation_tokens=stages.get("cache_creation_tokens"),
         first_sentence_ms=stages.get("first_sentence_ms"),
+        max_pause_ms=stages.get("max_pause_ms"),
     )
 
     total = stages.get("total_perceived_ms")

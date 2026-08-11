@@ -71,7 +71,7 @@ from config import (
     CHUNK, CHANNELS, RATE,
     WHISPER_MODEL, WHISPER_CLI, WHISPER_AUDIO_CTX, TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH,
-    VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT,
+    VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL,
     TTS_FLUSH_MARGIN_MS,
 )
@@ -188,11 +188,11 @@ with silence_stderr():
 def record_command():
     print("Listening...", flush=True)
 
-    MAX_RECORD        = 15
     MIN_RECORD        = 1.0
 
     frames          = []
     silent_chunks   = 0
+    longest_pause   = 0
     chunks_for_silence = int(SILENCE_LIMIT / 0.03)
     max_chunks      = int(MAX_RECORD / 0.03)
     min_chunks      = int(MIN_RECORD / 0.03)
@@ -208,6 +208,11 @@ def record_command():
         # to stay above an amplitude floor used to hold the recording open
         # until MAX_RECORD.
         if _is_speech(data):
+            # Longest pause the speaker took and then spoke through. This is
+            # the number SILENCE_LIMIT has to clear; if it creeps up toward
+            # the limit, turns are ending on hesitation rather than on a
+            # finished thought.
+            longest_pause = max(longest_pause, silent_chunks)
             silent_chunks = 0
             last_speech_at = time.monotonic()
         else:
@@ -215,6 +220,11 @@ def record_command():
 
         if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
             break
+
+    timing.mark('max_pause_ms', longest_pause * 30.0)
+    if total_chunks >= max_chunks:
+        print(f"NOTE: hit the {MAX_RECORD:.0f}s recording cap, speech may be "
+              f"truncated.", flush=True)
 
     # The user's wait starts the moment they stop talking, not when this
     # returns. Captured here because nothing downstream can recover it.
@@ -227,7 +237,7 @@ def record_command():
 
 def listen_for_followup(timeout=10):
     timeout_chunks    = int(timeout / 0.03)
-    max_chunks        = int(15 / 0.03)
+    max_chunks        = int(MAX_RECORD / 0.03)
     min_chunks        = int(0.5 / 0.03)
 
     # Sized to hold the full pre roll plus the frames that confirm onset, so
@@ -262,6 +272,7 @@ def listen_for_followup(timeout=10):
     # Phase 2: record until silence (mirrors record_command)
     total_chunks   = len(frames)
     silent_chunks  = 0
+    longest_pause  = 0
     last_speech_at = time.monotonic()
     while total_chunks < max_chunks:
         data   = stream.read(VAD_FRAME, exception_on_overflow=False)
@@ -269,6 +280,7 @@ def listen_for_followup(timeout=10):
         total_chunks += 1
 
         if _is_speech(data):
+            longest_pause = max(longest_pause, silent_chunks)
             silent_chunks = 0
             last_speech_at = time.monotonic()
         else:
@@ -278,6 +290,10 @@ def listen_for_followup(timeout=10):
             break
 
     timing.note_speech_end(last_speech_at)
+    timing.mark('max_pause_ms', longest_pause * 30.0)
+    if total_chunks >= max_chunks:
+        print(f"NOTE: hit the {MAX_RECORD:.0f}s recording cap, speech may be "
+              f"truncated.", flush=True)
 
     # Counts written frames only. This used to add waiting_chunks, reporting
     # time spent waiting for speech as though it were recorded audio, which is
