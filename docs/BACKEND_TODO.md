@@ -509,6 +509,58 @@ quality argument does not.
 
 ---
 
+## Memory system: correction before automation
+
+Three items, in dependency order. The third is blocked on the first two and
+must not be started before them.
+
+### 1. SUPERSEDE: nothing can update a memory (BLOCKING)
+
+`memories.superseded_by INTEGER` is declared at `database.py:29` and appears
+exactly once in the entire codebase. Nothing writes it. Verified Aug 11 2026:
+zero rows have it set.
+
+The consequence is that the memory store is append only in practice. A memory
+recorded wrong stays wrong, and the only remedy is deleting the row by hand.
+
+### 2. Expiry: volatile and references_date are write only
+
+`volatile` and `references_date` are both written by `save_memory` and read by
+nothing. Fifteen seed rows are flagged volatile. Nothing expires them, nothing
+filters on them, and nothing acts on a referenced date passing.
+
+Also unranked: `get_episodic_memories` is `ORDER BY id DESC LIMIT 20`, with no
+notion of importance or last use. Once more than twenty active memories exist,
+older ones fall out of the prompt silently, by id, regardless of value.
+
+Not yet urgent. There are currently zero active episodic memories, so nothing is
+being displaced today. That is runway to build this properly rather than
+retrofitting it under pressure, not a reason to skip it.
+
+### 3. `remember` as a tool (BLOCKED on 1 and 2)
+
+During the native tool use migration (Aug 11 2026) the question came up of
+whether `[MEMORY:]` and `[MEMORY-EXPLICIT:]` should become a `remember` tool
+alongside the action tags. Decision: **not yet**, and the reasoning is recorded
+here so it is not relitigated from scratch.
+
+The reason is **not** round trip cost. A `remember` tool with
+`returns_to_model=False` costs zero extra Claude calls, which is the entire
+purpose of that field. That argument was raised during the migration and it was
+wrong.
+
+The real reason is that **automating writes into a store that cannot be
+corrected is worse than manual capture**. Manual capture produces errors a human
+notices and fixes. Automated capture into an append only store produces errors
+that are permanent, accumulate silently, and are only removable by hand editing
+SQLite. The failure gets worse the better the tool works.
+
+So `remember` becomes a tool once SUPERSEDE and expiry exist, and not before.
+Until then the bracket tags stay and `extract_memories` in `parsing.py` survives
+untouched.
+
+---
+
 ## Quick reference
 
 ```bash

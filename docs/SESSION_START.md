@@ -1,0 +1,366 @@
+# Session start and drift control
+
+Read this before proposing anything. It exists because on Aug 11 2026 a full
+session of design work was planned against a handoff document that had drifted
+from the code, and the plan was wrong in its central premise.
+
+---
+
+## Rule zero: the repo wins
+
+Documents describe the repo. The repo is the authority.
+
+When any document here, in `CLAUDE.md`, in `docs/BACKEND_TODO.md`, or in a pasted
+handoff conflicts with source, **the source wins**. Say so out loud, name the
+conflicting claim, and fix the document in the same session. A silently
+corrected doc teaches nothing; a loudly corrected one stops the next repeat.
+
+This applies to me and to any assistant working here. An assistant that reads a
+document claim and a source file that disagree must report the disagreement
+before acting on either.
+
+---
+
+## Start of session preflight
+
+Run this. It takes seconds and it is cheaper than a wrong plan.
+
+```bash
+cd ~/miles
+
+# 1. Services actually running?
+systemctl is-active miles-voice miles-server miles-tunnel
+
+# 2. Working tree clean? Anything uncommitted from last session?
+git status --short && git log --oneline -5
+
+# 3. Test suite green, and how many tests?
+cd src && python -m pytest tests/ -q | tail -3 && cd ..
+
+# 4. Which model is live right now?
+grep -n "MODEL_A\|MODEL_AB_TEST" src/config.py
+
+# 5. Is prompt caching still engaging? A run of zeroes is the only symptom
+#    of the prefix falling under the model minimum.
+python3 -c "
+import sqlite3
+rows = sqlite3.connect('data/miles.db').execute(
+  'SELECT cache_read_tokens FROM timing_log ORDER BY id DESC LIMIT 10').fetchall()
+print('last 10 cache_read_tokens:', [r[0] for r in rows])"
+
+# 6. Current measured latency, so no one quotes a stale figure
+python3 -c "
+import sqlite3, statistics as st
+rows = sqlite3.connect('data/miles.db').execute(
+  'SELECT total_perceived_ms FROM timing_log WHERE total_perceived_ms IS NOT NULL'
+  ' ORDER BY id DESC LIMIT 30').fetchall()
+v = [r[0] for r in rows]
+print(f'perceived latency: n={len(v)} median={st.median(v):.0f}ms') if v else print('no data')"
+```
+
+Reading step 5 correctly matters, because two different things produce zeroes:
+
+- **Scattered zeroes** among healthy reads, roughly two or three in ten, are
+  normal. That is the 5 minute TTL expiring on turns spaced further apart than
+  the window. About 79 percent of observed turn gaps fall inside it, so a 20 to
+  30 percent miss rate is the expected steady state.
+  Observed Aug 11 2026: `[4751, 0, 0, 4751, 4751, 4521, 4521, 0, 4521, 4521]`.
+- **A contiguous run of zeroes**, every recent turn, means the prefix fell under
+  the model minimum. **Stop and investigate before doing anything else.** This
+  failure is silent: no error, no warning, no exception. That column is the only
+  signal.
+
+The read counts themselves varying (4751 against 4521) is also normal. The seed
+and episodic blocks are inside the cached region and change size as memories are
+added.
+
+---
+
+## Drift register
+
+Claims that have drifted before. Each row has the command that settles it.
+Check these when a document makes a claim about them, and add a row whenever a
+new drift is caught.
+
+| Claim | How to check | Last verified |
+|---|---|---|
+| Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
+| Whether `stop_sequences` is passed to the API | `grep -rn "stop_sequences" src/` (expect zero hits) | Aug 11 2026 |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (113) |
+| Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
+| Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (4836, +740) |
+| `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
+| Speaker device resolution | `grep -n SPEAKER src/config.py src/tts.py` | Aug 11 2026 (by name, not device string) |
+| Which modules exist | `ls src/*.py` | Aug 11 2026 (20 modules) |
+| Schema version | `grep -c "^    (" src/database.py` around `MIGRATIONS` | Aug 11 2026 (9) |
+
+### Why these specific ones drifted
+
+Every one of them drifted the same way: the document recorded an **intention**
+and the code recorded a **decision**, and nobody reconciled them. `stop_sequences`
+was in a pipeline diagram as the plan. Sonnet was the model when CLAUDE.md was
+written. The latency table was accurate the day it was measured. None of these
+were careless; they were all true once.
+
+That is the actual lesson. Docs do not drift because anyone was sloppy. They
+drift because a doc records a moment and code records the present, so the fix
+is not "be more careful" but "re verify on a schedule". The preflight is that
+schedule.
+
+---
+
+## End of session checklist
+
+Do this before closing the tmux session. It is the other half of the preflight.
+
+1. **Did any config constant change?** Update the Key Config Values table in
+   `CLAUDE.md`. That table is the single most load bearing part of the file.
+2. **Did any claim in `CLAUDE.md` become false?** Fix it now, not next session.
+   Include the correction in the commit message.
+3. **Did a decision get made that a future session would otherwise reopen?**
+   Add it to the decision log below, with the reason. Reason matters more than
+   the decision, because without it the next session relitigates it.
+4. **Did production diverge from the plan?** Mark it `DIVERGENCE` in the log.
+5. **Did work get deferred?** Add it to `docs/BACKEND_TODO.md` with why it was
+   deferred, not just that it was.
+6. **New measurement taken?** Replace the old number rather than adding a second
+   one. Two latency figures in one repo means nobody trusts either.
+7. **Run the test suite one more time** and record the count if it changed.
+
+---
+
+## Decision log
+
+Chronological. Newest at the bottom. Each entry: what was decided, why, and its
+status. Status markers: `(DONE)`, `(NEXT)`, `(IN PROGRESS)`, `(DEFERRED)`,
+`(SUPERSEDED)`. `DIVERGENCE` flags production differing from the written plan.
+
+### Endpointing moved from amplitude to webrtcvad (Aug 10 2026) (DONE)
+
+- `SILENCE_THRESHOLD = 200` on mean absolute amplitude was never crossed by real
+  speech, because capture level was about -53 dBFS RMS.
+  - Consequence: recordings ended on the timeout, not on speech, so every
+    recording was 3.0 to 3.4 seconds and any command longer than that was
+    truncated mid sentence. Several garbled transcripts blamed on Whisper were
+    actually truncated audio.
+- Replaced with webrtcvad at `VAD_MODE = 2`.
+  - Reason for 2 rather than 3: Resemblyzer uses 3 for offline trimming where
+    clipping a soft onset costs nothing. Live capture is less forgiving.
+- `VAD_PREROLL_MS = 300` added because frames containing a soft leading consonant
+  were discarded before capture started, which truncated "What year do I
+  graduate?" to "year do I graduate?".
+
+### `SILENCE_LIMIT` 3.0 to 0.9 (Aug 10 2026) (DONE)
+
+- The 3.0 value was tuned when endpointing ran on a threshold that never fired,
+  so it was adding three seconds and doing nothing else.
+- Set to 0.9 against a measured worst internal pause of 0.63s.
+- **Caveat recorded deliberately:** that 0.63s came from reading a scripted
+  enrollment phrase. Spontaneous conversation carries longer pauses than read
+  speech, so the margin is thinner in practice than it looks. `max_pause_ms` is
+  logged per turn so this can be retuned from real conversation.
+- Measured effect: median perceived latency 8088ms to 4938ms.
+
+### Haiku 4.5 over Sonnet 4.5 (Aug 10 2026) (DONE)
+
+- Measured A/B over twenty turns, strict alternation rather than randomization.
+  - Reason for alternation: with a day of turns, random assignment can hand one
+    arm a 60/40 split and pair it with a slow network stretch.
+- Result: 614ms faster median time to first token, 31 percent lower, p=0.0007 on
+  a permutation test. Distributions barely overlapped.
+- Haiku also drew more follow up turns, which carry larger prompts, so the split
+  worked against it and it won anyway.
+- A/B harness left in place but `MODEL_AB_TEST = False`.
+  - **Pin it off before measuring anything cache related.** Prompt caches are
+    model scoped, so alternation makes every turn a miss.
+
+### Prompt caching on the system prompt (Aug 10 2026) (DONE, fragile)
+
+- System prompt is the stable prefix. Conversation history changes every turn and
+  sits after the breakpoint.
+- Measured effect on a cache hit: time to first token 1995ms to 639ms.
+- **Fragile:** Haiku 4.5 needs a 4096 token cacheable prefix; the assembled
+  prompt is about 4165. Roughly 69 tokens of margin. Falling under it disables
+  caching with no error. `cache_read_tokens` is logged for exactly this reason.
+- Known defect, deferred: `_episodic_block` is appended *last* in
+  `build_enhanced_prompt`, inside the cached region, so every explicit memory
+  save invalidates the whole prefix. `(DEFERRED)` to BACKEND_TODO.
+
+### Response length cut by trimming history, not by instruction (Aug 10 2026) (DONE)
+
+- Holding the prompt fixed and varying only history: 94 words with full history
+  against 54 with assistant turns trimmed to 30 words.
+- Nova was few shot learning her own verbosity from her own transcript, and each
+  long answer made the next likelier.
+- Trimming beat the alternatives. Sending no history scored worse (64 words, much
+  longer tail) because an open question with no context invites a survey.
+- Generalized lesson worth keeping: **the transcript is a stronger length signal
+  than any instruction in the system prompt.**
+
+### Exit phrases replaced by intent based dismiss (Aug 11 2026) (DONE)
+
+- Twenty six exact strings could not match "alright thanks Nova" and seven of them
+  ("later", "peace", "I'm good", "that's it") are ordinary mid conversation
+  utterances that would have ended a session by accident.
+- Replaced with `[ACTION: dismiss]`, judged on intent.
+
+### Clock injected into the last user turn, not the system prompt (Aug 11 2026) (DONE)
+
+- Nova had no clock and, rather than saying so, copied the date out of the
+  reminder example in her own prompt. Every reminder was dated months in the
+  past, so none could ever fire.
+- Injected into the final user turn by `_with_current_time`, **not** the system
+  prompt.
+  - Reason: the system prompt is the cached prefix. A value changing every turn
+    is the textbook silent cache invalidator. Caching would report success while
+    never producing a hit.
+
+### Native tool use migration (Aug 11 2026) (IN PROGRESS)
+
+- **DIVERGENCE found:** the handoff document claimed `stop_sequences=["[ACTION:"]`
+  was passed on every call, and that a tool result could therefore never return
+  to the model. Neither is true in code. `ACTION_PREFIX` is consumed only by
+  `StreamRouter`, and a two round trip loop for weather already exists at
+  `brain.py` around the `needs_data` check.
+- Migration proceeds anyway, with the **reason restated**: it is not a capability
+  unlock. `needs_data` is one line and could become a set membership check.
+  The reason is that adding a tool today requires consistent edits across prompt
+  prose, `extract_actions`, `_parse_action_tag`, `execute_actions`, and that line,
+  with nothing enforcing consistency. Four more tools is sixteen chances to miss
+  one, and the failure mode is a capability the prompt does not know exists.
+- Decisions taken:
+  - `dismiss` becomes a tool with `returns_to_model=False` and no execution.
+    Reason: it is a real state transition that exits the follow up loop, unlike
+    `[calmly]` which is a rendering hint with no side effect. Making it a tool
+    lets Phase 2 delete the tag parser outright rather than keeping it alive for
+    one case, and every dismiss becomes a `tool_call_log` row.
+  - No added acknowledgment during tool execution. Use the text block that can
+    precede `tool_use` in the same response, which gives the bridge sentence free
+    and in Nova's own words. Any conditional bridge behavior ships off, and gets
+    decided from the `tool_ms` distribution after a week rather than from a guess
+    about which tools feel slow.
+  - Tool results persist to a new `tool_call_log` table, capped by age the way
+    `ARCHIVE_MAX_FILES` caps recordings. Reason they do not go in
+    `conversation_history`: that table feeds `get_recent_messages`, so last
+    Tuesday's weather would become prompt context. Reason not `memories`:
+    memories are facts about Lethanial, tool results are facts about the world at
+    one instant.
+  - Within a turn, results live in the messages array as real `tool_result`
+    blocks. Across turns they do not, and `get_recent_messages` keeps returning
+    plain text.
+- **Gate on Phase 2, blocking:** measure the prompt with `count_tokens` at three
+  points, now, after Phase 1, and against a simulated post Phase 2 prompt before
+  deleting anything. Phase 2 removes roughly 30 lines of bracket instructions
+  from inside the cached prefix while Phase 1 adds tool schemas to it, and those
+  move in opposite directions against a 69 token margin. If the projection lands
+  under 4096, stop and report rather than shipping.
+  - If it does go under, the fix is to move genuinely stable content from after
+    the breakpoint to before it, not to pad with filler. Padding is tokens paid
+    on every cache write for nothing.
+
+### Weather and clock verbosity (Aug 11 2026) (NEXT)
+
+- Weather returns a finished English sentence containing four facts, so Nova
+  reads the sentence aloud. Fix is the return value, not the prompt: a dict
+  cannot be read as a paragraph.
+- Clock verbosity is a prompt fix, not a tool. The stamp is already in every user
+  turn, so a `get_time` tool would add a round trip to retrieve a value already
+  in context.
+  - **Sequencing hazard:** the clock guidance currently lives inside
+    `ACTION_AND_MEMORY_INSTRUCTIONS`, which Phase 2 deletes. It must be lifted
+    into its own section first, or Phase 2 reintroduces the reminder date bug
+    fixed in `5ad97de`.
+
+### Tool registry, Phase 1 step 1 (Aug 11 2026) (DONE)
+
+`src/tools.py` plus `src/tests/test_tools.py`. No API wiring, no `brain.py`
+changes. Test count 72 to 100.
+
+- **The decorator returns the function unchanged**, registration is a side
+  effect only.
+  - Reason: every tool stays an ordinary function that can be called and tested
+    directly, and registration can never alter runtime behavior. A wrapper would
+    make the registry a thing that can break a working tool.
+- **`ToolRegistry` is a class with a module level singleton**, `tools.registry`,
+  and `tools.tool` bound to it.
+  - Reason: tests build a throwaway registry, so no test can leak a tool into
+    another test or into a live turn.
+- **Six fields per tool**: name, description, input schema, permission,
+  `returns_to_model`, function.
+  - `returns_to_model` is the field that replaces the hardcoded `needs_data`
+    whitelist. True means a second Claude call, false means the text produced
+    alongside the call is the final answer.
+  - `Permission` has four tiers: READ, WRITE, EXTERNAL_WRITE, CONTROL. Defined
+    now, enforced later. Reason for defining early: retrofitting a tier across a
+    dozen tools costs more than recording it at registration, and a tool added
+    without one would be the tool that needed it most.
+- **Validation runs at import time.** The check that earns its keep is that every
+  name in `required` must exist in `properties`. The API does not catch that
+  typo; it surfaces as the model omitting a parameter it was told was mandatory,
+  with no error raised anywhere.
+- **`api_schemas()` sorts by name.** Load bearing, not tidiness: tools render
+  ahead of the system prompt in the cached prefix, so registration order leaking
+  into that list would move every byte after it and silently drop every cache
+  hit.
+- **No `summary` field.** The capability line is the first sentence of the
+  description.
+  - Reason: a separate summary is one more thing that can drift, and deriving it
+    puts a vague first sentence into the prompt where it gets noticed.
+- **`capability_prose()` is one line per tool, not full descriptions.**
+  - Reason: full descriptions already reach the model as tool schemas, so
+    repeating them would pay for the same tokens twice against a 69 token cache
+    margin. What the block adds is the boundary statement, that the list is
+    complete, which is what separates a missing capability from a forgotten one.
+- **`call()` lets argument mismatches raise `TypeError` naturally.**
+  - Reason: that is a programming error between schema and signature. It should
+    be loud, and wrapping it would hide which parameter was wrong.
+
+### Prompt wiring, Phase 1 step 2 (Aug 11 2026) (DONE)
+
+`NATIVE_TOOLS` flag, `ACTION_AND_MEMORY_INSTRUCTIONS` split three ways,
+capability block generated from the registry. `brain.py` untouched. Tests 100 to
+113.
+
+- **DIVERGENCE, and the most important finding of the session.** The "69 tokens
+  of cache margin" figure in `config.py` and `CLAUDE.md` was stale by roughly
+  600 tokens. Measured prefix is 4836, not 4165. Real margin is +740.
+  - It was load bearing: an entire phase of this migration was gated on it, and
+    the gate would have been evaluated against a number that was wrong by an
+    order of magnitude relative to the margin it described.
+  - Corroborated independently by live `cache_read_tokens` values of 4751 and
+    4521, which no one had compared against the written figure.
+  - Added to the drift register. **Never quote a prefix size that was not
+    measured this session.**
+- **The block was split three ways, not two.** It bundled three lifetimes:
+  memory tags stay indefinitely, clock guidance is permanent, action tags die in
+  Phase 2. Gating the third without taking the other two required separating all
+  three.
+- **The clock paragraph was buried mid list inside the action instructions.**
+  Phase 2 deleting that block wholesale would have taken it and reintroduced the
+  bug fixed in `5ad97de`. Promoted to its own `CLOCK_INSTRUCTIONS` constant,
+  included in both paths, with a regression test asserting it survives each.
+- **Clock conciseness folded in here rather than deferred.** Asking for the time
+  returned the time, the date, the day, and the year, because the injected stamp
+  contains all four and nothing said to pick one. Two sentences, added to the
+  block that was already being rewritten.
+  - Deliberately not a tool. The stamp is already in every user turn, so a
+    `get_time` tool would spend a full round trip retrieving a value already in
+    context, on the most latency sensitive question there is.
+- **One time cache invalidation accepted.** Extracting a paragraph from the
+  middle of a block reorders bytes in the cached prefix. One turn pays a write.
+  Contorting the structure to preserve byte identity was not worth it.
+- Measured, `count_tokens` against `claude-haiku-4-5`, 4096 floor:
+  - before step 2: 4757 (+661)
+  - after, flag off (production): 4836 (+740)
+  - after, flag on, empty registry: 4186 (+90)
+- **Phase 2 gate result: PASS, but conditionally.** Projected prefix after
+  deleting the action instructions is roughly 4186, about +90. That is not a
+  margin. **The deletion and the tool schemas must land in the same commit.**
+
+### Weather return shape (Aug 11 2026) (NEXT, step 3)
+
+Not addressed in step 2, deliberately. `get_weather` returns a finished English
+sentence containing four facts, so Nova reads the sentence aloud. The fix is the
+return value rather than the prompt, and it only matters once weather is a
+registered tool, so it belongs with step 3 along with the forecast endpoint for
+"is rain coming".
