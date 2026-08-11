@@ -85,11 +85,76 @@ def _migration_004_acoustic_measures(conn):
         conn.execute(f"ALTER TABLE verification_log ADD COLUMN {column}")
 
 
+def _migration_005_timing_log(conn):
+    """Per turn stage timings.
+
+    The existing "(Total: 5.14s)" print starts after recording ends, so it
+    cannot see the endpointing delay, which the user experiences as part of
+    the wait. Everything here is measured from the moment the user stopped
+    talking instead.
+
+    Every stage column is nullable: an action turn has an action_ms and a
+    plain turn does not, a turn that never reaches TTS has no perceived
+    latency, and a stage that errors leaves its column empty rather than
+    dropping the whole row."""
+    conn.execute("""
+        CREATE TABLE timing_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            turn_type TEXT NOT NULL,
+            action_fired INTEGER NOT NULL DEFAULT 0,
+            transcript TEXT,
+            speech_end_to_endpoint_ms REAL,
+            transcribe_ms REAL,
+            verify_ms REAL,
+            claude_ttft_ms REAL,
+            claude_total_ms REAL,
+            tts_ttfb_ms REAL,
+            tts_first_audio_ms REAL,
+            action_ms REAL,
+            total_perceived_ms REAL
+        )
+    """)
+
+
+def _migration_006_timing_model(conn):
+    """Record which model served each turn, and what it said.
+
+    model supports the TTFT comparison. response is here so answer quality can
+    be judged by reading: conversation_history has the text but carries no
+    model attribution, so without this column there is no way to tell which
+    arm produced a given answer."""
+    for column in ("model TEXT", "response TEXT"):
+        conn.execute(f"ALTER TABLE timing_log ADD COLUMN {column}")
+
+
+def _migration_007_response_length_and_cache(conn):
+    """Response word count, cache effectiveness, and the sentence assembly gap.
+
+    response_words makes the prompt length change measurable instead of a
+    matter of feel. Baseline before the change: median 76 words, p90 117,
+    max 120, which is roughly thirty seconds of speech per turn.
+
+    cache_read_tokens exists because prompt caching fails silently. Below the
+    model's minimum cacheable prefix the API caches nothing, reports nothing,
+    and raises nothing, so a zero here is the only signal.
+
+    first_sentence_ms closes the instrumentation gap that showed up as 754ms
+    of unaccounted time: the wait between Claude's first token and the first
+    complete sentence reaching the TTS queue."""
+    for column in ("response_words INTEGER", "cache_read_tokens INTEGER",
+                   "cache_creation_tokens INTEGER", "first_sentence_ms REAL"):
+        conn.execute(f"ALTER TABLE timing_log ADD COLUMN {column}")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
     (3, _migration_003_verification_outcome),
     (4, _migration_004_acoustic_measures),
+    (5, _migration_005_timing_log),
+    (6, _migration_006_timing_model),
+    (7, _migration_007_response_length_and_cache),
 ]
 
 
@@ -301,6 +366,37 @@ def get_history(limit: int = 50, offset: int = 0) -> list:
         {"role": r, "content": c, "created_at": t, "source_device": d}
         for r, c, t, d in rows
     ]
+
+
+# ── Timing log ──
+
+def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
+               transcribe_ms, verify_ms, claude_ttft_ms, claude_total_ms,
+               tts_ttfb_ms, tts_first_audio_ms, action_ms, total_perceived_ms,
+               model=None, response=None, cache_read_tokens=None,
+               cache_creation_tokens=None, first_sentence_ms=None):
+    # Derived here rather than at every call site so the count and the text it
+    # describes can never drift apart.
+    response_words = len(response.split()) if response else None
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        """INSERT INTO timing_log
+           (created_at, turn_type, action_fired, transcript,
+            speech_end_to_endpoint_ms, transcribe_ms, verify_ms,
+            claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
+            action_ms, total_perceived_ms, model, response, response_words,
+            cache_read_tokens, cache_creation_tokens, first_sentence_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (datetime.now().isoformat(), turn_type, int(action_fired), transcript,
+         speech_end_to_endpoint_ms, transcribe_ms, verify_ms,
+         claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
+         action_ms, total_perceived_ms, model, response, response_words,
+         cache_read_tokens, cache_creation_tokens, first_sentence_ms)
+    )
+    conn.commit()
+    conn.close()
 
 
 # ── Verification log ──

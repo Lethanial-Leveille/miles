@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import time
 import ctypes
 import fcntl
 import warnings
@@ -68,13 +69,14 @@ with silence_stderr():
 
 from config import (
     CHUNK, CHANNELS, RATE,
-    WHISPER_MODEL, WHISPER_CLI, TEMP_WAV,
+    WHISPER_MODEL, WHISPER_CLI, WHISPER_AUDIO_CTX, TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL,
     TTS_FLUSH_MARGIN_MS,
 )
 from database import log_verification
+import timing
 
 FORMAT = pyaudio.paInt16
 
@@ -196,6 +198,7 @@ def record_command():
     max_chunks      = int(MAX_RECORD / 0.03)
     min_chunks      = int(MIN_RECORD / 0.03)
     total_chunks    = 0
+    last_speech_at  = None
 
     while total_chunks < max_chunks:
         data  = stream.read(VAD_FRAME, exception_on_overflow=False)
@@ -207,11 +210,16 @@ def record_command():
         # until MAX_RECORD.
         if _is_speech(data):
             silent_chunks = 0
+            last_speech_at = time.monotonic()
         else:
             silent_chunks += 1
 
         if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
             break
+
+    # The user's wait starts the moment they stop talking, not when this
+    # returns. Captured here because nothing downstream can recover it.
+    timing.note_speech_end(last_speech_at)
 
     print(f"Recorded {total_chunks * 0.03:.1f}s", flush=True)
     _write_wav(frames)
@@ -254,8 +262,9 @@ def listen_for_followup(timeout=10):
     frames = list(preroll)
 
     # Phase 2: record until silence (mirrors record_command)
-    total_chunks  = len(frames)
-    silent_chunks = 0
+    total_chunks   = len(frames)
+    silent_chunks  = 0
+    last_speech_at = time.monotonic()
     while total_chunks < max_chunks:
         data   = stream.read(VAD_FRAME, exception_on_overflow=False)
         frames.append(data)
@@ -263,11 +272,14 @@ def listen_for_followup(timeout=10):
 
         if _is_speech(data):
             silent_chunks = 0
+            last_speech_at = time.monotonic()
         else:
             silent_chunks += 1
 
         if total_chunks > min_chunks and silent_chunks >= int(SILENCE_LIMIT / 0.03):
             break
+
+    timing.note_speech_end(last_speech_at)
 
     # Counts written frames only. This used to add waiting_chunks, reporting
     # time spent waiting for speech as though it were recorded audio, which is
@@ -288,11 +300,13 @@ def _write_wav(frames):
 
 
 def transcribe(wav_path):
-    result = subprocess.run(
-        [WHISPER_CLI, "-m", WHISPER_MODEL, "-f", wav_path,
-         "-bs", "1", "-bo", "1", "--no-prints", "--no-timestamps"],
-        capture_output=True, text=True
-    )
+    with timing.stopwatch('transcribe_ms'):
+        result = subprocess.run(
+            [WHISPER_CLI, "-m", WHISPER_MODEL, "-f", wav_path,
+             "-bs", "1", "-bo", "1", "--no-prints", "--no-timestamps",
+             "-ac", str(WHISPER_AUDIO_CTX)],
+            capture_output=True, text=True
+        )
     return result.stdout.strip()
 
 
@@ -402,6 +416,7 @@ MIN_EMBED_SECONDS = 0.5
 def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence=None):
     from config import VERIFY_THRESHOLD
 
+    verify_started = time.monotonic()
     wav = preprocess_wav(wav_path)
 
     with wave.open(wav_path, 'rb') as wf:
@@ -436,6 +451,10 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
     similarity = np.dot(embedding, voiceprint) / (
         np.linalg.norm(embedding) * np.linalg.norm(voiceprint)
     )
+    # Covers preprocess_wav, the acoustic measures, and embed_utterance: all
+    # the work that sits between transcription and the Claude call.
+    timing.mark('verify_ms', (time.monotonic() - verify_started) * 1000.0)
+
     print(f"Voice similarity: {similarity:.3f}", flush=True)
     accepted = similarity >= VERIFY_THRESHOLD
 
