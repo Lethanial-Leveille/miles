@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import datetime
 from typing import NamedTuple
 
 import anthropic
@@ -85,6 +86,32 @@ def _trim_history(messages: list) -> list:
     return trimmed
 
 
+def _with_current_time(messages: list) -> list:
+    """Append the current date and time to the final user turn.
+
+    Deliberately not in the system prompt. That is the cached prefix, and a
+    value that changes every turn is the textbook silent cache invalidator:
+    caching would report success while never producing a hit, quietly costing
+    the ~700ms it currently saves. Appending to the last message puts it after
+    the breakpoint, where it costs nothing.
+
+    Without this Nova had no clock at all, and rather than saying so she
+    copied the date out of the reminder example in her own prompt. Every
+    reminder she set was due 2026-04-11, months in the past, so none of them
+    could ever fire.
+
+    The database keeps the raw utterance; this only shapes the API call."""
+    if not messages or messages[-1]["role"] != "user":
+        return messages
+
+    now = datetime.now()
+    stamp = f"{now:%A, %B} {now.day}, {now:%Y at %I:%M %p}".replace(" 0", " ")
+    return messages[:-1] + [{
+        **messages[-1],
+        "content": f"{messages[-1]['content']}\n\n[Current date and time: {stamp}]",
+    }]
+
+
 def _parse_action_tag(tag: str) -> dict:
     """Parse '[ACTION: weather | location: Gainesville]' into action dict."""
     inner = tag.strip().lstrip('[').rstrip(']')
@@ -110,7 +137,7 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> TurnResult:
     seed_rows       = get_seed_memories()
     episodic_rows   = get_episodic_memories()
     enhanced_prompt = build_enhanced_prompt(seed_rows, episodic_rows, device)
-    recent          = _trim_history(get_recent_messages(20))
+    recent          = _with_current_time(_trim_history(get_recent_messages(20)))
 
     sentence_queue = asyncio.Queue()
     router         = StreamRouter(sentence_queue)
