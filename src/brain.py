@@ -12,6 +12,7 @@ from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
 from tools import registry
 from database import log_tool_call
+import alerts
 
 # Imported for its side effect: registering the tools. Without it the registry
 # is empty, the capability block is blank, and Nova silently has no
@@ -144,6 +145,26 @@ def _tool_result_blocks(results):
     ]
 
 
+def _with_alerts(messages: list, pending: list) -> list:
+    """Attach fired timers and reminders to the final user turn.
+
+    Same placement as the clock, and for the same reason: this sits after the
+    cache breakpoint, so a value that changes every turn costs nothing. Putting
+    it in the system prompt would invalidate the prefix on every alert.
+
+    The alert arrives as context rather than as a finished sentence so Nova
+    delivers it in her own words alongside whatever she was already answering,
+    which is what a person interrupted by a kitchen timer would do."""
+    if not pending or not messages or messages[-1]["role"] != "user":
+        return messages
+
+    lines = "\n".join(f"[Alert: {a.summary}]" for a in pending)
+    return messages[:-1] + [{
+        **messages[-1],
+        "content": f"{messages[-1]['content']}\n\n{lines}",
+    }]
+
+
 def _run_tools(tool_uses, model):
     """Execute every tool the model called, in order, logging each one.
 
@@ -177,7 +198,10 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> TurnResult:
     seed_rows       = get_seed_memories()
     episodic_rows   = get_episodic_memories()
     enhanced_prompt = build_enhanced_prompt(seed_rows, episodic_rows, device)
-    recent          = _with_current_time(_trim_history(get_recent_messages(20)))
+    # Folded before the clock, so both land inside the same final user turn.
+    recent          = _with_alerts(_trim_history(get_recent_messages(20)),
+                                   alerts.take_for_fold())
+    recent          = _with_current_time(recent)
 
     sentence_queue = asyncio.Queue()
     router         = StreamRouter(sentence_queue)

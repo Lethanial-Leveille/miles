@@ -206,6 +206,30 @@ def _migration_010_tool_use(conn):
     """)
 
 
+def _migration_011_alert_log(conn):
+    """Timer and reminder alerts, and how they got delivered.
+
+    Alerts were the one thing in the system with no record at all. There was no
+    way to tell how often one collided with speech, or how late a deferred one
+    would be, which meant the delay threshold could only ever be tuned by feel.
+
+    delay_ms is the gap between the alert firing and Lethanial hearing it.
+    mode is 'folded' when Nova worked it into a response she was already
+    giving, 'spoken' when it was announced on its own."""
+    conn.execute("""
+        CREATE TABLE alert_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            content TEXT,
+            fired_at TEXT,
+            delivered_at TEXT NOT NULL,
+            delay_ms REAL,
+            mode TEXT NOT NULL
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -217,6 +241,7 @@ MIGRATIONS = [
     (8, _migration_008_max_pause),
     (9, _migration_009_recording_path),
     (10, _migration_010_tool_use),
+    (11, _migration_011_alert_log),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -486,6 +511,21 @@ def log_tool_call(tool_name, arguments, result, is_error=False,
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (datetime.now().isoformat(), tool_name, json.dumps(arguments or {}),
          text, int(is_error), duration_ms, model)
+    )
+    conn.commit()
+    conn.close()
+
+
+def log_alert(kind, content, fired_at, mode, delay_ms=None):
+    """One row per delivered alert. Written at delivery, not at firing, so a
+    queued alert that is still waiting never appears as though it landed."""
+    now = datetime.now().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """INSERT INTO alert_log
+           (created_at, kind, content, fired_at, delivered_at, delay_ms, mode)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (now, kind, content, fired_at, now, delay_ms, mode)
     )
     conn.commit()
     conn.close()

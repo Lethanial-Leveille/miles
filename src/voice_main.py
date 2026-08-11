@@ -2,6 +2,7 @@ import time
 import numpy as np
 
 # audio import triggers mic/wake word hardware init and ALSA silencing
+import alerts
 import audio
 import timing
 import tts
@@ -12,7 +13,6 @@ from parsing import is_noise_transcript
 from config import CHUNK, WAKE_THRESHOLD, MAX_FOLLOWUP_TURNS, FOLLOWUP_TIMEOUT
 
 # Wire the speak callback so timer/reminder alerts play audio
-actions.set_speak_fn(tts.speak)
 
 print("Starting M.I.L.E.S. v0.7...", flush=True)
 audio.log_mic_gain()
@@ -22,8 +22,26 @@ init_db()
 print("\n=== M.I.L.E.S. v0.7 — Nova is online ===", flush=True)
 print("Listening for 'hey nova'... (Ctrl+C to stop)\n", flush=True)
 
+def speak_pending_alerts():
+    """Announce anything still queued, on its own.
+
+    Only ever called from this loop, and only at points where the mic is not
+    open for capture. That is the entire deferral mechanism: a background
+    thread cannot tell an open mic from an idle room, so it does not get to
+    decide when to talk. Fresh alerts are usually gone before this runs,
+    having been folded into a response by brain.py instead."""
+    for alert in alerts.take_for_speech():
+        tts.speak(alert.text)
+        audio.flush_input()
+    print("Listening for 'hey nova'...", flush=True)
+
+
 try:
     while True:
+        # Idle: nothing is being recorded, so this is a safe moment to talk.
+        if alerts.pending_count():
+            speak_pending_alerts()
+
         raw       = audio.stream.read(CHUNK, exception_on_overflow=False)
         audio_arr = np.frombuffer(raw, dtype=np.int16)
         prediction = audio.wake_model.predict(audio_arr)
@@ -91,6 +109,12 @@ try:
                     print(f"Follow up limit reached ({MAX_FOLLOWUP_TURNS} turns). "
                           "Returning to wake word.\n", flush=True)
                     break
+
+                # Between turns, before the window opens. Without this an
+                # alert would wait for the whole conversation to end.
+                for alert in alerts.take_for_speech():
+                    tts.speak(alert.text)
+                    audio.flush_input()
 
                 print(f"Listening for follow up... ({FOLLOWUP_TIMEOUT}s timeout)", flush=True)
                 timing.begin_turn('followup')

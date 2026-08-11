@@ -79,6 +79,14 @@ If someone other than Lethanial is speaking, maintain the same professional comp
 # reminder example in her own prompt and every reminder was dated months in the
 # past.
 
+ALERTS = """ALERTS:
+A timer finishing or a reminder coming due may be attached to a message as [Alert: ...]. It fired while you were busy and Lethanial has not heard it yet.
+
+You must tell him in this response. Not the next one. If you leave it out he never learns his timer went off, and a timer that silently does not go off is worse than one that interrupts.
+
+Work it in naturally rather than reading it back. Lead with it if it is more urgent than what he asked, otherwise answer him first and mention it after. Say it once, in your own words, then carry on."""
+
+
 TOOL_SPEECH = """USING TOOLS:
 Anything you say before calling a tool is spoken aloud immediately, while the tool is still running. You have not seen the result yet at that point, so you cannot know it.
 
@@ -180,7 +188,7 @@ def build_enhanced_prompt(seed_rows, episodic_rows, device="pi"):
 
     middle = "\n\n".join(
         block for block in (MEMORY_INSTRUCTIONS, capability_block, TOOL_SPEECH,
-                            CLOCK_INSTRUCTIONS)
+                            ALERTS, CLOCK_INSTRUCTIONS)
         if block
     )
 

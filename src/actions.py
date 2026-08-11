@@ -5,14 +5,16 @@ import sqlite3
 from datetime import datetime
 from config import DEFAULT_LOCATION, WEATHER_API_KEY, DB_PATH
 from tools import Permission, tool
+import alerts
 
-# Filled in by voice_main.py at startup so timer/reminder alerts can speak aloud.
-# The server never sets this, so alerts from API requests silently log only.
-_speak_fn = None
 
-def set_speak_fn(fn):
-    global _speak_fn
-    _speak_fn = fn
+def _plural(amount, unit):
+    """Singularize a unit for an amount of one.
+
+    The tool hands units in already pluralized, because that is what the enum
+    offers, so "1 minutes timer is up" was announced on every single one minute
+    timer."""
+    return unit[:-1] if amount == 1 and unit.endswith("s") else unit
 
 
 # ── Weather ──
@@ -202,16 +204,22 @@ def set_timer(duration_str):
     else:
         return f"Unknown time unit: {unit}"
 
+    spoken_unit = _plural(amount, unit)
+
     def timer_thread():
         time.sleep(seconds)
-        print(f"\n*** TIMER DONE: {amount} {unit} ***")
-        alert = f"[calmly] Lethanial, your {amount} {unit} timer is up."
-        if _speak_fn:
-            _speak_fn(alert)
-        print("Listening for 'hey nova'...")
+        print(f"\n*** TIMER DONE: {amount} {spoken_unit} ***")
+        # Queued, never spoken from here. A background thread cannot tell an
+        # open mic from an idle room, and this used to fire straight into a
+        # question being asked. alerts.py explains the mechanism.
+        alerts.fire(
+            kind="timer",
+            text=f"[calmly] Lethanial, your {amount} {spoken_unit} timer is up.",
+            summary=f"the {amount} {spoken_unit} timer just finished",
+        )
 
     threading.Thread(target=timer_thread, daemon=True).start()
-    return f"Timer set for {amount} {unit} ({seconds} seconds)."
+    return f"Timer set for {amount} {spoken_unit} ({seconds} seconds)."
 
 
 # ── Reminders ──
@@ -234,9 +242,11 @@ def set_reminder(content, due_time=None):
                 def reminder_thread():
                     time.sleep(delay)
                     print(f"\n*** REMINDER: {content} ***")
-                    alert = f"[calmly] Lethanial, a reminder. {content}."
-                    if _speak_fn:
-                        _speak_fn(alert)
+                    alerts.fire(
+                        kind="reminder",
+                        text=f"[calmly] Lethanial, a reminder. {content}.",
+                        summary=f"a reminder just came due: {content}",
+                    )
                     conn2 = sqlite3.connect(DB_PATH)
                     conn2.execute(
                         "UPDATE reminders SET completed = 1 WHERE content = ? AND due_at = ?",
@@ -244,7 +254,6 @@ def set_reminder(content, due_time=None):
                     )
                     conn2.commit()
                     conn2.close()
-                    print("Listening for 'hey nova'...")
 
                 threading.Thread(target=reminder_thread, daemon=True).start()
             else:

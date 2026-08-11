@@ -124,3 +124,25 @@ def test_cancel_reminder_tool_passes_content(monkeypatch):
     monkeypatch.setattr(actions, "cancel_reminder", lambda c: seen.setdefault("content", c))
     registry.call("cancel_reminder", {"content": "push code"})
     assert seen["content"] == "push code"
+
+
+# ── pluralization ──
+
+@pytest.mark.parametrize("amount,unit,expected", [
+    (1, "minutes", "minute"),
+    (1, "hours", "hour"),
+    (1, "seconds", "second"),
+    (2, "minutes", "minutes"),
+    (10, "minutes", "minutes"),
+])
+def test_units_singularize_at_one(amount, unit, expected):
+    """The tool enum only offers plural units, so every one minute timer used
+    to announce "your 1 minutes timer is up"."""
+    assert actions._plural(amount, unit) == expected
+
+
+def test_one_minute_timer_reads_correctly(monkeypatch):
+    monkeypatch.setattr(actions.threading, "Thread", lambda **kw: type(
+        "T", (), {"start": lambda self: None})())
+    assert actions.set_timer("1 minutes") == "Timer set for 1 minute (60 seconds)."
+    assert actions.set_timer("5 minutes") == "Timer set for 5 minutes (300 seconds)."
