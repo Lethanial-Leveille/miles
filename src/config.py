@@ -189,6 +189,26 @@ MODEL_AB_TEST = False
 MODEL_A = "claude-haiku-4-5"          # alias for claude-haiku-4-5-20251001
 MODEL_B = "claude-sonnet-4-5-20250929"
 
+# ── Recording archive ──
+# Every captured command is copied here alongside its logged transcript.
+#
+# build/command.wav is overwritten every turn, so there has never been an
+# archive of real commands to test against. That blocked validating the
+# whisper audio context change on actual speech (it had to be checked against
+# enrollment audio instead) and it blocks the open question of whether tiny.en
+# is accurate enough to trade for its 724ms saving. It will block the same
+# question again when the mic changes.
+#
+# Recordings live under data/, which is gitignored. They are recordings of a
+# real person in a real room; treat them accordingly.
+ARCHIVE_RECORDINGS = True
+ARCHIVE_DIR        = os.path.expanduser("~/miles/data/recordings")
+
+# Roughly 30KB per second of audio, so a 9 second turn is about 270KB. Six
+# hundred files is on the order of 150MB, which is a few weeks of normal use.
+# Oldest are pruned first.
+ARCHIVE_MAX_FILES = 600
+
 # ── Conversation history ──
 # Past assistant turns are trimmed to this many words before being sent as
 # context. Nothing in the database changes; this is prompt assembly only.

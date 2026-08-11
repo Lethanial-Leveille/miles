@@ -59,7 +59,9 @@ import pyaudio
 import numpy as np
 import wave
 import subprocess
+import shutil
 from collections import deque
+from datetime import datetime
 
 with silence_stderr():
     from openwakeword.model import Model
@@ -73,6 +75,7 @@ from config import (
     WAKE_MODEL_PATH, VOICEPRINT_PATH,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL,
+    ARCHIVE_RECORDINGS, ARCHIVE_DIR, ARCHIVE_MAX_FILES,
     TTS_FLUSH_MARGIN_MS,
 )
 from database import log_verification
@@ -304,6 +307,31 @@ def listen_for_followup(timeout=10):
     return TEMP_WAV
 
 
+def archive_recording(wav_path, turn_type):
+    """Copy a captured command into the archive and prune the oldest.
+
+    Returns the archived path, or None when archiving is off or fails.
+    Failure is never fatal: this exists for diagnostics, and losing a
+    recording is not a reason to lose the turn."""
+    if not ARCHIVE_RECORDINGS:
+        return None
+    try:
+        os.makedirs(ARCHIVE_DIR, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%dT%H%M%S_%f")[:-3]
+        dest  = os.path.join(ARCHIVE_DIR, f"{stamp}_{turn_type}.wav")
+        shutil.copy2(wav_path, dest)
+
+        # Prune by name, which sorts chronologically given the timestamp
+        # prefix, so this never has to stat every file.
+        existing = sorted(f for f in os.listdir(ARCHIVE_DIR) if f.endswith(".wav"))
+        for stale in existing[:max(0, len(existing) - ARCHIVE_MAX_FILES)]:
+            os.remove(os.path.join(ARCHIVE_DIR, stale))
+        return dest
+    except OSError as exc:
+        print(f"Could not archive recording: {exc}", flush=True)
+        return None
+
+
 def _write_wav(frames):
     wf = wave.open(TEMP_WAV, 'wb')
     wf.setnchannels(CHANNELS)
@@ -438,7 +466,7 @@ MIN_TRUSTWORTHY_SECONDS = 2.0
 
 
 def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence=None,
-                 session_trusted=False):
+                 session_trusted=False, recording_path=None):
     from config import VERIFY_THRESHOLD
 
     verify_started = time.monotonic()
@@ -469,6 +497,7 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
             rms_dbfs=rms_dbfs,
             snr_db=snr_db,
             spectral_tilt=spectral_tilt,
+            recording_path=recording_path,
         )
         return NO_AUDIO
 
@@ -490,7 +519,7 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
             embedded_duration_seconds=embedded_duration_seconds,
             turn_type=turn_type, wake_confidence=wake_confidence,
             outcome='session_trust', rms_dbfs=rms_dbfs, snr_db=snr_db,
-            spectral_tilt=spectral_tilt,
+            spectral_tilt=spectral_tilt, recording_path=recording_path,
         )
         timing.mark('verify_ms', (time.monotonic() - verify_started) * 1000.0)
         return VERIFIED
@@ -519,6 +548,7 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
         rms_dbfs=rms_dbfs,
         snr_db=snr_db,
         spectral_tilt=spectral_tilt,
+        recording_path=recording_path,
     )
 
     # Any of these can be None for a degenerate clip, so format defensively

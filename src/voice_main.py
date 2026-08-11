@@ -42,6 +42,7 @@ try:
             tts.play_chime()
             timing.begin_turn('initial')
             wav_path  = audio.record_command()
+            recording = audio.archive_recording(wav_path, 'initial')
             user_text = audio.transcribe(wav_path)
 
             if is_noise_transcript(user_text):
@@ -52,7 +53,8 @@ try:
             print(f"You: {user_text}", flush=True)
 
             verify_result = audio.verify_voice(wav_path, transcript=user_text,
-                                                turn_type='initial', wake_confidence=float(score))
+                                                turn_type='initial', wake_confidence=float(score),
+                                                recording_path=recording)
 
             # No voiced audio is not an authorization failure, so it does not
             # get the intruder response.
@@ -94,6 +96,8 @@ try:
                 timing.begin_turn('followup')
                 followup_path = audio.listen_for_followup(timeout=10)
                 followup_turns += 1
+                recording = (audio.archive_recording(followup_path, 'followup')
+                             if followup_path else None)
 
                 if followup_path is None:
                     print("No follow up. Returning to wake word.\n", flush=True)
@@ -121,7 +125,8 @@ try:
                 # than scored. Only follow ups long enough to judge are judged.
                 followup_result = audio.verify_voice(followup_path, transcript=followup_text,
                                                       turn_type='followup',
-                                                      session_trusted=True)
+                                                      session_trusted=True,
+                                                      recording_path=recording)
 
                 if followup_result == audio.NO_AUDIO:
                     print("Nothing to verify. Returning to wake word.\n", flush=True)

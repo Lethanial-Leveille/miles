@@ -157,6 +157,16 @@ def _migration_008_max_pause(conn):
     conn.execute("ALTER TABLE timing_log ADD COLUMN max_pause_ms REAL")
 
 
+def _migration_009_recording_path(conn):
+    """Where the archived copy of this recording lives.
+
+    command.wav is overwritten every turn, so audio decisions have had to be
+    validated against enrollment recordings rather than real commands. This
+    links each logged attempt, with its SNR and transcript, back to the audio
+    that produced it."""
+    conn.execute("ALTER TABLE verification_log ADD COLUMN recording_path TEXT")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -166,6 +176,7 @@ MIGRATIONS = [
     (6, _migration_006_timing_model),
     (7, _migration_007_response_length_and_cache),
     (8, _migration_008_max_pause),
+    (9, _migration_009_recording_path),
 ]
 
 
@@ -416,7 +427,8 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
 
 def log_verification(similarity, accepted, threshold_used, transcript, duration_seconds,
                       embedded_duration_seconds, turn_type, wake_confidence=None,
-                      outcome='scored', rms_dbfs=None, snr_db=None, spectral_tilt=None):
+                      outcome='scored', rms_dbfs=None, snr_db=None, spectral_tilt=None,
+                      recording_path=None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
@@ -427,7 +439,7 @@ def log_verification(similarity, accepted, threshold_used, transcript, duration_
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (datetime.now().isoformat(), similarity, int(accepted), threshold_used,
          transcript, duration_seconds, embedded_duration_seconds, wake_confidence,
-         turn_type, outcome, rms_dbfs, snr_db, spectral_tilt)
+         turn_type, outcome, rms_dbfs, snr_db, spectral_tilt, recording_path)
     )
     conn.commit()
     conn.close()
