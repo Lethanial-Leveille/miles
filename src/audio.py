@@ -71,7 +71,7 @@ from config import (
     CHUNK, CHANNELS, RATE,
     WHISPER_MODEL, WHISPER_CLI, WHISPER_AUDIO_CTX, TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH,
-    VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES,
+    VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL,
     TTS_FLUSH_MARGIN_MS,
 )
@@ -188,7 +188,6 @@ with silence_stderr():
 def record_command():
     print("Listening...", flush=True)
 
-    SILENCE_LIMIT     = 3.0
     MAX_RECORD        = 15
     MIN_RECORD        = 1.0
 
@@ -227,7 +226,6 @@ def record_command():
 
 
 def listen_for_followup(timeout=10):
-    SILENCE_LIMIT     = 3.0
     timeout_chunks    = int(timeout / 0.03)
     max_chunks        = int(15 / 0.03)
     min_chunks        = int(0.5 / 0.03)
@@ -412,8 +410,19 @@ NO_AUDIO = 'no_audio'
 # the embedding to mean anything.
 MIN_EMBED_SECONDS = 0.5
 
+# Below this, an embedding is too unstable to reject anyone on. Measured: a
+# 0.9s follow up of "Okay, thank you" scored 0.460 against a voiceprint whose
+# median live score is 0.781, and was refused. The utterance was genuine; the
+# embedding simply had too little to work with.
+#
+# Short conversational follow ups ("yeah", "thanks", "what about tomorrow")
+# are exactly the turns that cannot be scored reliably, so scoring them at all
+# produces false rejections and nothing else.
+MIN_TRUSTWORTHY_SECONDS = 2.0
 
-def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence=None):
+
+def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence=None,
+                 session_trusted=False):
     from config import VERIFY_THRESHOLD
 
     verify_started = time.monotonic()
@@ -446,6 +455,29 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
             spectral_tilt=spectral_tilt,
         )
         return NO_AUDIO
+
+    # Too short to score, but inside a session that already authenticated on a
+    # longer utterance. Trust the session rather than reject a genuine speaker
+    # on an embedding that cannot support the decision either way.
+    #
+    # The exposure this accepts is someone speaking into the mic within the
+    # follow up window, in the same room, immediately after Lethanial. Against
+    # the current action set (weather, timers, reminders, conversation) that is
+    # a narrower risk than refusing him every time he says "thanks". Revisit
+    # when an action with real consequence is added.
+    if session_trusted and embedded_duration_seconds < MIN_TRUSTWORTHY_SECONDS:
+        print(f"Too short to verify ({embedded_duration_seconds:.2f}s), "
+              f"trusting session.", flush=True)
+        log_verification(
+            similarity=0.0, accepted=True, threshold_used=VERIFY_THRESHOLD,
+            transcript=transcript, duration_seconds=duration_seconds,
+            embedded_duration_seconds=embedded_duration_seconds,
+            turn_type=turn_type, wake_confidence=wake_confidence,
+            outcome='session_trust', rms_dbfs=rms_dbfs, snr_db=snr_db,
+            spectral_tilt=spectral_tilt,
+        )
+        timing.mark('verify_ms', (time.monotonic() - verify_started) * 1000.0)
+        return VERIFIED
 
     embedding = voice_encoder.embed_utterance(wav)
     similarity = np.dot(embedding, voiceprint) / (

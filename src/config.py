@@ -28,6 +28,24 @@ VAD_PREROLL_MS = 300
 # keyboard tap cannot open a recording.
 VAD_ONSET_FRAMES = 2
 
+# Silence required to decide the speaker has finished. This lands entirely on
+# perceived latency: the user is already done talking and waiting.
+#
+# Was 3.0s, which was tuned when endpointing ran on an amplitude threshold that
+# never fired, so recordings ended on the timeout rather than on speech and the
+# constant was doing nothing except adding three seconds. Now that webrtcvad
+# actually endpoints, that margin is unnecessary.
+#
+# 1.2s is set against measured behavior, not taste: frame level VAD over real
+# recordings puts the longest genuine pause inside an utterance at 0.63s, with
+# every other internal pause at or under 0.24s. This leaves roughly double the
+# worst observed pause.
+#
+# Raise it if Nova starts cutting you off mid thought. That symptom means a
+# real pause exceeded this value, and the fix is this number rather than
+# anything in the VAD.
+SILENCE_LIMIT = 1.2
+
 # Discarded from the mic after Nova finishes speaking, on top of draining
 # whatever accumulated during playback.
 #

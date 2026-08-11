@@ -1,3 +1,4 @@
+import re
 from prompts import build_enhanced_prompt
 
 
@@ -46,7 +47,7 @@ def test_prompt_general_knowledge_present_for_both_devices():
 
 def test_prompt_voice_device_uses_short_response_length_and_spelled_numbers():
     prompt = build_enhanced_prompt([], [], device="pi")
-    assert "Answer only what he asked" in prompt
+    assert "Answer only what was asked" in prompt
     assert "Always spell out numbers as words" in prompt
     assert "Give a brief answer first" not in prompt
     assert "Use normal numerals" not in prompt
@@ -61,6 +62,17 @@ def test_voice_prompt_has_no_hard_sentence_ceiling():
     assert "3 sentences maximum" not in prompt
     assert "maximum" not in prompt.split("RESPONSE LENGTH:")[1].split("\n\n\n")[0]
     assert "That target is a habit, not a limit" in prompt
+
+
+def test_voice_prompt_requires_second_person_address():
+    """The length block previously used "he" eight times, which primed Nova to
+    talk about Lethanial in the third person instead of to him."""
+    prompt = build_enhanced_prompt([], [], device="pi")
+    block = prompt.split("RESPONSE LENGTH:")[1].split("\n\n\n")[0]
+    assert "Never refer to him in the third person" in prompt
+    # The rule forbidding third person has to say "him" to state itself, so a
+    # small count is expected. Eight is what caused the problem.
+    assert len(re.findall(r"\b(he|him|his)\b", block, re.I)) <= 5
 
 
 def test_voice_prompt_forbids_refusing_for_brevity():

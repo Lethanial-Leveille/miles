@@ -124,8 +124,12 @@ try:
                     in_conversation = False
                     break
 
+                # The session already authenticated on the initial command, so
+                # a follow up too short to embed reliably is trusted rather
+                # than scored. Only follow ups long enough to judge are judged.
                 followup_result = audio.verify_voice(followup_path, transcript=followup_text,
-                                                      turn_type='followup')
+                                                      turn_type='followup',
+                                                      session_trusted=True)
 
                 if followup_result == audio.NO_AUDIO:
                     print("Nothing to verify. Returning to wake word.\n", flush=True)
