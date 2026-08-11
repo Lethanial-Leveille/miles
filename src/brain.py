@@ -1,5 +1,6 @@
 import asyncio
 import time
+from typing import NamedTuple
 
 import anthropic
 import timing
@@ -10,9 +11,22 @@ from parsing import extract_memories, strip_leading_bracket_cue
 from actions import execute_actions
 from stream_router import StreamRouter
 
-from config import MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING
+from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
+                    HISTORY_ASSISTANT_WORDS)
 
 claude = anthropic.AsyncAnthropic()
+
+
+class TurnResult(NamedTuple):
+    """What one turn produced.
+
+    `dismissed` is set when Nova recognized an intent to end the conversation
+    and emitted [ACTION: dismiss]. Returning it here rather than stashing it in
+    module state keeps the signal explicit at the call site, which matters
+    because two different callers drive this: the voice loop, which acts on it,
+    and the HTTP server, which does not."""
+    text: str
+    dismissed: bool = False
 
 # Turn counter for the A/B alternation. Resets on service restart, which is
 # harmless: alternation stays balanced from whatever point it resumes.
@@ -45,6 +59,32 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
         await loop.run_in_executor(None, speak, sentence)
 
 
+def _trim_history(messages: list) -> list:
+    """Shorten past assistant turns before sending them as context.
+
+    Nova's own transcript is a stronger length signal than any instruction in
+    the system prompt, so full history teaches her to keep answering at the
+    length she last answered at. Trimming keeps the substance of what was
+    discussed and drops the demonstration of how long to take saying it.
+
+    User turns are left intact: they are the actual context, and they are
+    short anyway."""
+    trimmed = []
+    for message in messages:
+        if message["role"] != "assistant":
+            trimmed.append(message)
+            continue
+        words = message["content"].split()
+        if len(words) <= HISTORY_ASSISTANT_WORDS:
+            trimmed.append(message)
+            continue
+        trimmed.append({
+            **message,
+            "content": " ".join(words[:HISTORY_ASSISTANT_WORDS]) + "...",
+        })
+    return trimmed
+
+
 def _parse_action_tag(tag: str) -> dict:
     """Parse '[ACTION: weather | location: Gainesville]' into action dict."""
     inner = tag.strip().lstrip('[').rstrip(']')
@@ -62,7 +102,7 @@ def _parse_action_tag(tag: str) -> dict:
     return {"type": action_type, "params": params}
 
 
-async def ask_nova_async(user_text: str, device: str = "pi") -> str:
+async def ask_nova_async(user_text: str, device: str = "pi") -> TurnResult:
     model = _select_model()
     timing.note_model(model)
 
@@ -70,7 +110,7 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
     seed_rows       = get_seed_memories()
     episodic_rows   = get_episodic_memories()
     enhanced_prompt = build_enhanced_prompt(seed_rows, episodic_rows, device)
-    recent          = get_recent_messages(20)
+    recent          = _trim_history(get_recent_messages(20))
 
     sentence_queue = asyncio.Queue()
     router         = StreamRouter(sentence_queue)
@@ -136,6 +176,12 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
         await router.finalize()
         actions = [_parse_action_tag(tag) for tag in router.action_tags]
 
+        # dismiss is a conversational signal, not a task, so it never reaches
+        # execute_actions. Pulled out here so a turn that both answers and says
+        # goodbye still runs its real actions.
+        dismissed = any(a["type"] == "dismiss" for a in actions)
+        actions   = [a for a in actions if a["type"] != "dismiss"]
+
         # Run every action and drain bridge-sentence TTS at the same time.
         # execute_actions already loops, so a turn asking for two things at
         # once dispatches both instead of silently dropping the second.
@@ -187,13 +233,14 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> str:
 
         timing.note_action((time.monotonic() - action_start) * 1000.0)
     else:
+        dismissed = False
         await router.finalize()
         await tts_task
         final_text = accumulated
 
     save_message("assistant", final_text, device=device)
-    return final_text
+    return TurnResult(text=final_text, dismissed=dismissed)
 
 
-def ask_nova(user_text: str, device: str = "pi") -> str:
+def ask_nova(user_text: str, device: str = "pi") -> TurnResult:
     return asyncio.run(ask_nova_async(user_text, device=device))

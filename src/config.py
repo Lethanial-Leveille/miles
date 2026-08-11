@@ -189,6 +189,23 @@ MODEL_AB_TEST = False
 MODEL_A = "claude-haiku-4-5"          # alias for claude-haiku-4-5-20251001
 MODEL_B = "claude-sonnet-4-5-20250929"
 
+# ── Conversation history ──
+# Past assistant turns are trimmed to this many words before being sent as
+# context. Nothing in the database changes; this is prompt assembly only.
+#
+# Response length is anchored far more strongly by history than by any
+# instruction: holding the prompt fixed and varying only what history contains
+# gave 94 words with full history against 54 with assistant turns trimmed.
+# Nova was few shot learning her own verbosity from her own transcript, and
+# each long answer made the next one likelier.
+#
+# Trimming beats the alternatives. Sending no history at all scored worse (64
+# words, and a much longer tail) because an open question with no context
+# invites a survey. Sending fewer whole messages scored the same but threw
+# away fourteen turns of context to get there. Thirty words keeps what was
+# discussed while dropping how long it took to say.
+HISTORY_ASSISTANT_WORDS = 30
+
 # ── Prompt caching ──
 # Caches the system prompt, which is the stable prefix: the persona and seed
 # corpus change rarely, while conversation history changes every turn and so
@@ -215,12 +232,9 @@ PROMPT_CACHING = True
 # ups) with headroom to spare.
 MAX_FOLLOWUP_TURNS = 6
 
-# ── Conversation exit phrases ──
-EXIT_PHRASES = [
-    "that's all", "thats all", "thanks nova", "thank you nova",
-    "we're good", "were good", "goodbye", "good night",
-    "that is all", "i'm done", "im done", "you're dismissed",
-    "dismissed", "peace", "later", "that's it", "thats it",
-    "all good", "we're done", "were done", "i'm good", "im good",
-    "that'll be all", "nothing else", "nah i'm good", "nah im good",
-]
+# Conversation exit is no longer a phrase list. Twenty six exact strings could
+# not match "alright thanks Nova" or "that's all for now", and seven of them
+# ("later", "peace", "all good", "i'm good", "that's it", "dismissed",
+# "we're good") are ordinary mid conversation utterances that would have ended
+# a session by accident. Nova now recognizes the intent and emits
+# [ACTION: dismiss]; see prompts.py.

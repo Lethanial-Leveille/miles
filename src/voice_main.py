@@ -9,7 +9,7 @@ import actions
 from brain import ask_nova
 from database import init_db
 from parsing import is_noise_transcript
-from config import CHUNK, WAKE_THRESHOLD, EXIT_PHRASES, MAX_FOLLOWUP_TURNS
+from config import CHUNK, WAKE_THRESHOLD, MAX_FOLLOWUP_TURNS
 
 # Wire the speak callback so timer/reminder alerts play audio
 actions.set_speak_fn(tts.speak)
@@ -51,18 +51,18 @@ try:
 
             print(f"You: {user_text}", flush=True)
 
-            result = audio.verify_voice(wav_path, transcript=user_text,
-                                         turn_type='initial', wake_confidence=float(score))
+            verify_result = audio.verify_voice(wav_path, transcript=user_text,
+                                                turn_type='initial', wake_confidence=float(score))
 
             # No voiced audio is not an authorization failure, so it does not
             # get the intruder response.
-            if result == audio.NO_AUDIO:
+            if verify_result == audio.NO_AUDIO:
                 print("Nothing to verify.\n", flush=True)
                 timing.abandon_turn()
                 print("Listening for 'hey nova'...", flush=True)
                 continue
 
-            if result == audio.REJECTED:
+            if verify_result == audio.REJECTED:
                 print("Voice not recognized.", flush=True)
                 timing.abandon_turn()
                 tts.speak("[calmly] That capability requires voice authorization. I don't recognize your voiceprint.")
@@ -70,8 +70,9 @@ try:
                 print("Listening for 'hey nova'...", flush=True)
                 continue
 
-            start        = time.time()
-            nova_response = ask_nova(user_text)
+            start  = time.time()
+            result = ask_nova(user_text)
+            nova_response = result.text
             print(f"Nova: {nova_response}", flush=True)
             print(f"(Total: {time.time() - start:.2f}s)\n", flush=True)
             timing.end_turn(transcript=user_text, response=nova_response)
@@ -115,15 +116,6 @@ try:
 
                 print(f"You: {followup_text}", flush=True)
 
-                cleaned = followup_text.lower().strip().rstrip('.')
-                if cleaned in EXIT_PHRASES:
-                    print("Conversation ended by user.", flush=True)
-                    timing.abandon_turn()
-                    tts.speak("[calmly] Understood. I'll be here if you need me.")
-                    audio.flush_input()
-                    in_conversation = False
-                    break
-
                 # The session already authenticated on the initial command, so
                 # a follow up too short to embed reliably is trusted rather
                 # than scored. Only follow ups long enough to judge are judged.
@@ -144,13 +136,22 @@ try:
                     in_conversation = False
                     break
 
-                start        = time.time()
-                nova_response = ask_nova(followup_text)
+                start  = time.time()
+                result = ask_nova(followup_text)
+                nova_response = result.text
                 print(f"Nova: {nova_response}", flush=True)
                 print(f"(Total: {time.time() - start:.2f}s)\n", flush=True)
                 timing.end_turn(transcript=followup_text, response=nova_response)
 
                 audio.flush_input()
+
+                # Nova decided the conversation was over and said so in her own
+                # words. She has already spoken the farewell, so there is
+                # nothing to add here.
+                if result.dismissed:
+                    print("Conversation ended by user.\n", flush=True)
+                    in_conversation = False
+                    break
 
             print("Listening for 'hey nova'...", flush=True)
 

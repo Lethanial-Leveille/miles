@@ -64,7 +64,7 @@ def refresh(user: str = Depends(get_current_user)):
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(body: ChatRequest, user: str = Depends(get_current_user)):
-    response = ask_nova(body.message, device="app")
+    response = ask_nova(body.message, device="app").text
     return ChatResponse(response=response)
 
 
@@ -138,7 +138,7 @@ async def websocket_chat(ws: WebSocket):
             message = data.get("message", "").strip()
             if not message:
                 continue
-            response = ask_nova(message, device="app")
+            response = ask_nova(message, device="app").text
             await ws.send_json({"response": response})
     except WebSocketDisconnect:
         pass

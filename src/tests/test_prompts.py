@@ -67,12 +67,17 @@ def test_voice_prompt_has_no_hard_sentence_ceiling():
 def test_voice_prompt_requires_second_person_address():
     """The length block previously used "he" eight times, which primed Nova to
     talk about Lethanial in the third person instead of to him."""
+    from prompts import RESPONSE_LENGTH_VOICE
+
     prompt = build_enhanced_prompt([], [], device="pi")
-    block = prompt.split("RESPONSE LENGTH:")[1].split("\n\n\n")[0]
     assert "Never refer to him in the third person" in prompt
+    # Checked against the constant rather than sliced out of the assembled
+    # prompt: slicing on a separator silently swallowed later sections and
+    # counted their pronouns instead of this block's.
+    #
     # The rule forbidding third person has to say "him" to state itself, so a
     # small count is expected. Eight is what caused the problem.
-    assert len(re.findall(r"\b(he|him|his)\b", block, re.I)) <= 5
+    assert len(re.findall(r"\b(he|him|his)\b", RESPONSE_LENGTH_VOICE, re.I)) <= 5
 
 
 def test_voice_prompt_forbids_refusing_for_brevity():
