@@ -244,6 +244,28 @@ HISTORY_ASSISTANT_WORDS = 30
 # 2x on writes instead of 1.25x and would only cover another 10%.
 PROMPT_CACHING = True
 
+# ── Native tool use ──
+# Migration from bracket action tags to Anthropic tool use. While False, the
+# prompt carries the old ACTION_TAG_INSTRUCTIONS and nothing reads the registry.
+# While True, the capability block is generated from src/tools.py instead.
+#
+# The flag gates the *prompt* from step 2 onward, not just the API wiring. A
+# capability block rendering while nothing is dispatched would have the prompt
+# claim tools that do not exist, which is the exact failure the registry was
+# built to prevent.
+#
+# Prefix token budget, measured Aug 11 2026 against claude-haiku-4-5 (4096
+# floor). Do not trust the older "69 tokens of margin" figure, which was stale:
+#   current prefix                                4757  (+661 margin)
+#   memory half of the old block (survives)        233
+#   action half (dies in Phase 2)                  750
+#     of which the clock paragraph (survives)      100
+#   projected after Phase 2 deletion              4107  (+11 margin)
+# Eleven tokens is not a margin. Phase 2's deletion and the tool schemas that
+# replace it must land in the same commit, or the intermediate state is one
+# seed memory edit away from silently losing the cache.
+NATIVE_TOOLS = False
+
 # ── Conversation loop ──
 # Hard ceiling on consecutive follow up turns before the loop returns to wake
 # word state, independent of what the VAD decides. Bounds the blast radius of

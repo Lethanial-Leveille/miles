@@ -1,3 +1,6 @@
+from config import NATIVE_TOOLS
+from tools import registry
+
 SYSTEM_PROMPT_HEADER = """You are Nova. You are the AI voice interface for Miles, a system Lethanial built from scratch. You are extraordinarily intelligent, composed, and self aware. Think JARVIS meets FRIDAY with a hint of Ultron's confidence but none of the villainy.
 
 PERSONALITY CORE:
@@ -65,8 +68,19 @@ OTHER_USERS = """OTHER USERS:
 If someone other than Lethanial is speaking, maintain the same professional composure. Be helpful and polished. Do not share any of Lethanial's personal information with other users."""
 
 
-ACTION_AND_MEMORY_INSTRUCTIONS = """
-MEMORY INSTRUCTION:
+# The old ACTION_AND_MEMORY_INSTRUCTIONS block was split into the three
+# constants below. It bundled three things with different lifetimes: memory tags
+# stay indefinitely, the clock guidance is permanent, and the action tags die in
+# Phase 2 of the tool use migration. Gating the third without taking the other
+# two required separating them.
+#
+# The clock paragraph in particular was buried mid list inside the action
+# instructions. Deleting that block wholesale would have taken it along and
+# reintroduced the bug fixed in 5ad97de, where Nova copied the date out of the
+# reminder example in her own prompt and every reminder was dated months in the
+# past.
+
+MEMORY_INSTRUCTIONS = """MEMORY INSTRUCTION:
 When Lethanial shares a personal fact, preference, habit, schedule detail, or anything worth remembering for future conversations, include it in your response wrapped in memory tags.
 
 Use [MEMORY-EXPLICIT: ...] when Lethanial directly asks you to store something:
@@ -81,16 +95,27 @@ Use [MEMORY: ...] when Lethanial shares something worth remembering but didn't a
 
 Do NOT tag retrieval questions like "do you remember when my exam is" or "what did I tell you about my schedule." Those are questions, not new information.
 
-Do NOT mention the memory tags out loud. They will be silently extracted. Only tag genuinely useful facts, not every detail. Do not tag things already in your current memories.
+Do NOT mention the memory tags out loud. They will be silently extracted. Only tag genuinely useful facts, not every detail. Do not tag things already in your current memories."""
 
-ACTION INSTRUCTION:
+
+# Applies in both the tag path and the tool path: reminder due dates are
+# computed from this clock either way.
+CLOCK_INSTRUCTIONS = """CLOCK:
+The current date and time are supplied at the end of every message you receive. Always compute due dates from that clock. "Tonight" means today's date at an evening hour, "tomorrow morning" means the following day, "in an hour" means the supplied time plus one hour. Never copy a date out of the examples in this prompt, and never guess at today's date: if you are unsure, ask rather than inventing one. A reminder dated in the past will never fire.
+
+Answer only the part that was asked. "What time is it" gets the time and nothing else. "What is the date" gets the date and nothing else. "What day is it" gets the day of the week. Do not add the other components, do not add the year unless it was asked for, and do not add commentary about the hour."""
+
+
+# Legacy path only. Deleted in Phase 2, together with parsing.extract_actions
+# and brain._parse_action_tag. When NATIVE_TOOLS is on, the capability block
+# generated from src/tools.py takes this slot instead.
+ACTION_TAG_INSTRUCTIONS = """ACTION INSTRUCTION:
 When Lethanial asks for information or tasks that require an external service, emit the action tag FIRST, before any spoken text. This allows the system to begin processing the request while your bridge sentence plays. Available actions:
 
 [ACTION: weather | location: City] — for weather requests. If no location specified, omit the location param and the default will be used.
 [ACTION: timer | duration: 10 minutes] — for timer requests. Always include the duration param with a number and unit.
 [ACTION: reminder | content: push code to GitHub | due: YYYY-MM-DDTHH:MM:SS] — for reminder requests. Due is optional and must be ISO format.
 
-The current date and time are supplied at the end of every message you receive. Always compute due dates from that clock. "Tonight" means today's date at an evening hour, "tomorrow morning" means the following day, "in an hour" means the supplied time plus one hour. Never copy a date out of the examples in this prompt, and never guess at today's date: if you are unsure, ask rather than inventing one. A reminder dated in the past will never fire.
 [ACTION: cancel_reminder | content: push code] — for canceling reminders. Match against the reminder content.
 [ACTION: dismiss] — when Lethanial is signing off rather than asking for anything. Emit it alongside a short, natural goodbye in your own words, and vary that goodbye rather than repeating a stock line.
 
@@ -140,11 +165,21 @@ def _episodic_block(episodic_rows):
 def build_enhanced_prompt(seed_rows, episodic_rows, device="pi"):
     """Assemble the full system prompt.
 
-    Order is deliberate: stable content first, volatile content last, so
-    prompt caching (not implemented yet) is possible later without a
-    rewrite of this function. device selects voice vs text specific
-    sections (response length, number formatting); everything else is
-    identical for both.
+    Order is deliberate: stable content first, volatile content last, because
+    this whole string is the cached prefix and anything that changes per turn
+    would invalidate everything after it. device selects voice vs text specific
+    sections (response length, number formatting); everything else is identical
+    for both.
+
+    The capability slot in the middle holds either the legacy action tag
+    instructions or a block generated from the tool registry, depending on
+    NATIVE_TOOLS. Generating it means the prompt cannot claim a capability the
+    code does not have: if a tool is not registered, it does not appear, and if
+    nothing is registered the block is empty rather than stale.
+
+    Note that _episodic_block is still last and still inside the cached region,
+    so every explicit memory save invalidates the prefix. Known and deferred;
+    see docs/BACKEND_TODO.md.
     """
     is_text = device == "app"
     length_block = RESPONSE_LENGTH_TEXT if is_text else RESPONSE_LENGTH_VOICE
@@ -162,9 +197,21 @@ def build_enhanced_prompt(seed_rows, episodic_rows, device="pi"):
         OTHER_USERS,
     ])
 
+    # Generated from the registry when native tools are on, hand written tag
+    # instructions when they are not. An empty registry yields an empty block,
+    # which is correct: no tools registered means no capabilities to claim.
+    capability_block = (
+        registry.capability_prose() if NATIVE_TOOLS else ACTION_TAG_INSTRUCTIONS
+    )
+
+    middle = "\n\n".join(
+        block for block in (MEMORY_INSTRUCTIONS, capability_block, CLOCK_INSTRUCTIONS)
+        if block
+    )
+
     return (
         system_prompt
         + _seed_block(seed_rows)
-        + ACTION_AND_MEMORY_INSTRUCTIONS
+        + "\n" + middle + "\n"
         + _episodic_block(episodic_rows)
     )

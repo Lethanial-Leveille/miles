@@ -1,0 +1,148 @@
+"""Tests for the capability slot in build_enhanced_prompt.
+
+Separate from test_prompts.py, which covers the pre migration prompt assembly.
+Keeping these apart means Phase 2 can delete the legacy assertions without
+disturbing the ones that outlive the migration.
+"""
+
+import pytest
+
+import prompts
+from tools import Permission, ToolRegistry
+
+
+@pytest.fixture
+def reg():
+    """A throwaway registry swapped in for the production singleton, so these
+    tests do not depend on which tools happen to be registered yet."""
+    return ToolRegistry()
+
+
+@pytest.fixture
+def native(monkeypatch, reg):
+    """NATIVE_TOOLS on, with an isolated registry."""
+    monkeypatch.setattr(prompts, "NATIVE_TOOLS", True)
+    monkeypatch.setattr(prompts, "registry", reg)
+    return reg
+
+
+@pytest.fixture
+def legacy(monkeypatch, reg):
+    monkeypatch.setattr(prompts, "NATIVE_TOOLS", False)
+    monkeypatch.setattr(prompts, "registry", reg)
+    return reg
+
+
+def _register(reg, name, description):
+    @reg.register(
+        name=name,
+        description=description,
+        input_schema={"type": "object", "properties": {}},
+        permission=Permission.READ,
+        returns_to_model=True,
+    )
+    def handler():
+        return None
+
+
+def _build():
+    return prompts.build_enhanced_prompt(seed_rows=[], episodic_rows=[], device="pi")
+
+
+# ── flag routing ──
+
+def test_legacy_path_uses_action_tag_instructions(legacy):
+    prompt = _build()
+    assert "ACTION INSTRUCTION:" in prompt
+    assert "[ACTION: weather" in prompt
+    assert "YOUR TOOLS:" not in prompt
+
+
+def test_native_path_uses_the_generated_block(native):
+    _register(native, "get_weather", "Current outdoor conditions. More detail.")
+    prompt = _build()
+    assert "YOUR TOOLS:" in prompt
+    assert "Current outdoor conditions" in prompt
+    # The whole point: the hand written tag instructions are gone.
+    assert "ACTION INSTRUCTION:" not in prompt
+    assert "[ACTION: weather" not in prompt
+
+
+def test_native_path_with_empty_registry_claims_nothing(native):
+    """An empty registry must produce no capability block at all, not a header
+    with nothing under it. Claiming zero tools is correct; claiming a heading
+    over an empty list invites the model to invent entries."""
+    prompt = _build()
+    assert "YOUR TOOLS:" not in prompt
+    assert "ACTION INSTRUCTION:" not in prompt
+
+
+def test_prompt_can_only_claim_registered_tools(native):
+    """The reason the block is generated rather than written by hand."""
+    _register(native, "get_weather", "Current outdoor conditions.")
+    prompt = _build()
+    assert "Current outdoor conditions" in prompt
+    assert "set_timer" not in prompt
+    assert "hevy" not in prompt.lower()
+
+
+# ── blocks that survive both paths ──
+
+@pytest.mark.parametrize("path", ["native", "legacy"])
+def test_memory_instructions_survive_both_paths(request, path):
+    request.getfixturevalue(path)
+    prompt = _build()
+    assert "MEMORY INSTRUCTION:" in prompt
+    assert "[MEMORY-EXPLICIT:" in prompt
+
+
+@pytest.mark.parametrize("path", ["native", "legacy"])
+def test_clock_instructions_survive_both_paths(request, path):
+    """Regression guard for 5ad97de. The clock paragraph used to sit inside the
+    action tag block; deleting that block in Phase 2 would have taken it along
+    and Nova would go back to copying the date out of her own prompt, dating
+    every reminder months in the past so none could ever fire."""
+    request.getfixturevalue(path)
+    prompt = _build()
+    assert "CLOCK:" in prompt
+    assert "supplied at the end of every message" in prompt
+    assert "A reminder dated in the past will never fire" in prompt
+
+
+@pytest.mark.parametrize("path", ["native", "legacy"])
+def test_clock_block_asks_for_only_what_was_requested(request, path):
+    request.getfixturevalue(path)
+    prompt = _build()
+    assert "Answer only the part that was asked" in prompt
+
+
+# ── ordering, which the cache depends on ──
+
+def test_volatile_episodic_block_stays_last(native):
+    """Everything before the episodic block is comparatively stable. If the
+    capability block ever landed after it, a memory save would invalidate the
+    tool definitions too."""
+    _register(native, "get_weather", "Current outdoor conditions.")
+    prompt = prompts.build_enhanced_prompt(
+        seed_rows=[], episodic_rows=[(1, "exam moved to Thursday")], device="pi"
+    )
+    assert prompt.index("YOUR TOOLS:") < prompt.index("exam moved to Thursday")
+    assert prompt.index("CLOCK:") < prompt.index("exam moved to Thursday")
+
+
+def test_capability_block_order_is_stable_across_builds(native):
+    """Registration order must not reach the prompt. Tools render ahead of the
+    system prompt in the cached prefix, so a reordering would move every byte
+    after it and silently drop every cache hit."""
+    _register(native, "set_timer", "Start a countdown.")
+    _register(native, "get_weather", "Current outdoor conditions.")
+    assert _build() == _build()
+    assert _build().index("Current outdoor conditions") < _build().index("Start a countdown")
+
+
+def test_device_still_selects_voice_or_text_blocks(native):
+    _register(native, "get_weather", "Current outdoor conditions.")
+    voice = prompts.build_enhanced_prompt([], [], device="pi")
+    text = prompts.build_enhanced_prompt([], [], device="app")
+    assert "The voice synthesizer reads digits incorrectly" in voice
+    assert "You are writing, not speaking through a voice synthesizer" in text

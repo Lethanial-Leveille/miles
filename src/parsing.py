@@ -55,6 +55,13 @@ def is_noise_transcript(text):
 
 def strip_leading_bracket_cue(text, seen=None):
     """Strip a leading bracketed cue Nova should not be emitting, e.g. "[clearly]".
+
+    SURVIVES THE TOOL USE MIGRATION. Phase 2 deletes `extract_actions` and
+    `_parse_action_tag`, not bracket handling as a whole. This function exists
+    for emotion cues, which are a rendering hint with no side effect and were
+    never part of the action system. They are not migrating to tool use and
+    this stays regardless of what the Phase 2 commit message says.
+
     Leaves ACTION/MEMORY tags alone (defensive: they should already be gone
     by the time this runs, but this must never eat a real tag).
 
@@ -78,6 +85,18 @@ def strip_leading_bracket_cue(text, seen=None):
 
 
 def extract_memories(response_text):
+    """SURVIVES THE TOOL USE MIGRATION. Do not delete alongside extract_actions.
+
+    Memory tags were considered for migration to a `remember` tool and
+    deliberately deferred. The reason is not round trip cost, since a tool with
+    returns_to_model=False costs no extra Claude call. The reason is that
+    nothing in the memory system can correct a memory: `superseded_by` is
+    declared and never written, `volatile` and `references_date` are written and
+    never read. Automating writes into a store that cannot be corrected is worse
+    than manual capture, because the errors are permanent.
+
+    See docs/BACKEND_TODO.md, "Memory system: correction before automation".
+    This becomes a tool once SUPERSEDE and expiry exist, and not before."""
     explicit_pattern = r'\[MEMORY-EXPLICIT:\s*(.+?)\]'
     implicit_pattern = r'\[MEMORY:\s*(.+?)\]'
 
@@ -92,6 +111,10 @@ def extract_memories(response_text):
 
 
 def extract_actions(response_text):
+    """DELETED IN PHASE 2 of the tool use migration, along with
+    brain._parse_action_tag. These two are the only casualties in this module:
+    strip_leading_bracket_cue and extract_memories both stay, for reasons
+    documented on each."""
     param_pattern  = r'\[ACTION:\s*(\w+)\s*\|\s*(.+?)\]'
     simple_pattern = r'\[ACTION:\s*(\w+)\s*\]'
 
