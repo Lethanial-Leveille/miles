@@ -190,14 +190,23 @@ def _run_tools(tool_uses, model):
     return results
 
 
-async def ask_nova_async(user_text: str, device: str = "pi") -> TurnResult:
+async def ask_nova_async(user_text: str, device: str = "pi",
+                         channel: str = "voice") -> TurnResult:
+    """Run one turn.
+
+    device is provenance, which client sent this, and is stored as
+    source_device. channel is how the answer will be rendered, voice or text,
+    and selects the formatting fragment of the prompt. They were one parameter
+    until the two meanings drifted apart: the app can want spoken output and the
+    Pi could one day want text, so conflating them would make either impossible.
+    """
     model = _select_model()
     timing.note_model(model)
 
     save_message("user", user_text, device=device)
     seed_rows       = get_seed_memories()
     episodic_rows   = get_episodic_memories()
-    enhanced_prompt = build_enhanced_prompt(seed_rows, episodic_rows, device)
+    enhanced_prompt = build_enhanced_prompt(seed_rows, episodic_rows, channel)
     # Folded before the clock, so both land inside the same final user turn.
     recent          = _with_alerts(_trim_history(get_recent_messages(20)),
                                    alerts.take_for_fold())
@@ -419,5 +428,6 @@ async def ask_nova_async(user_text: str, device: str = "pi") -> TurnResult:
     return TurnResult(text=final_text, dismissed=dismissed)
 
 
-def ask_nova(user_text: str, device: str = "pi") -> TurnResult:
-    return asyncio.run(ask_nova_async(user_text, device=device))
+def ask_nova(user_text: str, device: str = "pi",
+             channel: str = "voice") -> TurnResult:
+    return asyncio.run(ask_nova_async(user_text, device=device, channel=channel))

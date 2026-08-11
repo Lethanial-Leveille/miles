@@ -230,6 +230,42 @@ def _migration_011_alert_log(conn):
     """)
 
 
+def _migration_012_pronunciations(conn):
+    """How to say words the synthesizer gets wrong.
+
+    ElevenLabs reads "Lethanial" as spelled, which is not how it sounds. The
+    alias is a respelling fed to the synthesizer in place of the real word.
+
+    ipa and arpabet are stored but unused: ElevenLabs only supports phoneme tags
+    on the turbo and flash v2 English models, and this runs on flash v2.5.
+    Recording them now means the data is already there if a future model can
+    take them, and it documents the intended pronunciation for a human reading
+    the table.
+
+    verified marks aliases actually listened to. An unverified alias is a guess,
+    and a wrong guess sounds worse than the original spelling."""
+    conn.execute("""
+        CREATE TABLE pronunciations (
+            id INTEGER PRIMARY KEY,
+            grapheme TEXT NOT NULL UNIQUE,
+            alias TEXT NOT NULL,
+            ipa TEXT,
+            arpabet TEXT,
+            verified INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    now = datetime.now().isoformat()
+    conn.execute(
+        """INSERT INTO pronunciations
+           (grapheme, alias, ipa, arpabet, verified, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 1, ?, ?)""",
+        ("Lethanial", "Luhthanyul", "l\u0259\u02c8\u03b8\u00e6nj\u0259l",
+         "L AH0 TH AE1 N Y AH0 L", now, now)
+    )
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -242,6 +278,7 @@ MIGRATIONS = [
     (9, _migration_009_recording_path),
     (10, _migration_010_tool_use),
     (11, _migration_011_alert_log),
+    (12, _migration_012_pronunciations),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -526,6 +563,45 @@ def log_alert(kind, content, fired_at, mode, delay_ms=None):
            (created_at, kind, content, fired_at, delivered_at, delay_ms, mode)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (now, kind, content, fired_at, now, delay_ms, mode)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_pronunciations():
+    """Every grapheme and alias, longest grapheme first.
+
+    The ordering is the substitution rule, not a display preference. Applying
+    "Lethanial Leveille" before "Lethanial" is what lets a multi word entry win
+    over a single word one that is a prefix of it. Sorting here rather than at
+    each call site means the rule cannot be forgotten by a new caller."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT grapheme, alias FROM pronunciations ORDER BY LENGTH(grapheme) DESC"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def upsert_pronunciation(grapheme, alias, ipa=None, arpabet=None, verified=False):
+    """Add or replace one entry at runtime, no migration needed.
+
+    grapheme is UNIQUE, so this is an update when it already exists. created_at
+    is preserved on update and only updated_at moves, so the table records when
+    a pronunciation was first needed as well as when it was last corrected."""
+    now = datetime.now().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """INSERT INTO pronunciations
+           (grapheme, alias, ipa, arpabet, verified, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(grapheme) DO UPDATE SET
+             alias = excluded.alias,
+             ipa = excluded.ipa,
+             arpabet = excluded.arpabet,
+             verified = excluded.verified,
+             updated_at = excluded.updated_at""",
+        (grapheme, alias, ipa, arpabet, int(verified), now, now)
     )
     conn.commit()
     conn.close()

@@ -6,16 +6,40 @@ from elevenlabs.client import ElevenLabs
 
 import timing
 
+from database import get_pronunciations
 from config import (
-    ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID,
+    ELEVENLABS_API_KEY, TTS_VOICE_ID,
     DEFAULT_TTS_MODEL, TTS_OUTPUT_FORMAT,
-    EMMA_NEUTRAL, SPEAKER_NAME_HINT, speak_lock,
+    TTS_VOICE_SETTINGS, SPEAKER_NAME_HINT, speak_lock,
 )
 
 CHIME_PATH = os.path.expanduser("~/miles/assets/wake_chime.wav")
 
 _BRACKET_CUE   = re.compile(r'\[.*?\]')
 _MILES_ACRONYM = re.compile(r'\b(?:M\.I\.L\.E\.S\.?|MILES)\b')
+
+
+def normalize_pronunciation(text):
+    """Replace graphemes with the respellings the synthesizer says correctly.
+
+    Voice channel only. This must never touch text the app displays: an alias
+    is a phonetic hack, so "Luhthanyul" on screen is simply a misspelling of
+    Lethanial's name. The caller enforces that; this function does the work.
+
+    Whole word only, case insensitive, longest grapheme first.
+
+    Whole word matters because a grapheme inside a longer word is a different
+    word. Longest first matters because a shorter entry that is a prefix of a
+    longer one would otherwise consume it and leave the remainder unreplaced.
+    The database returns rows in that order already.
+
+    Case is matched insensitively but the alias is substituted verbatim: the
+    synthesizer is reading sound, not spelling, so preserving the original
+    capitalization would mean nothing to it."""
+    for grapheme, alias in get_pronunciations():
+        text = re.sub(rf'\b{re.escape(grapheme)}\b', alias, text,
+                      flags=re.IGNORECASE)
+    return text
 
 _elevenlabs = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
@@ -68,13 +92,18 @@ def speak(text, voice_settings=None, model=None):
         if not clean.endswith(('?', '!', '.')):
             clean += '.'
 
-        settings  = voice_settings or EMMA_NEUTRAL
+        # Last thing before the API call, so nothing downstream can undo it and
+        # nothing upstream ever sees an alias. What gets returned, saved to
+        # history, and shown in the app is the real spelling.
+        clean = normalize_pronunciation(clean)
+
+        settings  = voice_settings or TTS_VOICE_SETTINGS
         tts_model = model or DEFAULT_TTS_MODEL
 
         requested_at = time.monotonic()
         try:
             audio_iter = _elevenlabs.text_to_speech.stream(
-                voice_id=ELEVENLABS_VOICE_ID,
+                voice_id=TTS_VOICE_ID,
                 text=clean,
                 model_id=tts_model,
                 voice_settings=settings,

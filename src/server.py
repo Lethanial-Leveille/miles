@@ -4,6 +4,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Literal
+
 from pydantic import BaseModel
 from jose import JWTError
 
@@ -41,6 +43,11 @@ class TokenResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    # How the answer will be rendered, not which client sent it. "voice" means
+    # the response is spoken, so the prompt drops markdown and the TTS path runs
+    # pronunciation normalization. Absent means voice, because the app existed
+    # before this field and its callers should not have to be updated at once.
+    channel: Literal["voice", "text"] = "voice"
 
 class ChatResponse(BaseModel):
     response: str
@@ -64,7 +71,7 @@ def refresh(user: str = Depends(get_current_user)):
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(body: ChatRequest, user: str = Depends(get_current_user)):
-    response = ask_nova(body.message, device="app").text
+    response = ask_nova(body.message, device="app", channel=body.channel).text
     return ChatResponse(response=response)
 
 
@@ -138,7 +145,12 @@ async def websocket_chat(ws: WebSocket):
             message = data.get("message", "").strip()
             if not message:
                 continue
-            response = ask_nova(message, device="app").text
+            # Same default as the REST endpoint: a socket frame without a
+            # channel is treated as voice.
+            channel = data.get("channel", "voice")
+            if channel not in ("voice", "text"):
+                channel = "voice"
+            response = ask_nova(message, device="app", channel=channel).text
             await ws.send_json({"response": response})
     except WebSocketDisconnect:
         pass

@@ -140,24 +140,39 @@ DB_PATH         = os.path.expanduser("~/miles/data/miles.db")
 # ROLLBACK: Fish Audio config preserved for emergency rollback
 # VOICE_ID = "158f6b9781b746ec8c334d9730d302f1"
 
-# ElevenLabs TTS configuration (v0.7.1)
-ELEVENLABS_API_KEY    = os.environ.get("ELEVENLABS_API_KEY")
-ELEVENLABS_VOICE_ID   = os.environ.get("ELEVENLABS_VOICE_ID")
-DEFAULT_TTS_MODEL     = "eleven_flash_v2_5"
-EXPRESSIVE_TTS_MODEL  = "eleven_v3"
-TTS_OUTPUT_FORMAT     = "pcm_22050"
+# ── ElevenLabs voice ──
+# The single place the voice is defined. Swapping voices means editing
+# TTS_VOICE_ID here and nothing else; no call site names a voice, a model, or a
+# settings object.
+#
+# The id was previously read from .env, which made it a deployment secret rather
+# than a configuration choice. A voice id is neither secret nor deployment
+# specific, and keeping it there meant changing voices required editing a
+# gitignored file with no history. The API key stays in .env, because that one
+# actually is a secret.
+#
+# Voice: Victoria.
+TTS_VOICE_ID = "qSeXEcewz7tA0Q0qk9fH"
 
-EMMA_NEUTRAL = VoiceSettings(
-    stability=0.50, similarity_boost=0.75, style=0.00,
-    use_speaker_boost=True, speed=1.00,
+ELEVENLABS_API_KEY   = os.environ.get("ELEVENLABS_API_KEY")
+DEFAULT_TTS_MODEL    = "eleven_flash_v2_5"
+EXPRESSIVE_TTS_MODEL = "eleven_v3"   # HTTP only, no WebSocket, no speaker boost
+TTS_OUTPUT_FORMAT    = "pcm_22050"   # raw S16_LE mono, piped straight to aplay
+
+TTS_VOICE_SETTINGS = VoiceSettings(
+    stability=0.60, similarity_boost=0.75, style=0.00,
+    use_speaker_boost=True,
 )
 
-EMMA_WITTY = VoiceSettings(
+# Kept for the response classification work that selects a profile per turn.
+# Unused today: speak() falls back to TTS_VOICE_SETTINGS when no override is
+# passed, so these are inert until something selects one.
+VOICE_WITTY = VoiceSettings(
     stability=0.30, similarity_boost=0.75, style=0.35,
     use_speaker_boost=True, speed=1.05,
 )
 
-EMMA_SERIOUS = VoiceSettings(
+VOICE_SERIOUS = VoiceSettings(
     stability=0.65, similarity_boost=0.80, style=0.00,
     use_speaker_boost=True, speed=0.95,
 )

@@ -39,7 +39,7 @@ def _register(reg, name, description):
 
 
 def _build():
-    return prompts.build_enhanced_prompt(seed_rows=[], episodic_rows=[], device="pi")
+    return prompts.build_enhanced_prompt(seed_rows=[], episodic_rows=[], channel="voice")
 
 
 # ── flag routing ──
@@ -104,7 +104,7 @@ def test_volatile_episodic_block_stays_last(native):
     tool definitions too."""
     _register(native, "get_weather", "Current outdoor conditions.")
     prompt = prompts.build_enhanced_prompt(
-        seed_rows=[], episodic_rows=[(1, "exam moved to Thursday")], device="pi"
+        seed_rows=[], episodic_rows=[(1, "exam moved to Thursday")], channel="voice"
     )
     assert prompt.index("YOUR TOOLS:") < prompt.index("exam moved to Thursday")
     assert prompt.index("CLOCK:") < prompt.index("exam moved to Thursday")
@@ -120,9 +120,9 @@ def test_capability_block_order_is_stable_across_builds(native):
     assert _build().index("Current outdoor conditions") < _build().index("Start a countdown")
 
 
-def test_device_still_selects_voice_or_text_blocks(native):
+def test_channel_still_selects_voice_or_text_blocks(native):
     _register(native, "get_weather", "Current outdoor conditions.")
-    voice = prompts.build_enhanced_prompt([], [], device="pi")
-    text = prompts.build_enhanced_prompt([], [], device="app")
+    voice = prompts.build_enhanced_prompt([], [], channel="voice")
+    text = prompts.build_enhanced_prompt([], [], channel="text")
     assert "The voice synthesizer reads digits incorrectly" in voice
     assert "You are writing, not speaking through a voice synthesizer" in text

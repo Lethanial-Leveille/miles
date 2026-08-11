@@ -30,6 +30,24 @@ RESPONSE_LENGTH_TEXT = """RESPONSE LENGTH:
 Give a brief answer first, then offer to elaborate if there is more to say. Brevity means fewer words, never withholding an answer. You are writing, not speaking aloud, so a longer answer is fine when the topic actually calls for it."""
 
 
+# ── Channel fragments ──
+# One shared base, assembled in build_enhanced_prompt, plus exactly one of these.
+# Scoped to response formatting: nothing here touches tool calling or memory
+# writes, which must behave identically whichever channel is in use.
+
+VOICE_FORMATTING = """OUTPUT FORMAT:
+Everything you write is spoken aloud by a synthesizer. There is no screen, so anything visual is either read out as literal punctuation or silently lost.
+
+No markdown. No bullet points, no numbered lists, no headers, no bold or italics, no code blocks. No parentheticals; if an aside is worth saying, say it as its own sentence, and if it is not, leave it out. No emoji.
+
+Keep sentences under fifteen words. One idea per sentence. Use contractions, because that is how speech sounds.
+
+Spell out symbols and abbreviations as words. Say "percent" not "%", "degrees" not "°", "and" not "&", "versus" not "vs", "for example" not "e.g."."""
+
+TEXT_FORMATTING = """OUTPUT FORMAT:
+You are writing to a screen. Format however serves the answer."""
+
+
 GENERAL_KNOWLEDGE = """GENERAL KNOWLEDGE:
 You have broad general knowledge and should use it. Answer factual questions directly and confidently from what you know. The restriction on inventing data applies only to live or personal information, meaning weather, current time, reminders, and facts about Lethanial himself. Never claim a capability has not been built when the question is answerable from general knowledge."""
 
@@ -146,14 +164,15 @@ def _episodic_block(episodic_rows):
     return "\nTHINGS LETHANIAL HAS TOLD YOU TO REMEMBER:\n" + "\n".join(lines) + "\n"
 
 
-def build_enhanced_prompt(seed_rows, episodic_rows, device="pi"):
+def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice"):
     """Assemble the full system prompt.
 
     Order is deliberate: stable content first, volatile content last, because
     this whole string is the cached prefix and anything that changes per turn
     would invalidate everything after it. device selects voice vs text specific
-    sections (response length, number formatting); everything else is identical
-    for both.
+    sections (response length, number formatting, output formatting); everything
+    else, including every tool and the memory instructions, is identical for
+    both.
 
     The capability slot in the middle holds either the legacy action tag
     instructions or a block generated from the tool registry, depending on
@@ -165,9 +184,10 @@ def build_enhanced_prompt(seed_rows, episodic_rows, device="pi"):
     so every explicit memory save invalidates the prefix. Known and deferred;
     see docs/BACKEND_TODO.md.
     """
-    is_text = device == "app"
+    is_text = channel == "text"
     length_block = RESPONSE_LENGTH_TEXT if is_text else RESPONSE_LENGTH_VOICE
     number_block = NUMBER_FORMAT_TEXT if is_text else NUMBER_FORMAT_VOICE
+    format_block = TEXT_FORMATTING if is_text else VOICE_FORMATTING
 
     system_prompt = "\n\n".join([
         SYSTEM_PROMPT_HEADER,
@@ -176,6 +196,7 @@ def build_enhanced_prompt(seed_rows, episodic_rows, device="pi"):
         THINGS_YOU_CANNOT_DO,
         NEVER_BLOCK,
         number_block,
+        format_block,
         FOCUS_MODE,
         ABOUT_YOURSELF,
         OTHER_USERS,
