@@ -435,8 +435,8 @@ def log_verification(similarity, accepted, threshold_used, transcript, duration_
         """INSERT INTO verification_log
            (created_at, similarity, accepted, threshold_used, transcript, duration_seconds,
             embedded_duration_seconds, wake_confidence, turn_type, outcome,
-            rms_dbfs, snr_db, spectral_tilt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            rms_dbfs, snr_db, spectral_tilt, recording_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (datetime.now().isoformat(), similarity, int(accepted), threshold_used,
          transcript, duration_seconds, embedded_duration_seconds, wake_confidence,
          turn_type, outcome, rms_dbfs, snr_db, spectral_tilt, recording_path)

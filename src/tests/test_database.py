@@ -138,3 +138,63 @@ def test_get_active_memories_pagination(db):
     assert total2 == 5
     assert [r[1] for r in page1] == ["Fact 4", "Fact 3"]
     assert [r[1] for r in page2] == ["Fact 2", "Fact 1"]
+
+
+def test_log_verification_accepts_every_documented_field(db):
+    """A missing column in the INSERT is invisible to import, to py_compile,
+    and to a service that starts cleanly: it only raises when a real turn
+    tries to log, which crash looped the voice loop in production. Exercising
+    the writer with every field is the only thing that catches it."""
+    db.log_verification(
+        similarity=0.81, accepted=True, threshold_used=0.5,
+        transcript="can you hear me", duration_seconds=2.5,
+        embedded_duration_seconds=2.1, turn_type="initial",
+        wake_confidence=0.7, outcome="scored", rms_dbfs=-28.0,
+        snr_db=19.0, spectral_tilt=-11.0, recording_path="/tmp/x.wav",
+    )
+    rows = db.get_verification_rows() if hasattr(db, "get_verification_rows") else None
+    import sqlite3
+    conn = sqlite3.connect(db.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = dict(conn.execute("SELECT * FROM verification_log").fetchone())
+    conn.close()
+    assert row["recording_path"] == "/tmp/x.wav"
+    assert row["snr_db"] == 19.0
+    assert row["outcome"] == "scored"
+
+
+def test_log_verification_with_only_required_fields(db):
+    """The session_trust and no_audio paths pass far fewer arguments."""
+    db.log_verification(
+        similarity=0.0, accepted=True, threshold_used=0.5,
+        transcript="thanks", duration_seconds=1.0,
+        embedded_duration_seconds=0.8, turn_type="followup",
+        outcome="session_trust",
+    )
+    import sqlite3
+    conn = sqlite3.connect(db.DB_PATH)
+    row = conn.execute("SELECT outcome, recording_path FROM verification_log").fetchone()
+    conn.close()
+    assert row == ("session_trust", None)
+
+
+def test_log_timing_accepts_every_documented_field(db):
+    """Same failure mode, same guard, for the other per turn writer."""
+    db.log_timing(
+        turn_type="initial", action_fired=False, transcript="hi",
+        speech_end_to_endpoint_ms=900, transcribe_ms=700, verify_ms=270,
+        claude_ttft_ms=800, claude_total_ms=1900, tts_ttfb_ms=300,
+        tts_first_audio_ms=330, action_ms=None, total_perceived_ms=3200,
+        model="claude-haiku-4-5", response="Yes I can hear you.",
+        cache_read_tokens=4165, cache_creation_tokens=0,
+        first_sentence_ms=420, max_pause_ms=180,
+    )
+    import sqlite3
+    conn = sqlite3.connect(db.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = dict(conn.execute("SELECT * FROM timing_log").fetchone())
+    conn.close()
+    assert row["max_pause_ms"] == 180
+    assert row["cache_read_tokens"] == 4165
+    # derived inside the writer so the count can never drift from the text
+    assert row["response_words"] == 5
