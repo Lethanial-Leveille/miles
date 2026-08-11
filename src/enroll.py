@@ -67,46 +67,65 @@ from config import (
 FORMAT = pyaudio.paInt16
 TEMP_ENROLL = os.path.expanduser("~/miles/build/enroll_temp.wav")
 
-# Outlier detection uses two tests because an absolute threshold alone is not
-# enough. Resemblyzer embeddings are non negative (the encoder output is
-# ReLU'd), so even unrelated audio floors around 0.75 rather than 0.0. A bad
-# sample therefore does not look bad in absolute terms, it looks bad relative
-# to how tightly the other samples agree.
-OUTLIER_SIMILARITY = 0.80   # absolute floor: clearly wrong on its own
+# Outlier detection is primarily relative: a bad sample looks bad next to how
+# tightly the others agree, not bad in absolute terms.
+#
+# The absolute floor was originally set at 0.80 on the assumption that
+# unrelated audio scores around 0.75. That figure came from random non
+# negative vectors, which do not represent real speech embeddings: a genuinely
+# different speaker measured 0.454 against this voiceprint. The 0.80 floor
+# therefore fired on the bottom of a perfectly healthy distribution (twelve
+# samples spanning 0.788 to 0.846) and flagged two good recordings.
+#
+# 0.70 sits below any same speaker sample observed and well above real
+# impostor range, so it now catches only a genuinely broken recording and
+# leaves the relative test to do the real work.
+OUTLIER_SIMILARITY = 0.70   # absolute floor: broken recording
 OUTLIER_MARGIN     = 0.08   # or this far below the median sample
 
-# Each prompt must carry several seconds of speech on its own. Nothing here is
-# short enough to trim down below the stability floor, which is the specific
-# failure that ruined the previous voiceprint.
+# Every phrase runs roughly twenty five words, which is about seven seconds of
+# voiced audio at the measured rate of 0.29s per word. That clears
+# MIN_VOICED_SECONDS with real margin rather than straddling it.
+#
+# An earlier version used natural but much shorter requests (nine to fifteen
+# words). Those landed between 2.6 and 4.4 seconds of voiced audio, so roughly
+# half of them were rejected at record time and the rest only just passed. A
+# phrase that a speaker has to repeat to fill the window produces unnatural
+# audio, which defeats the point of enrolling on realistic speech.
 #
 # Conditions cross vocal effort with distance. "Projected" means speaking as
 # though across the room, which changes pitch, effort, and spectral tilt, not
-# just loudness.
+# just loudness. Phrases repeat across conditions on purpose: holding the words
+# constant isolates the condition, so a difference between two samples is the
+# delivery rather than the content.
+_WEATHER = ("Tell me what the weather is supposed to be like this weekend, and "
+            "whether I should stay inside Saturday")
+_TIMER = ("Set a timer for twenty five minutes so I can finish this problem "
+          "set without getting distracted again")
+_ADVISOR = ("Remind me to email my advisor about registration tomorrow "
+            "morning, and note that I should check the prerequisites first")
+_CLASS = ("What time is my first class tomorrow, and how long does it usually "
+          "take to get across campus")
+
 SAMPLES = [
-    ("near, normal voice",
-     "Tell me what the weather is going to be like this weekend"),
-    ("near, normal voice",
-     "Set a timer for twenty five minutes so I can finish this problem set"),
-    ("near, normal voice",
-     "Remind me to email my advisor about registration tomorrow morning"),
-    ("near, projected",
-     "Tell me what the weather is going to be like this weekend"),
-    ("near, projected",
-     "What time is my first class and how long do I have to get there"),
-    ("far, projected",
-     "Tell me what the weather is going to be like this weekend"),
-    ("far, projected",
-     "Set a timer for twenty five minutes so I can finish this problem set"),
-    ("far, projected",
-     "Remind me to email my advisor about registration tomorrow morning"),
-    ("far, normal voice",
-     "What time is my first class and how long do I have to get there"),
+    ("near, normal voice", _WEATHER),
+    ("near, normal voice", _TIMER),
+    ("near, normal voice", _ADVISOR),
+    ("near, projected", _WEATHER),
+    ("near, projected", _CLASS),
+    ("far, projected", _WEATHER),
+    ("far, projected", _TIMER),
+    ("far, projected", _ADVISOR),
+    ("far, normal voice", _CLASS),
     ("facing away, normal voice",
-     "Tell me about everything I have scheduled for tomorrow afternoon"),
+     "Tell me what I said I was going to work on this week, and what I keep "
+     "putting off"),
     ("casual, relaxed delivery",
-     "Yeah so I was thinking about that thing we talked about earlier"),
+     "Yeah so I was thinking about that thing we talked about earlier, and I "
+     "am still not sure about it"),
     ("careful, precise delivery",
-     "Please confirm the current status of every system you are running"),
+     "Please confirm the current status of every system you are running, and "
+     "report any errors since we last spoke"),
 ]
 
 
@@ -228,14 +247,17 @@ def main():
     encoder = VoiceEncoder()
 
     print("\n=== M.I.L.E.S. Voice Enrollment ===\n")
-    print(f"{len(SAMPLES)} samples, {ENROLL_RECORD_SECONDS}s each.")
+    print(f"{len(SAMPLES)} samples, {ENROLL_RECORD_SECONDS}s of recording each.")
     print(f"Each needs at least {MIN_VOICED_SECONDS}s of actual speech after")
     print("silence trimming, or it will be rejected and re recorded.\n")
+    print("The phrases are long on purpose. Say each one at your normal pace,")
+    print("once, all the way through. You should finish with a few seconds to")
+    print("spare, so there is no need to rush or to repeat yourself.\n")
     print("Conditions vary on purpose. Follow the condition line exactly:")
     print("  projected  = speak as if across the room, not just louder")
     print("  far        = actually stand across the room")
-    print("Keep talking for the whole recording. Repeat the phrase if you")
-    print("finish early.\n")
+    print("Several phrases repeat across conditions. That is deliberate: same")
+    print("words, different delivery, so the condition is what changes.\n")
 
     embeddings = []
     labels     = []
@@ -267,8 +289,11 @@ def main():
         # The guard that would have caught "Lock in". Rejected before it can
         # reach the centroid, not flagged afterwards.
         if voiced < MIN_VOICED_SECONDS:
-            print(f"  REJECTED: only {voiced:.2f}s of speech "
-                  f"(need {MIN_VOICED_SECONDS}s). Speak for longer.\n")
+            shortfall = MIN_VOICED_SECONDS - voiced
+            print(f"  REJECTED: only {voiced:.2f}s of speech after trimming "
+                  f"(need {MIN_VOICED_SECONDS}s, short by {shortfall:.2f}s).")
+            print("  Say the whole phrase without trailing off, and do not "
+                  "pause between clauses.\n")
             continue
 
         print(f"  Captured {voiced:.2f}s of speech. Playing back...")
