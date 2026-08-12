@@ -307,6 +307,45 @@ For reference: supercardioid nulls sit at roughly ±126 degrees off axis, not
 directivity index against a reverberant field, so realistic gain from aiming
 one is 5 to 10 dB, not 20. Still meaningful on the SNR curve.
 
+### 5b. Encoder comparison, first pass done Aug 12 2026
+
+`scripts/encoder_bench.py`. Builds a centroid from archived clips over three
+seconds, scores every clip against it, and reports how far short utterances
+fall. Runs on the recording archive with no new audio.
+
+First result, 43 usable clips, 17 of them under two seconds:
+
+| encoder | raw drop | own spread | d |
+|---|---|---|---|
+| ecapa | 0.190 | 0.186 | **1.02** |
+| resemblyzer | 0.111 | 0.061 | 1.80 |
+
+**Read d, never the raw drop, when comparing encoders.** The first version of
+this benchmark compared raw drops and concluded Resemblyzer was more robust.
+That was wrong for a reason already recorded in this document: Resemblyzer's
+embeddings are non negative and unrelated audio floors around 0.75, so its
+usable range is roughly a quarter as wide as an encoder whose scores can go
+negative. A compressed scale shows a smaller absolute drop for free. Cohen's d
+divides by each encoder's own spread and is comparable.
+
+On that measure ECAPA loses about half as much on short utterances.
+
+**This is one half of the picture and the weaker half.** Every archived clip is
+Lethanial, so there is no false acceptance measurement at all: an encoder that
+scored everything at 0.99 would top this table and be worthless. Do not swap on
+the strength of it alone.
+
+What the full comparison needs, after the move:
+- Impostor audio. Fifty utterances each from at least two other people, on the
+  final mic in the final room. His mother and Azarieyah are the realistic ones.
+- Then EER rather than d, which is the number that actually decides it.
+- CAM++ and ERes2NetV2 alongside ECAPA. Neither wespeaker nor modelscope is
+  installed here; both need adding before those two can be measured.
+
+**Ordering matters and is easy to get wrong.** Swap the encoder *before*
+re-enrolling, not after. Enrolling on Resemblyzer and then swapping means
+enrolling twice, because embeddings from two encoders are not comparable.
+
 ### 6. Mic selection
 
 Requirements: enclosure mountable, good far field pickup across a room, Pi via
