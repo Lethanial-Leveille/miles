@@ -113,7 +113,15 @@ def play_chime():
     )
 
 
-def speak(text, voice_settings=None, model=None):
+def speak(text, voice_settings=None, model=None, seed=None):
+    """Synthesize and play one utterance.
+
+    seed pins the generation. Without it ElevenLabs produces a different
+    rendition every call, and the spread between two renditions of identical
+    input is wide enough that the same phoneme string can sound right once and
+    wrong the next time. Production leaves it None, because varied delivery is
+    desirable in conversation. Comparisons must set it, or they are measuring
+    luck rather than the thing being compared."""
     with speak_lock:
         clean = _BRACKET_CUE.sub('', text).strip()
         clean = _MILES_ACRONYM.sub('Miles', clean)
@@ -138,6 +146,7 @@ def speak(text, voice_settings=None, model=None):
                 model_id=tts_model,
                 voice_settings=settings,
                 output_format=TTS_OUTPUT_FORMAT,
+                **({"seed": seed} if seed is not None else {}),
             )
         except Exception as e:
             print(f"TTS error (ElevenLabs): {e}", flush=True)

@@ -9,6 +9,8 @@ restart, no deploy, no file to edit.
     python3 scripts/pronounce.py sweep Lethanial          # audition all 25
     python3 scripts/pronounce.py sweep Lethanial 12       # resume at 12
     python3 scripts/pronounce.py sweep Lethanial 1,6,8    # finals, these only
+    python3 scripts/pronounce.py spread Lethanial 15      # one candidate, many seeds
+    python3 scripts/pronounce.py stability Lethanial 15   # one candidate, many stabilities
     python3 scripts/pronounce.py pick Lethanial 7         # commit number 7
     python3 scripts/pronounce.py try Lethanial Luthanyull "La-thanyull"
     python3 scripts/pronounce.py tryph Lethanial "L AA1 TH AE0 N Y AH0 L"
@@ -141,6 +143,13 @@ SWEEP = [
 ]
 
 
+# Every comparison runs at this seed so two candidates differ by the thing
+# being compared and nothing else. Lethanial heard the same phoneme string come
+# out "no" on one repeat and "yes" on the next, which means the spread between
+# renditions of identical input was as large as the spread between candidates.
+# Any ranking collected without pinning this was measuring luck.
+COMPARE_SEED = 4242
+
 # Below this many candidates, each is spoken twice. A finals round is decided on
 # small differences, and hearing something once is not enough to separate two
 # that are close; hearing it twice in a row is.
@@ -172,11 +181,61 @@ def cmd_sweep(grapheme, start=0, only=None):
         spoken = value if kind == "alias" else (
             f'<phoneme alphabet="cmu-arpabet" ph="{value}">{grapheme}</phoneme>')
         for _ in range(repeats):
-            tts.speak(FRAME.format(spoken))
+            tts.speak(FRAME.format(spoken), seed=COMPARE_SEED)
             time.sleep(0.7)
         time.sleep(0.5)
 
     print(f"\npick one:  python3 scripts/pronounce.py pick {grapheme} <number>")
+
+
+def cmd_spread(grapheme, number, runs=6):
+    """Speak one candidate at several seeds, to hear how much it varies.
+
+    This is the measurement that should have come first. A candidate is only
+    worth choosing if it is reliably right, and a phoneme string that lands
+    correctly half the time is worse than a duller one that always lands. The
+    numbers to compare are how many of these sound acceptable, not whether any
+    single one does."""
+    kind, value, note = SWEEP[number - 1]
+    spoken = value if kind == "alias" else (
+        f'<phoneme alphabet="cmu-arpabet" ph="{value}">{grapheme}</phoneme>')
+    print(f"candidate {number}: {value}   {note}")
+    print(f"{runs} different seeds, same input. Count how many sound right.\n")
+    for i in range(runs):
+        print(f"  seed {1000 + i * 111}")
+        tts.speak(FRAME.format(spoken), seed=1000 + i * 111)
+        time.sleep(0.7)
+
+
+def cmd_stability(grapheme, number):
+    """Speak one candidate across stability values, at a fixed seed.
+
+    stability is the setting that governs how much a rendition varies. If a
+    candidate sounds right at 0.85 and inconsistent at 0.60, the fix is the
+    setting rather than the phonemes, and no amount of further phoneme hunting
+    will help."""
+    from elevenlabs import VoiceSettings
+    kind, value, note = SWEEP[number - 1]
+    spoken = value if kind == "alias" else (
+        f'<phoneme alphabet="cmu-arpabet" ph="{value}">{grapheme}</phoneme>')
+    print(f"candidate {number}: {value}   {note}")
+    print("current production stability is "
+          f"{config.TTS_VOICE_SETTINGS.stability}\n")
+    for stability in (0.45, 0.60, 0.75, 0.90, 1.00):
+        print(f"  stability {stability:.2f}")
+        settings = VoiceSettings(
+            stability=stability,
+            similarity_boost=config.TTS_VOICE_SETTINGS.similarity_boost,
+            style=config.TTS_VOICE_SETTINGS.style,
+            use_speaker_boost=True, speed=1.00,
+        )
+        # Two renditions per value: the point is consistency, and one sample
+        # cannot show it.
+        for seed in (1000, 2000):
+            tts.speak(FRAME.format(spoken), voice_settings=settings, seed=seed)
+            time.sleep(0.5)
+        time.sleep(0.4)
+    print("\nset the winner in src/config.py TTS_VOICE_SETTINGS, then restart")
 
 
 def cmd_pick(grapheme, number):
@@ -235,6 +294,10 @@ def main():
             cmd_sweep(rest[0], only={int(n) for n in spec.split(",") if n.strip()})
         else:
             cmd_sweep(rest[0], start=int(spec) if spec else 0)
+    elif command == "spread" and len(rest) >= 2:
+        cmd_spread(rest[0], int(rest[1]), int(rest[2]) if len(rest) > 2 else 6)
+    elif command == "stability" and len(rest) == 2:
+        cmd_stability(rest[0], int(rest[1]))
     elif command == "pick" and len(rest) == 2:
         cmd_pick(rest[0], int(rest[1]))
     elif command == "try" and len(rest) >= 2:
