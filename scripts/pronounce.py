@@ -6,7 +6,8 @@ sentence, so a change here takes effect on the very next thing Nova says. No
 restart, no deploy, no file to edit.
 
     python3 scripts/pronounce.py list
-    python3 scripts/pronounce.py try Lethanial Luthanyull Lah-than-yull "luh THAN yull"
+    python3 scripts/pronounce.py try Lethanial Luthanyull "La-thanyull"
+    python3 scripts/pronounce.py tryph Lethanial "L AA1 TH AE0 N Y AH0 L"
     python3 scripts/pronounce.py set Lethanial Luthanyull
     python3 scripts/pronounce.py phonemes Lethanial "L AH0 TH AE1 N Y AH0 L"
     python3 scripts/pronounce.py say "Good morning Lethanial."
@@ -62,6 +63,35 @@ def cmd_try(grapheme, candidates):
     print(f"\npick one:  python3 scripts/pronounce.py set {grapheme} <alias>")
 
 
+def cmd_tryph(grapheme, arpabets):
+    """Speak candidate ARPAbet strings directly. Writes nothing, changes no config.
+
+    Separate from `try` because phonemes and respellings fail differently. A
+    respelling is at the mercy of how the model reads English spelling, which is
+    what makes an over annunciated Y hard to spell away. Phonemes name the
+    sound, so a glide stays a glide."""
+    if not config.TTS_PHONEME_TAGS:
+        print("note: TTS_PHONEME_TAGS is OFF, so this auditions phonemes that")
+        print("      production is not using yet. Turn it on in src/config.py")
+        print("      once one of these sounds right.\n")
+
+    print(f"auditioning {len(arpabets)} phoneme strings for {grapheme!r}\n")
+    print("  0. (as written, no tag)")
+    tts.speak(FRAME.format(grapheme))
+    time.sleep(0.6)
+
+    for i, ph in enumerate(arpabets, 1):
+        print(f"  {i}. {ph}")
+        tagged = f'<phoneme alphabet="cmu-arpabet" ph="{ph}">{grapheme}</phoneme>'
+        # Bypasses the table and the config flag: the tag is built here and
+        # handed straight to the model, which is the only way to compare
+        # candidates without a restart between each one.
+        tts.speak(FRAME.format(tagged))
+        time.sleep(0.6)
+
+    print(f"\npick one:  python3 scripts/pronounce.py phonemes {grapheme} \"<string>\"")
+
+
 def cmd_set(grapheme, alias):
     existing = {g: (a, p) for g, a, p in get_pronunciations()}
     arpabet = existing.get(grapheme, (None, None))[1]
@@ -101,6 +131,8 @@ def main():
         cmd_list()
     elif command == "try" and len(rest) >= 2:
         cmd_try(rest[0], rest[1:])
+    elif command == "tryph" and len(rest) >= 2:
+        cmd_tryph(rest[0], rest[1:])
     elif command == "set" and len(rest) == 2:
         cmd_set(rest[0], rest[1])
     elif command == "phonemes" and len(rest) == 2:
