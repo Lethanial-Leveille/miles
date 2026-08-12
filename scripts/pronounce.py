@@ -8,6 +8,7 @@ restart, no deploy, no file to edit.
     python3 scripts/pronounce.py list
     python3 scripts/pronounce.py sweep Lethanial          # audition all 25
     python3 scripts/pronounce.py sweep Lethanial 12       # resume at 12
+    python3 scripts/pronounce.py sweep Lethanial 1,6,8    # finals, these only
     python3 scripts/pronounce.py pick Lethanial 7         # commit number 7
     python3 scripts/pronounce.py try Lethanial Luthanyull "La-thanyull"
     python3 scripts/pronounce.py tryph Lethanial "L AA1 TH AE0 N Y AH0 L"
@@ -140,27 +141,40 @@ SWEEP = [
 ]
 
 
-def cmd_sweep(grapheme, start=0):
-    """Speak every candidate in order, numbered. Writes nothing.
+# Below this many candidates, each is spoken twice. A finals round is decided on
+# small differences, and hearing something once is not enough to separate two
+# that are close; hearing it twice in a row is.
+REPEAT_BELOW = 9
 
-    Twenty five of them is several minutes of listening, so it takes a starting
-    index: run `sweep Lethanial 12` to resume where you stopped rather than
-    sitting through the first dozen again."""
-    print(f"{len(SWEEP)} candidates for {grapheme!r}, starting at {start}")
+
+def cmd_sweep(grapheme, start=0, only=None):
+    """Speak candidates in order, numbered. Writes nothing.
+
+    Numbering always refers to the full SWEEP list, even when a subset is
+    selected, so `pick 11` still means the same candidate in a finals round as
+    it did in the first pass. Renumbering a shortlist would silently invalidate
+    every number written down during the first listen."""
+    chosen = [(i, c) for i, c in enumerate(SWEEP, 1)
+              if (i in only if only else i >= start)]
+    repeats = 2 if len(chosen) < REPEAT_BELOW else 1
+
+    print(f"{len(chosen)} candidates for {grapheme!r}"
+          + (f", each spoken {repeats} times" if repeats > 1 else ""))
     print("nothing is saved; note the number you like, then `pick <n>`\n")
 
-    print("  0. (as written, no substitution)")
-    tts.speak(FRAME.format(grapheme))
-    time.sleep(0.7)
+    if not only:
+        print("  0. (as written, no substitution)")
+        tts.speak(FRAME.format(grapheme))
+        time.sleep(0.7)
 
-    for i, (kind, value, note) in enumerate(SWEEP, 1):
-        if i < start:
-            continue
-        print(f"  {i:2}. [{kind:7}] {value:28} {note}")
+    for i, (kind, value, note) in chosen:
+        print(f"  {i:2}. [{kind:7}] {value:28} {note}", flush=True)
         spoken = value if kind == "alias" else (
             f'<phoneme alphabet="cmu-arpabet" ph="{value}">{grapheme}</phoneme>')
-        tts.speak(FRAME.format(spoken))
-        time.sleep(0.7)
+        for _ in range(repeats):
+            tts.speak(FRAME.format(spoken))
+            time.sleep(0.7)
+        time.sleep(0.5)
 
     print(f"\npick one:  python3 scripts/pronounce.py pick {grapheme} <number>")
 
@@ -216,7 +230,11 @@ def main():
     if command == "list":
         cmd_list()
     elif command == "sweep" and rest:
-        cmd_sweep(rest[0], int(rest[1]) if len(rest) > 1 else 0)
+        spec = rest[1] if len(rest) > 1 else ""
+        if "," in spec:
+            cmd_sweep(rest[0], only={int(n) for n in spec.split(",") if n.strip()})
+        else:
+            cmd_sweep(rest[0], start=int(spec) if spec else 0)
     elif command == "pick" and len(rest) == 2:
         cmd_pick(rest[0], int(rest[1]))
     elif command == "try" and len(rest) >= 2:
