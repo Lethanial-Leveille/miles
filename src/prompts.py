@@ -163,6 +163,31 @@ def _seed_block(seed_rows):
     return "\n".join(lines) + "\n"
 
 
+def _manifest_block(manifest_rows):
+    """The index of what is retrievable but not currently in front of her.
+
+    Nova cannot search for something she does not know exists, so without this
+    retrieval either never fires or fires on everything. Counts rather than
+    contents, which is around a hundred tokens for the whole tail.
+
+    The last line is the important one. A model handed a partial view of what
+    it knows will fill the gap rather than admit to it, and a confident guess
+    about his own life is worse than an honest miss."""
+    if not manifest_rows:
+        return ""
+    listed = ", ".join(f"{category} ({count})" for category, count in manifest_rows)
+    return (
+        "\nYOU KNOW MORE THAN IS LISTED ABOVE:\n"
+        f"You hold further detail on: {listed}.\n"
+        "Those facts are not in front of you right now. When something he says "
+        "matches them, they are attached to his message automatically.\n"
+        "If a question clearly falls in one of those areas and nothing was "
+        "attached, say you do not have it to hand rather than guessing. You "
+        "have specifics about his life that you cannot see from here, so an "
+        "invented answer will be wrong in a way he notices.\n"
+    )
+
+
 def _episodic_block(episodic_rows):
     """Explicit memories from conversation, in their own labeled block,
     separate from the seed facts."""
@@ -172,7 +197,8 @@ def _episodic_block(episodic_rows):
     return "\nTHINGS LETHANIAL HAS TOLD YOU TO REMEMBER:\n" + "\n".join(lines) + "\n"
 
 
-def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice"):
+def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice",
+                          manifest_rows=None):
     """Assemble the full system prompt.
 
     Order is deliberate: stable content first, volatile content last, because
@@ -224,6 +250,7 @@ def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice"):
     return (
         system_prompt
         + _seed_block(seed_rows)
+        + _manifest_block(manifest_rows or [])
         + "\n" + middle + "\n"
         + _episodic_block(episodic_rows)
     )

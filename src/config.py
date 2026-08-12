@@ -341,6 +341,19 @@ PROMPT_CACHING = True
 # ups) with headroom to spare.
 MAX_FOLLOWUP_TURNS = 6
 
+# How many tier two memories get attached to a turn when the transcript matches
+# them. Small on purpose: these land after the cache breakpoint so they are
+# cheap, but they are also unranked prose in front of the model, and five
+# loosely relevant facts crowd out the one that mattered. Raise it only against
+# logged misses, never on the theory that more context helps.
+RECALL_LIMIT = 3
+
+# Relevance floor for retrieval, in document frequency. A row is only attached
+# if the query terms it matches are at least as informative as a term appearing
+# in this many memories. Raising it makes retrieval quieter and misses more;
+# lowering it attaches noise. Tune against logged misses, not by feel.
+RECALL_MIN_DF = 15
+
 # How long the follow up window stays open after Nova finishes speaking.
 #
 # Was a bare 10 in voice_main.py. Ten seconds is a long time to stand in a quiet

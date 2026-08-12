@@ -8,7 +8,7 @@ import timing
 from tts import speak
 from prompts import build_enhanced_prompt
 from database import (save_message, get_seed_memories, get_episodic_memories,
-                      get_recent_messages)
+                      get_recent_messages, search_memories, memory_manifest)
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
 from tools import registry
@@ -24,7 +24,7 @@ import memory_tool    # noqa: F401
 import system_state   # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
-                    HISTORY_ASSISTANT_WORDS)
+                    HISTORY_ASSISTANT_WORDS, RECALL_LIMIT)
 
 claude = anthropic.AsyncAnthropic()
 
@@ -95,6 +95,35 @@ def _trim_history(messages: list) -> list:
             "content": " ".join(words[:HISTORY_ASSISTANT_WORDS]) + "...",
         })
     return trimmed
+
+
+def _with_recalled(messages: list, query: str) -> list:
+    """Attach any tier two memories the transcript matches to the final user turn.
+
+    Same placement argument as the clock below. This changes every turn, so it
+    has to sit after the cache breakpoint; in the system prompt it would
+    invalidate the whole prefix on every single turn and quietly cost more than
+    it saves.
+
+    Tier two only. Tier one is already in the prompt, and attaching a fact
+    twice is how a model starts treating it as more important than it is.
+
+    A miss returns the messages untouched. Retrieval finding nothing is the
+    normal case for most turns, and it leaves Nova exactly where she was before
+    any of this existed, answering from the resident tier. The manifest block
+    is what tells her to say so rather than invent something."""
+    if not messages or messages[-1]["role"] != "user":
+        return messages
+
+    hits = search_memories(query, limit=RECALL_LIMIT, tier=2)
+    if not hits:
+        return messages
+
+    lines = "\n".join(f"- {content}" for _, content, _ in hits)
+    return messages[:-1] + [{
+        **messages[-1],
+        "content": f"{messages[-1]['content']}\n\n[Also relevant, from what you know about him:\n{lines}]",
+    }]
 
 
 def _with_current_time(messages: list) -> list:
@@ -208,10 +237,12 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     save_message("user", user_text, device=device)
     seed_rows       = get_seed_memories()
     episodic_rows   = get_episodic_memories()
-    enhanced_prompt = build_enhanced_prompt(seed_rows, episodic_rows, channel)
-    # Folded before the clock, so both land inside the same final user turn.
+    enhanced_prompt = build_enhanced_prompt(seed_rows, episodic_rows, channel,
+                                            memory_manifest())
+    # Folded before the clock, so all three land inside the same final user turn.
     recent          = _with_alerts(_trim_history(get_recent_messages(20)),
                                    alerts.take_for_fold())
+    recent          = _with_recalled(recent, user_text)
     recent          = _with_current_time(recent)
 
     sentence_queue = asyncio.Queue()

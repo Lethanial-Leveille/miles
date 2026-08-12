@@ -3,7 +3,7 @@ import math
 import re
 import sqlite3
 from datetime import datetime
-from config import DB_PATH
+from config import DB_PATH, RECALL_MIN_DF
 
 
 # ── Schema migrations ──
@@ -498,6 +498,7 @@ out over own said same see she should so some such take tell than that the
 their them then there these they thing think this those through to too under
 until up us use used very was way we well were what when where which while who
 whom why will with would you your yours
+date day time today tomorrow tonight morning evening week month year
 """.split())
 
 
@@ -551,7 +552,26 @@ def search_memories(query, limit=5, tier=None):
             words = set(_FTS_SAFE.findall(row[1].lower()))
             return sum(w for t, w in weights.items() if t in words)
 
-        rows = sorted(rows, key=score, reverse=True)[:limit]
+        # A floor, because any match at all is not evidence of relevance.
+        # "What time is it" survived the stopword list on the single word
+        # "time", matched two memories that happened to contain "for a time",
+        # and attached his grandfather and Alejandra to a question about the
+        # clock. That is precisely the irrelevant volunteering the tier split
+        # existed to stop.
+        #
+        # The floor is expressed in document frequency rather than as a raw
+        # number, so it keeps meaning as the corpus grows: a row has to match
+        # terms at least as informative as one appearing in RECALL_MIN_DF
+        # documents. Note this cannot be tuned to perfection, since idf does
+        # not separate a useful term from a useless one here. "azarieyah"
+        # scores lower than "time" because she appears in eleven memories and
+        # it appears in eight. Names are good search terms and common nouns are
+        # not, and nothing in the statistics knows that. This is the ceiling of
+        # keyword retrieval, and the reason to log misses rather than trust it.
+        floor = math.log(total / RECALL_MIN_DF) if total > RECALL_MIN_DF else 0.0
+        ranked = sorted(((score(r), r) for r in rows), key=lambda p: p[0],
+                        reverse=True)
+        rows = [r for s, r in ranked if s >= floor][:limit]
     except sqlite3.OperationalError:
         # A query that still parses badly should cost Nova nothing. Losing the
         # retrieval is survivable; raising inside prompt assembly is not.
