@@ -113,7 +113,8 @@ def play_chime():
     )
 
 
-def speak(text, voice_settings=None, model=None, seed=None):
+def speak(text, voice_settings=None, model=None, seed=None,
+          interrupt=None):
     """Synthesize and play one utterance.
 
     seed pins the generation. Without it ElevenLabs produces a different
@@ -184,4 +185,11 @@ def speak(text, voice_settings=None, model=None, seed=None):
             print(f"TTS playback error: {e}", flush=True)
         finally:
             aplay.stdin.close()
+
+            # Barge in. The watcher thread reads the microphone while aplay
+            # drains; if it hears the wake word it sets the event, and killing
+            # aplay here is what actually cuts her off, because the ALSA buffer
+            # holds roughly 185ms of audio that has already been written.
+            if interrupt is not None and interrupt.is_set():
+                aplay.kill()
             aplay.wait()

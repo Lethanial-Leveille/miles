@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import time
 from datetime import datetime
 from typing import NamedTuple
@@ -26,7 +27,7 @@ import system_state   # noqa: F401
 import tier_tool      # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
-                    HISTORY_ASSISTANT_WORDS, RECALL_LIMIT)
+                    HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN)
 
 claude = anthropic.AsyncAnthropic()
 
@@ -60,6 +61,32 @@ def _select_model():
     return model
 
 
+def _speak_with_barge_in(sentence, leaks_seen=None):
+    """Speak one sentence, listening for the wake word while it plays.
+
+    The watcher owns the microphone for exactly the span aplay is draining,
+    which is the only window where the main loop is not reading it. Two readers
+    on one stream do not raise, they interleave frames, so the exclusivity here
+    is load bearing rather than tidy.
+
+    Falls back to a plain speak when barge in is off, which is the default."""
+    if not BARGE_IN:
+        speak(sentence)
+        return False
+
+    import audio
+    interrupt = threading.Event()
+    watcher = threading.Thread(target=audio.watch_for_interrupt,
+                               args=(interrupt,), daemon=True)
+    watcher.start()
+    try:
+        speak(sentence, interrupt=interrupt)
+    finally:
+        interrupt.set()          # release the watcher whether or not it fired
+        watcher.join(timeout=1.0)
+    return interrupt.is_set()
+
+
 async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set) -> None:
     """Pull sentences off the queue and speak them sequentially."""
     loop = asyncio.get_running_loop()
@@ -70,7 +97,19 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
         sentence = strip_leading_bracket_cue(sentence, leaks_seen)
         text_parts.append(sentence)
         # speak() blocks (holds speak_lock + waits for aplay), so run in a thread
-        await loop.run_in_executor(None, speak, sentence)
+        interrupted = await loop.run_in_executor(
+            None, _speak_with_barge_in, sentence, leaks_seen)
+        if interrupted:
+            # He said the wake word over her. Drop the rest of the queued
+            # sentences rather than finishing the thought he interrupted,
+            # which is the entire point of being able to interrupt.
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                    queue.task_done()
+                except Exception:
+                    break
+            break
 
 
 def _trim_history(messages: list) -> list:

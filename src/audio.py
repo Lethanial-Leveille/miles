@@ -72,7 +72,7 @@ with silence_stderr():
 from config import (
     CHUNK, CHANNELS, RATE,
     WHISPER_MODEL, WHISPER_CLI, WHISPER_AUDIO_CTX, TEMP_WAV,
-    WAKE_MODEL_PATH, VOICEPRINT_PATH,
+    WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL,
     ARCHIVE_RECORDINGS, ARCHIVE_DIR, ARCHIVE_MAX_FILES,
@@ -471,6 +471,45 @@ MIN_EMBED_SECONDS = 0.5
 # are exactly the turns that cannot be scored reliably, so scoring them at all
 # produces false rejections and nothing else.
 MIN_TRUSTWORTHY_SECONDS = 2.0
+
+
+def watch_for_interrupt(stop_event):
+    """Listen for the wake word while Nova is speaking. Returns True if heard.
+
+    Runs on its own thread during playback, when the main loop is blocked on
+    aplay and nothing else is reading the stream. Two readers on one PyAudio
+    stream would interleave frames and produce intermittent deafness rather
+    than an error, so the caller must guarantee exclusivity.
+
+    No echo cancellation, and none is needed. Her own voice reaches the
+    microphone but the wake model only fires on one phrase, which her speech
+    does not contain. That is the whole reason this is cheap when general barge
+    in is not.
+
+    A fresh model instance rather than the shared one: the main loop's
+    detection state must not be disturbed by frames captured mid sentence."""
+    try:
+        with silence_stderr():
+            watcher = Model(wakeword_model_paths=[WAKE_MODEL_PATH])
+    except Exception:
+        return False
+
+    heard = False
+    while not stop_event.is_set():
+        try:
+            data = stream.read(CHUNK, exception_on_overflow=False)
+        except Exception:
+            break
+        frame = np.frombuffer(data, dtype=np.int16)
+        try:
+            for _, score in watcher.predict(frame).items():
+                if score > WAKE_THRESHOLD:
+                    heard = True
+                    stop_event.set()
+                    break
+        except Exception:
+            break
+    return heard
 
 
 def wake_word_audio(seconds=1.5):

@@ -44,6 +44,21 @@ VOICEPRINT_LEARN_MIN_SECONDS = 3.0
 # averaging over every room he has ever been in.
 VOICEPRINT_SAMPLE_CAP = 60
 
+# Interrupt Nova mid sentence by saying the wake word again.
+#
+# BACKEND_TODO treats barge in as blocked on acoustic echo cancellation, and
+# for the general case it is: "any speech stops her" cannot work while her own
+# voice is speech reaching the microphone. But the wake word model is already a
+# discriminator trained on one phrase, and Nova saying "Nova" mid sentence does
+# not reach the threshold. An interrupt keyed on a keyword her echo never
+# contains needs no echo cancellation at all.
+#
+# Off by default because it reads the shared microphone stream during playback,
+# and a second reader on that stream is the kind of bug that shows up as
+# occasional silence rather than an exception. Turn it on deliberately and
+# watch it.
+BARGE_IN = False
+
 # ── Voice activity detection ──
 # webrtcvad replaces the bare amplitude threshold that used to gate capture.
 # Amplitude cannot tell speech from a running AC unit, which is what drove the
