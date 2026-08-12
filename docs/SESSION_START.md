@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Aug 11 2026 (7) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (273) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (279) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -602,3 +602,16 @@ corpus in prompt is strictly better for this. Revisit around 400 to 500 rows or
 What actually breaks first is not context size, it is
 `get_episodic_memories` being `ORDER BY id DESC LIMIT 20` with no ranking.
 Deferred by choice.
+
+**A defect found by asking "do the ids line up".** The memory instructions used
+`(#61)` and `(#42)` as examples. Nova cannot tell an example from a real row, so
+she could have superseded `#42` purely because it sat beside the word supersede,
+silently destroying a correct memory and replacing it with something unrelated.
+
+That is the same failure as `5ad97de`, where she copied the reminder date out of
+the example in her own prompt and dated every reminder months in the past.
+**Anything in the prompt that is shaped like real data will be treated as real
+data.** A second, subtler instance was in the same block: the example sentence
+"his exam moved to Thursday" reads exactly like a memory. Both are now abstract,
+and two tests pin it: every id appearing anywhere in the prompt must be backed by
+a real row, and the instructions must contain no id shaped text at all.

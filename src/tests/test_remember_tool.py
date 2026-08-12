@@ -206,3 +206,87 @@ def test_brain_no_longer_saves_extracted_tags():
     source = inspect.getsource(brain.ask_nova_async)
     assert "extract_memories" in source, "still stripped so it is not spoken"
     assert "save_memory" not in source, "but no longer saved"
+
+
+# ── ids must actually identify the memory they are printed next to ──
+
+def test_every_rendered_id_matches_its_row(db):
+    """The id is an addressing handle. If it drifts from its content, Nova
+    supersedes the wrong memory, which silently destroys a correct fact and
+    replaces it with an unrelated one. This is the worst failure this feature
+    can have and it would be invisible in her replies."""
+    import re
+    _call(content="exam is Friday", certainty="asked")
+    _call(content="bench is 225", certainty="asked")
+
+    rows = db.get_episodic_memories(limit=50)
+    block = prompts._episodic_block(rows)
+    rendered = dict((int(i), c) for i, c in re.findall(r'\(#(\d+)\) (.+)', block))
+
+    assert rendered == {mid: content for mid, content in rows}
+
+
+def test_seed_ids_survive_category_grouping(db):
+    """The seed block regroups rows by category before rendering. Grouping is
+    exactly where an id could get separated from its text."""
+    import re
+    seeds = [
+        (10, "studies computer engineering", "academics"),
+        (11, "bench is 225", "training"),
+        (12, "graduates in 2029", "academics"),
+        (13, "runs a marathon", "training"),
+    ]
+    block = prompts._seed_block(seeds)
+    rendered = dict((int(i), c) for i, c in re.findall(r'\(#(\d+)\) (.+)', block))
+
+    assert rendered == {mid: content for mid, content, _ in seeds}
+
+
+def test_every_id_in_the_prompt_is_a_real_memory(db):
+    """No invented ids anywhere in the prompt, including in instructions.
+
+    The memory instructions originally used (#61) and (#42) as examples. Nova
+    cannot tell an example from a real row, so she could have tried to supersede
+    #42 purely because it appeared beside the word supersede. That is the same
+    failure as 5ad97de, where she copied the reminder date out of the example in
+    her own prompt and dated every reminder months in the past."""
+    import re
+    _call(content="exam is Friday", certainty="asked")
+
+    seeds = [(900, "seed fact", "general"), (901, "another seed", "general")]
+    episodic = db.get_episodic_memories(limit=50)
+    prompt = prompts.build_enhanced_prompt(seeds, episodic, "voice")
+
+    real = {mid for mid, _, _ in seeds} | {mid for mid, _ in episodic}
+    found = {int(i) for i in re.findall(r'\(#(\d+)\)', prompt)}
+    assert found == real, f"prompt names memories that do not exist: {found - real}"
+
+
+def test_the_instructions_contain_no_example_ids():
+    """Guards the fix directly, so a future edit cannot reintroduce a number
+    that looks addressable but is not."""
+    import re
+    assert re.search(r'\(#\d+\)', prompts.MEMORY_INSTRUCTIONS) is None
+
+
+def test_ids_are_unique_in_the_prompt(db):
+    """A repeated id would make supersedes ambiguous."""
+    import re
+    _call(content="exam is Friday", certainty="asked")
+    prompt = prompts.build_enhanced_prompt(
+        [(900, "seed fact", "general")], db.get_episodic_memories(), "voice")
+    ids = re.findall(r'\(#(\d+)\)', prompt)
+    assert len(ids) == len(set(ids))
+
+
+def test_a_superseded_memory_stops_being_addressable(db):
+    """Its id must leave the prompt with it. Otherwise Nova could supersede a
+    row that is already retired, building a chain off a dead branch."""
+    import re
+    _call(content="exam is Friday", certainty="asked")
+    old = _id_of(db, "exam is Friday")
+    _call(content="exam is Thursday", certainty="asked", supersedes=old)
+
+    block = prompts._episodic_block(db.get_episodic_memories(limit=50))
+    assert f"(#{old})" not in block
+    assert f"(#{_id_of(db, 'exam is Thursday')})" in block

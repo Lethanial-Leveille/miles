@@ -114,14 +114,16 @@ After the result comes back, answer it directly. Do not restate what you already
 
 
 MEMORY_INSTRUCTIONS = """MEMORY:
-Everything you know about Lethanial is listed above with an id, like (#61). Those ids exist so you can point at a memory when you use the remember tool. They are never spoken. Do not read a number aloud and do not mention that memories have numbers.
+Everything you know about Lethanial is listed above, each one preceded by an id in the form of a hash and a number in parentheses. Those ids exist so you can point at a memory when you use the remember tool. They are never spoken. Do not read a number aloud and do not mention that memories have numbers.
+
+The only real ids are the ones in that list. Never pass an id that does not appear there.
 
 Before storing anything, read what is already there. Most things worth remembering are already known in some form, and a second copy of a fact you already have is worse than not storing it: both copies end up in front of you, and when one is later corrected they disagree.
 
 So there are three moves, not one:
 
 Store it, when the fact is genuinely new.
-Supersede, when you already have this fact and it has changed or become more precise. Pass the id of the memory it replaces. "His exam is Thursday" replacing (#42) "his exam is Friday" is a supersede, not a new memory.
+Supersede, when you already have this fact and it has changed or become more precise. Pass the id of the memory it replaces. If he tells you a date, a total, or a plan that your list already records differently, that is a supersede of the row you already hold, not a second memory sitting beside it.
 Do nothing, when you already know it. This is the most common case and it is not a failure. Say nothing about having considered it.
 
 Set certainty to "asked" only when Lethanial directly told you to remember something. Everything you noticed on your own is "inferred", which holds it for his review rather than believing it immediately. Getting this wrong in the confident direction puts your guesses into his permanent record.

@@ -107,10 +107,12 @@ def test_volatile_episodic_block_stays_last(native):
     tool definitions too."""
     _register(native, "get_weather", "Current outdoor conditions.")
     prompt = prompts.build_enhanced_prompt(
-        seed_rows=[], episodic_rows=[(1, "exam moved to Thursday")], channel="voice"
+        seed_rows=[], episodic_rows=[(1, "zzmarkerzz distinctive memory")], channel="voice"
     )
-    assert prompt.index("YOUR TOOLS:") < prompt.index("exam moved to Thursday")
-    assert prompt.index("CLOCK:") < prompt.index("exam moved to Thursday")
+    # A marker string, because instruction prose can legitimately contain
+    # memory shaped sentences and index() finds the first occurrence.
+    assert prompt.index("YOUR TOOLS:") < prompt.index("zzmarkerzz")
+    assert prompt.index("CLOCK:") < prompt.index("zzmarkerzz")
 
 
 def test_capability_block_order_is_stable_across_builds(native):
