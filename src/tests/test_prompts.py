@@ -2,10 +2,12 @@ import re
 from prompts import build_enhanced_prompt
 
 
+# Synthetic on purpose. These assert prompt assembly, not the contents of the
+# real corpus, and real personal facts do not belong in a tracked test.
 SEED_ROWS = [
-    (1, "Full name is Lethanial LeeAndon Leveille.", "identity"),
-    (2, "Born in Hollywood, Florida.", "identity"),
-    (3, "Has a younger sister, Rye.", "family"),
+    (1, "Drinks tea, never coffee.", "identity"),
+    (2, "Left handed.", "identity"),
+    (3, "Has an older brother.", "family"),
 ]
 EPISODIC_ROWS = [(10, "Exam is Friday.")]
 
@@ -21,8 +23,8 @@ def test_prompt_with_seed_memories_groups_by_category():
     assert "WHAT YOU KNOW ABOUT LETHANIAL" in prompt
     assert "IDENTITY:" in prompt
     assert "FAMILY:" in prompt
-    assert "Full name is Lethanial LeeAndon Leveille." in prompt
-    assert "Has a younger sister, Rye." in prompt
+    assert "Drinks tea, never coffee." in prompt
+    assert "Has an older brother." in prompt
     # identity heading should appear before family heading (query orders by category)
     assert prompt.index("IDENTITY:") < prompt.index("FAMILY:")
 
