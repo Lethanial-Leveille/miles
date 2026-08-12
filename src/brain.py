@@ -8,7 +8,8 @@ import timing
 from tts import speak
 from prompts import build_enhanced_prompt
 from database import (save_message, get_seed_memories, get_episodic_memories,
-                      get_recent_messages, search_memories, memory_manifest)
+                      get_recent_messages, search_memories, memory_manifest,
+                      get_shareable_memories)
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
 from tools import registry
@@ -222,7 +223,8 @@ def _run_tools(tool_uses, model):
 
 
 async def ask_nova_async(user_text: str, device: str = "pi",
-                         channel: str = "voice") -> TurnResult:
+                         channel: str = "voice",
+                         tier: str = "hokage") -> TurnResult:
     """Run one turn.
 
     device is provenance, which client sent this, and is stored as
@@ -235,14 +237,22 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     timing.note_model(model)
 
     save_message("user", user_text, device=device)
-    seed_rows       = get_seed_memories()
-    episodic_rows   = get_episodic_memories()
-    enhanced_prompt = build_enhanced_prompt(seed_rows, episodic_rows, channel,
-                                            memory_manifest())
+    # Everything personal is gated on tier here rather than asked for in the
+    # prompt. Below hokage the corpus is never assembled, so no phrasing,
+    # insistence, or injection can reach it. Today the only path to hokage is
+    # verified voice, so this is effectively always hokage; multi speaker
+    # verification will pass a real tier through without touching this.
+    personal = tier == "hokage"
+    seed_rows       = get_seed_memories() if personal else (
+                      get_shareable_memories() if tier == "jonin" else [])
+    episodic_rows   = get_episodic_memories() if personal else []
+    enhanced_prompt = build_enhanced_prompt(
+        seed_rows, episodic_rows, channel,
+        memory_manifest() if personal else [], tier=tier)
     # Folded before the clock, so all three land inside the same final user turn.
     recent          = _with_alerts(_trim_history(get_recent_messages(20)),
                                    alerts.take_for_fold())
-    recent          = _with_recalled(recent, user_text)
+    recent          = _with_recalled(recent, user_text) if personal else recent
     recent          = _with_current_time(recent)
 
     sentence_queue = asyncio.Queue()
@@ -462,5 +472,6 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
 
 def ask_nova(user_text: str, device: str = "pi",
-             channel: str = "voice") -> TurnResult:
-    return asyncio.run(ask_nova_async(user_text, device=device, channel=channel))
+             channel: str = "voice", tier: str = "hokage") -> TurnResult:
+    return asyncio.run(ask_nova_async(user_text, device=device, channel=channel,
+                                      tier=tier))

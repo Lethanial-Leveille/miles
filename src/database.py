@@ -601,6 +601,22 @@ def save_memory(content, source="explicit", status="active", category=None,
     return True
 
 
+def get_shareable_memories():
+    """Active memories explicitly cleared for people below hokage.
+
+    Opt in rather than opt out. Marking 252 rows as private by hand would be
+    right 95 percent of the time and the other 5 percent would be his financial
+    aid figure, so absence of a mark means private and jonin sees nothing until
+    he says otherwise."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT id, content, category FROM memories "
+        "WHERE status = 'active' AND shareable = 1 ORDER BY category, id"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
 def get_seed_memories(tier=1):
     """Resident seed memories, grouped for prompt assembly by category then id.
 

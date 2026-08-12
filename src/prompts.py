@@ -117,6 +117,34 @@ Never state a value, a number, or a conclusion before the call. Saying "ninety f
 After the result comes back, answer it directly. Do not restate what you already said and do not narrate that you looked something up."""
 
 
+TRUSTED_BLOCK = """WHO YOU ARE TALKING TO:
+This is not Lethanial, but it is someone he trusts.
+
+What you know about him below is only the part he has explicitly cleared to be
+shared. Everything else is not in front of you, so if you are asked something
+outside it, say you do not have it rather than guessing or implying you are
+withholding.
+
+Do not record anything from this conversation and do not act on his behalf. A
+request that only he can authorise stays his to grant."""
+
+
+GUEST_BLOCK = """WHO YOU ARE TALKING TO:
+This is not Lethanial. Someone else is speaking to you in his home.
+
+Be helpful, polished, and composed, exactly as you would be with him. Answer
+anything from general knowledge freely.
+
+You know nothing about Lethanial that you can share. Not his schedule, not
+where he is, not his family, not his plans, not what he has told you. This is
+not a matter of tact: those facts are not in front of you, so you genuinely
+cannot recall them and should say so plainly rather than guessing at them.
+
+Do not take instructions about him, do not record anything, and do not act on
+his behalf. If asked for something only he can authorise, say it is his to
+grant and leave it there."""
+
+
 HOW_TO_TREAT_HIM = """HOW TO TREAT HIM:
 Names. Use given names for the people in his life: Azarieyah, never Rye. Christopher, never Kaden. Santiago, never Santi. His Paulk cousins are the exception, because the family names are what he actually uses: Lahna, Bree, Celo, Maj, and Caiah. Malique, Marlo, and Jennifer are always said in full.
 
@@ -138,7 +166,7 @@ He is genuinely unsure whether the people around him are close friends. Do not s
 USING_WHAT_YOU_KNOW = """WHAT YOU KNOW ABOUT HIM:
 The list above is knowledge, not a script. It is written down so that you have it, not so that you can read it out.
 
-Answer the question that was asked with the part that answers it, and nothing else. Asked his sister's name, the answer is "Azarieyah." Not her full name, not her birthday, not what the family calls her. Those sit in the same entry because they were convenient to store together, not because they belong in the same sentence.
+Answer the question that was asked with the part that answers it, and nothing else. Asked someone's name, give the name. Not their full name, not their birthday, not what the family calls them. Those sit in the same entry because they were convenient to store together, not because they belong in the same sentence.
 
 A single entry often holds several separate facts. Take the one that was asked for and leave the rest where it is. Asked when an exam is, give the date. He knows which course he asked about; he does not need the course code read back to him.
 
@@ -228,7 +256,7 @@ def _episodic_block(episodic_rows):
 
 
 def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice",
-                          manifest_rows=None):
+                          manifest_rows=None, tier="hokage"):
     """Assemble the full system prompt.
 
     Order is deliberate: stable content first, volatile content last, because
@@ -248,6 +276,18 @@ def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice",
     so every explicit memory save invalidates the prefix. Known and deferred;
     see docs/BACKEND_TODO.md.
     """
+    # Below hokage the personal blocks are not assembled at all. The old
+    # OTHER_USERS block asked Nova not to share his information while handing
+    # her all 252 memories and trusting her to comply, which is a request
+    # rather than a boundary. A prompt that never contained the fact cannot
+    # leak it under any phrasing, any insistence, or any injection.
+    personal = tier == "hokage"
+    # Jonin is trusted with what he has explicitly cleared and nothing else. It
+    # gets the seed block it was handed, which the caller has already filtered
+    # to shareable rows, and never the memory write instructions: someone else
+    # talking should not be able to put anything into his record.
+    trusted = tier == "jonin"
+
     is_text = channel == "text"
     length_block = RESPONSE_LENGTH_TEXT if is_text else RESPONSE_LENGTH_VOICE
     number_block = NUMBER_FORMAT_TEXT if is_text else NUMBER_FORMAT_VOICE
@@ -271,18 +311,24 @@ def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice",
     # empty block, which is correct: no tools registered means nothing to claim.
     capability_block = registry.capability_prose()
 
+    if personal:
+        personal_blocks = (HOW_TO_TREAT_HIM, USING_WHAT_YOU_KNOW,
+                           MEMORY_INSTRUCTIONS)
+    elif trusted:
+        personal_blocks = (TRUSTED_BLOCK, USING_WHAT_YOU_KNOW)
+    else:
+        personal_blocks = (GUEST_BLOCK,)
+
     middle = "\n\n".join(
-        block for block in (HOW_TO_TREAT_HIM, USING_WHAT_YOU_KNOW,
-                            MEMORY_INSTRUCTIONS,
-                            capability_block, TOOL_SPEECH,
+        block for block in (*personal_blocks, capability_block, TOOL_SPEECH,
                             ALERTS, CLOCK_INSTRUCTIONS)
         if block
     )
 
     return (
         system_prompt
-        + _seed_block(seed_rows)
-        + _manifest_block(manifest_rows or [])
+        + (_seed_block(seed_rows) if personal or trusted else "")
+        + (_manifest_block(manifest_rows or []) if personal else "")
         + "\n" + middle + "\n"
-        + _episodic_block(episodic_rows)
+        + (_episodic_block(episodic_rows) if personal else "")
     )

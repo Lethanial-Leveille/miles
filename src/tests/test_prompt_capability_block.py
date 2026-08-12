@@ -38,8 +38,9 @@ def _register(reg, name, description):
         return None
 
 
-def _build():
-    return prompts.build_enhanced_prompt(seed_rows=[], episodic_rows=[], channel="voice")
+def _build(tier="hokage"):
+    return prompts.build_enhanced_prompt(seed_rows=[], episodic_rows=[],
+                                         channel="voice", tier=tier)
 
 
 # ── flag routing ──
@@ -144,3 +145,22 @@ def test_channel_still_selects_voice_or_text_blocks(native):
     text = prompts.build_enhanced_prompt([], [], channel="text")
     assert "The voice synthesizer reads digits incorrectly" in voice
     assert "You are writing, not speaking through a voice synthesizer" in text
+
+
+def test_no_personal_names_below_hokage(native):
+    """A tier below hokage must not contain his people, from any source.
+
+    This exists because the first version of the tiering leaked "Azarieyah" to
+    jonin with zero shareable memories, from a worked example inside the block
+    that teaches Nova not to recite memories. The corpus was correctly withheld
+    and a prompt example gave the name away anyway.
+
+    Illustrative text is as much a leak surface as data. Examples get written
+    quickly, with a real name to hand, by someone thinking about tone rather
+    than about who is listening."""
+    names = ["Azarieyah", "Anastasia", "Alejandra", "Paulk", "Leveille",
+             "Marlo", "Isaiah", "Santiago", "Micaiah"]
+    for tier in ("genin", "chunin", "jonin"):
+        prompt = _build(tier=tier)
+        found = [n for n in names if n in prompt]
+        assert not found, f"{tier} prompt names {found}"
