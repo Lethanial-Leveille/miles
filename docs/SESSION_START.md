@@ -478,3 +478,50 @@ Every one of these passed a green suite of 166 tests and failed in the room.
 Also: `FOLLOWUP_TIMEOUT` is a config constant at 6 seconds, down from a bare 10
 in `voice_main.py`. Ten seconds is a long time to stand in a quiet room deciding
 whether you are done, and every expiry costs a full window of dead air.
+
+
+### Voice tuning, and why it took so long (Aug 11 2026) (DONE)
+
+Final: Victoria (`qSeXEcewz7tA0Q0qk9fH`), `eleven_flash_v2`, stability 0.80,
+similarity 0.75, style 0.00, speed 1.00, `TTS_PHONEME_TAGS = True`, and
+Lethanial as `L AE0 TH AE1 N Y AH0 L`.
+
+The lesson is not the values. It is that **most of this hunt was aimed at the
+wrong variable**, and the thing that exposed it was Lethanial noticing that two
+repeats of the same input sounded different.
+
+- **The measurement was broken before the candidates were.** Rankings were being
+  collected one rendition per candidate. ElevenLabs produces a different
+  rendition every call, and the spread between two renditions of identical input
+  was as wide as the spread between candidates. Candidate 1 was rated "no" then
+  "yes" on the same string. Every ranking taken before the seed was pinned was
+  partly recording which generation got lucky.
+  - The SDK supports `seed`. `speak()` now takes one. Production leaves it None,
+    because varied delivery is wanted in conversation. **Comparisons must set
+    it.**
+- **`stability` was the dominant term the entire time.** 0.60 was production
+  throughout the period the name sounded butchered, and rates "eh" on its own.
+  Stability governs how much one rendition varies from the next, which is
+  exactly why a correct phoneme string came out wrong intermittently.
+  - It had been flagged as worth watching when the voice settings were first
+    discussed, and then not connected to the pronunciation problem for several
+    rounds of phoneme hunting. Connecting a knob to a symptom is the work;
+    naming the knob is not.
+- **Phonemes beat respellings, decisively.** Of twenty five candidates, the six
+  that survived a first listen were all phoneme strings and not one respelling
+  made the shortlist. That is what justified moving to `eleven_flash_v2`.
+- **flash v2.5 does not ignore phoneme tags, it drops the word they wrap.**
+  Measured: plain 0.79s, tagged 0.23s, absurd phonemes also 0.23s. Identical
+  output for different phoneme strings means the content is discarded. v2 honors
+  them and costs nothing: 349ms against 347ms time to first byte.
+- **Stability is one dial with two failure modes.** It buys consistency by
+  reducing variation, and that same variation is what makes delivery sound
+  alive. 0.75 read better on ordinary sentences and occasionally missed the
+  name; 0.90 held the name and read flatter. There is no setting that gives
+  both, so 0.80 is a chosen point on a trade rather than a solution.
+
+`scripts/pronounce.py` carries the method: `sweep` to bracket, `spread` for one
+candidate across seeds, `stability` across settings, `demo` for real responses
+at real length. **Start any future voice question with `spread`**, because
+"how much does this vary" has to be answered before "which one is better" means
+anything.

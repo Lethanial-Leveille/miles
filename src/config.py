@@ -210,7 +210,9 @@ TTS_PHONEME_TAGS = True
 # this is a continuous value, not a choice between the five points that happened
 # to get sampled.
 #
-# Interim. Narrow it further with:
+# Settled at 0.80 after listening to the band between them. Change it only
+# after listening, not by reasoning: every step of this was decided by ear and
+# the two failures it trades between are audible, not measurable.
 #   python3 scripts/pronounce.py stability Lethanial 15 .78 .80 .82 .85
 TTS_VOICE_SETTINGS = VoiceSettings(
     stability=0.80, similarity_boost=0.75, style=0.00,
