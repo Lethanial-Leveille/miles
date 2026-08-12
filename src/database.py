@@ -266,6 +266,24 @@ def _migration_012_pronunciations(conn):
     )
 
 
+def _migration_013_supersede_and_expiry(conn):
+    """Make correction and shelf life real.
+
+    Three columns describing this already existed and none of them did anything.
+    superseded_by was declared and never written, volatile and references_date
+    were written and never read. So the store was append only in practice: a
+    memory recorded wrong stayed wrong, and the only remedy was deleting the row
+    and losing the fact that it ever changed.
+
+    No new columns are needed for supersede. status is free text and every
+    retrieval already filters on 'active', so retiring a row to 'superseded' or
+    'expired' removes it from the prompt with no query changes.
+
+    superseded_at is added for the audit trail: superseded_by says what replaced
+    a fact, and this says when, which is what makes a chain readable later."""
+    conn.execute("ALTER TABLE memories ADD COLUMN superseded_at TEXT")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -279,6 +297,7 @@ MIGRATIONS = [
     (10, _migration_010_tool_use),
     (11, _migration_011_alert_log),
     (12, _migration_012_pronunciations),
+    (13, _migration_013_supersede_and_expiry),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -393,8 +412,14 @@ def get_episodic_memories(limit=20):
     rows = c.execute(
         "SELECT id, content FROM memories "
         "WHERE source IN ('explicit', 'implicit') AND status = 'active' "
+        # Expiry is enforced here rather than by a sweep. A volatile memory
+        # whose date has passed stops being retrieved the moment it passes,
+        # with no job to schedule and nothing to fall out of sync. expire_memories
+        # only marks what this already hides, for the sake of the listing.
+        "  AND NOT (volatile = 1 AND references_date IS NOT NULL "
+        "           AND references_date < ?) "
         "ORDER BY id DESC LIMIT ?",
-        (limit,)
+        (datetime.now().isoformat(), limit)
     ).fetchall()
     conn.close()
     return rows
@@ -428,6 +453,110 @@ def get_active_memories(limit=50, offset=0):
     ).fetchall()
     conn.close()
     return rows, total
+
+
+def supersede_memory(old_id: int, new_content: str, **fields):
+    """Replace a memory with a corrected one, keeping the link between them.
+
+    Deleting and re-adding loses the fact that something changed. An exam that
+    moved from Friday to Thursday is different information from an exam that was
+    always Thursday, and only one of those survives a delete.
+
+    The old row goes to status 'superseded', which every retrieval already
+    filters out, so the prompt sees only the current answer. superseded_by points
+    at the replacement so the chain can be walked later.
+
+    Returns the new row id, or None when old_id does not exist."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    old = c.execute(
+        "SELECT source, category, confidence, volatile, references_date "
+        "FROM memories WHERE id = ?", (old_id,)
+    ).fetchone()
+    if old is None:
+        conn.close()
+        return None
+
+    # Inherit the old row's classification unless the caller overrides it. A
+    # correction is usually the same kind of fact, and re-specifying every field
+    # to fix a typo is how fields drift.
+    source, category, confidence, volatile, references_date = old
+    now = datetime.now().isoformat()
+    c.execute(
+        """INSERT INTO memories
+           (content, category, source, created_at, references_date, volatile,
+            confidence, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'active')""",
+        (new_content,
+         fields.get("category", category),
+         fields.get("source", source),
+         now,
+         fields.get("references_date", references_date),
+         int(fields.get("volatile", volatile)),
+         fields.get("confidence", confidence))
+    )
+    new_id = c.lastrowid
+    c.execute(
+        "UPDATE memories SET status = 'superseded', superseded_by = ?, "
+        "superseded_at = ? WHERE id = ?",
+        (new_id, now, old_id)
+    )
+    conn.commit()
+    conn.close()
+    print(f"Memory {old_id} superseded by {new_id}: {new_content}", flush=True)
+    return new_id
+
+
+def get_memory_chain(memory_id: int):
+    """Walk a memory back through everything it replaced, newest first.
+
+    This is the payoff for not deleting. It answers "what did this used to say"
+    and "when did it change", which a delete cannot."""
+    conn = sqlite3.connect(DB_PATH)
+    chain = []
+    seen = set()
+    current = memory_id
+    while current is not None and current not in seen:
+        seen.add(current)
+        row = conn.execute(
+            "SELECT id, content, status, created_at, superseded_by, superseded_at "
+            "FROM memories WHERE id = ?", (current,)
+        ).fetchone()
+        if row is None:
+            break
+        chain.append(row)
+        # Walk backwards: find whatever this row replaced.
+        prev = conn.execute(
+            "SELECT id FROM memories WHERE superseded_by = ?", (current,)
+        ).fetchone()
+        current = prev[0] if prev else None
+    conn.close()
+    return chain
+
+
+def expire_memories():
+    """Mark volatile memories whose date has passed.
+
+    Bookkeeping only. get_episodic_memories already excludes these at read time,
+    so this changes nothing about what Nova sees; it exists so an expired memory
+    shows as expired in a listing rather than looking active and mysteriously
+    absent from her answers.
+
+    Returns how many were marked."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "UPDATE memories SET status = 'expired' "
+        "WHERE status = 'active' AND volatile = 1 "
+        "  AND references_date IS NOT NULL AND references_date < ?",
+        (datetime.now().isoformat(),)
+    )
+    marked = c.rowcount
+    conn.commit()
+    conn.close()
+    if marked:
+        print(f"Expired {marked} volatile memories past their date", flush=True)
+    return marked
 
 
 def approve_memory(memory_id: int) -> bool:

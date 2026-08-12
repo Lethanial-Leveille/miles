@@ -86,13 +86,13 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Aug 11 2026 (6) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (233) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (251) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
 | Speaker device resolution | `grep -n SPEAKER src/config.py src/tts.py` | Aug 11 2026 (by name, not device string) |
 | Which modules exist | `ls src/*.py` | Aug 11 2026 (20 modules) |
-| Schema version | `grep -c "^    (" src/database.py` around `MIGRATIONS` | Aug 11 2026 (10) |
+| Schema version | `grep -c "^    (" src/database.py` around `MIGRATIONS` | Aug 11 2026 (13) |
 
 ### Why these specific ones drifted
 
@@ -525,3 +525,34 @@ candidate across seeds, `stability` across settings, `demo` for real responses
 at real length. **Start any future voice question with `spread`**, because
 "how much does this vary" has to be answered before "which one is better" means
 anything.
+
+
+### Memory correction: SUPERSEDE and expiry (Aug 11 2026) (DONE)
+
+Migration 013. `supersede_memory`, `get_memory_chain`, `expire_memories`, and
+`scripts/memory.py`. Tests 233 to 251.
+
+- **Only one new column.** `superseded_at`. `status` is free text and every
+  retrieval already filtered on `'active'`, so retiring a row to `'superseded'`
+  or `'expired'` removes it from the prompt with no query changes anywhere.
+- **Supersede rather than edit in place.** The old row is retired and pointed at
+  its replacement.
+  - Reason: "the exam moved to Thursday" is different information from "the exam
+    was always Thursday", and an update or a delete cannot tell them apart.
+    `get_memory_chain` is what that buys, and it is the only reason to keep the
+    old row at all.
+- **Classification is inherited on correction unless overridden.** A correction
+  is usually the same kind of fact, and re-specifying every field to fix a typo
+  is how fields drift apart.
+- **Expiry is enforced at read, not by a sweep.** `get_episodic_memories`
+  excludes volatile rows whose `references_date` has passed.
+  - Reason: no job to schedule and nothing to fall out of sync. A memory becomes
+    invisible the moment its date passes whether or not any sweep has run.
+    `expire_memories` only marks what the read already hides, so an expired row
+    shows as expired in a listing rather than looking active and mysteriously
+    absent from her answers.
+- **`volatile` without a date never expires.** Volatile says a fact is
+  temporary, not when it stops. Expiring without a date would be guessing, and
+  fifteen seed rows are in exactly that state.
+- **`remember` is now unblocked** and deliberately still not built. The reason
+  it was blocked is gone; the work itself has not been done.

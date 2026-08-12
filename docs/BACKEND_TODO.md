@@ -514,7 +514,7 @@ quality argument does not.
 Three items, in dependency order. The third is blocked on the first two and
 must not be started before them.
 
-### 1. SUPERSEDE: nothing can update a memory (BLOCKING)
+### 1. SUPERSEDE: nothing can update a memory (DONE Aug 11 2026)
 
 `memories.superseded_by INTEGER` is declared at `database.py:29` and appears
 exactly once in the entire codebase. Nothing writes it. Verified Aug 11 2026:
@@ -523,7 +523,7 @@ zero rows have it set.
 The consequence is that the memory store is append only in practice. A memory
 recorded wrong stays wrong, and the only remedy is deleting the row by hand.
 
-### 2. Expiry: volatile and references_date are write only
+### 2. Expiry: volatile and references_date are write only (DONE Aug 11 2026)
 
 `volatile` and `references_date` are both written by `save_memory` and read by
 nothing. Fifteen seed rows are flagged volatile. Nothing expires them, nothing
@@ -537,7 +537,7 @@ Not yet urgent. There are currently zero active episodic memories, so nothing is
 being displaced today. That is runway to build this properly rather than
 retrofitting it under pressure, not a reason to skip it.
 
-### 3. `remember` as a tool (BLOCKED on 1 and 2)
+### 3. `remember` as a tool (UNBLOCKED, not built)
 
 During the native tool use migration (Aug 11 2026) the question came up of
 whether `[MEMORY:]` and `[MEMORY-EXPLICIT:]` should become a `remember` tool
@@ -555,9 +555,20 @@ notices and fixes. Automated capture into an append only store produces errors
 that are permanent, accumulate silently, and are only removable by hand editing
 SQLite. The failure gets worse the better the tool works.
 
-So `remember` becomes a tool once SUPERSEDE and expiry exist, and not before.
-Until then the bracket tags stay and `extract_memories` in `parsing.py` survives
-untouched.
+SUPERSEDE and expiry both landed Aug 11 2026, so this is no longer blocked. It
+is simply not built yet: bracket tags still capture memories and
+`extract_memories` in `parsing.py` is still what strips them.
+
+What building it now involves: a `remember` tool with `returns_to_model=False`,
+carrying content plus the classification the model is already choosing badly by
+implication (volatile or not, and a date when volatile). The reason to give the
+tool an explicit expiry argument is that the current implicit path cannot set
+one, which is why fifteen seed rows are flagged volatile with no date and can
+never expire.
+
+Still open regardless: `get_episodic_memories` is `ORDER BY id DESC LIMIT 20`
+with no ranking, so past twenty active episodic memories the oldest fall out of
+the prompt silently, by id, regardless of value.
 
 ---
 
