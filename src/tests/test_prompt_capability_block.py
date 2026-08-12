@@ -69,7 +69,20 @@ def test_prompt_can_only_claim_registered_tools(native):
     prompt = _build()
     assert "Current outdoor conditions" in prompt
     assert "set_timer" not in prompt
-    assert "hevy" not in prompt.lower()
+
+    # Hevy used to be banned from the prompt outright, on the reasoning that
+    # naming an unregistered integration invites the model to claim it. That
+    # still holds for any positive mention, but Lethanial asked to be told the
+    # log is missing when lifting numbers come up, which is the opposite of a
+    # capability claim and is the only thing that will remind him to add it.
+    #
+    # So the ban narrows rather than lifts: the name may appear, and only
+    # inside a sentence that says it is not connected.
+    lowered = prompt.lower()
+    for sentence in lowered.split("."):
+        if "hevy" in sentence:
+            assert "not connected" in sentence, (
+                f"hevy named without saying it is unavailable: {sentence.strip()!r}")
 
 
 # ── blocks that survive both paths ──
