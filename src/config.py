@@ -191,8 +191,19 @@ TTS_PHONEME_TAGS = True
 # ElevenLabs accepts 0.7 to 1.2. Set explicitly rather than left to the API
 # default, because an unset speed is an invisible dependency on whatever the
 # API decides, and this lands directly on how long a turn occupies the room.
+# stability 0.90, chosen by ear across a sweep at a fixed seed, Aug 11 2026:
+#   0.45 no      0.60 eh      0.75 pretty good      0.90 good      1.00 good
+#
+# 0.60 was production while the name sounded butchered, and it rates "eh" on its
+# own. Most of that hunt was chasing phonemes when the setting was the dominant
+# term: stability governs how much one rendition varies from the next, and at
+# 0.60 the same phoneme string came out right once and wrong the next time.
+#
+# 0.90 rather than 1.00 because the gain stopped there. 0.75 to 0.90 was audible,
+# 0.90 to 1.00 was not, and 1.00 spends the last of the expressiveness that the
+# persona's dry wit depends on for nothing measurable.
 TTS_VOICE_SETTINGS = VoiceSettings(
-    stability=0.60, similarity_boost=0.75, style=0.00,
+    stability=0.90, similarity_boost=0.75, style=0.00,
     use_speaker_boost=True, speed=1.00,
 )
 

@@ -11,6 +11,8 @@ restart, no deploy, no file to edit.
     python3 scripts/pronounce.py sweep Lethanial 1,6,8    # finals, these only
     python3 scripts/pronounce.py spread Lethanial 15      # one candidate, many seeds
     python3 scripts/pronounce.py stability Lethanial 15   # one candidate, many stabilities
+    python3 scripts/pronounce.py demo                     # real responses, current settings
+    python3 scripts/pronounce.py demo 0.75 8              # real responses, 8 of them, at 0.75
     python3 scripts/pronounce.py pick Lethanial 7         # commit number 7
     python3 scripts/pronounce.py try Lethanial Luthanyull "La-thanyull"
     python3 scripts/pronounce.py tryph Lethanial "L AA1 TH AE0 N Y AH0 L"
@@ -238,6 +240,51 @@ def cmd_stability(grapheme, number):
     print("\nset the winner in src/config.py TTS_VOICE_SETTINGS, then restart")
 
 
+def cmd_demo(stability=None, count=6):
+    """Speak real past responses, to judge delivery over more than one sentence.
+
+    Every other command here uses a single short frame, which is right for
+    comparing a name and useless for deciding whether a voice sounds flat.
+    Flatness shows up across sentences, in a response that carries an aside or a
+    joke, not in five words about a timer.
+
+    Pulls actual assistant turns out of conversation_history rather than
+    invented lines, so what is judged is what Nova really says."""
+    import sqlite3
+    from elevenlabs import VoiceSettings
+
+    conn = sqlite3.connect(config.DB_PATH)
+    rows = conn.execute(
+        "SELECT content FROM conversation_history WHERE role = 'assistant' "
+        "AND LENGTH(content) BETWEEN 80 AND 400 ORDER BY id DESC LIMIT ?",
+        (count,)
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        print("no past responses long enough to judge; talk to Nova first")
+        return
+
+    settings = None
+    if stability is not None:
+        settings = VoiceSettings(
+            stability=stability,
+            similarity_boost=config.TTS_VOICE_SETTINGS.similarity_boost,
+            style=config.TTS_VOICE_SETTINGS.style,
+            use_speaker_boost=True, speed=1.00,
+        )
+
+    shown = stability if stability is not None else config.TTS_VOICE_SETTINGS.stability
+    print(f"{len(rows)} real responses at stability {shown}")
+    print("listening for flatness, not for the name\n")
+    for i, (content,) in enumerate(reversed(rows), 1):
+        print(f"  {i}. {content[:90]}{'...' if len(content) > 90 else ''}", flush=True)
+        # No seed: production does not pin one, and the question here is how the
+        # voice behaves in normal use rather than how two candidates compare.
+        tts.speak(content, voice_settings=settings)
+        time.sleep(0.5)
+
+
 def cmd_pick(grapheme, number):
     """Commit whichever sweep candidate won."""
     if not 1 <= number <= len(SWEEP):
@@ -296,6 +343,9 @@ def main():
             cmd_sweep(rest[0], start=int(spec) if spec else 0)
     elif command == "spread" and len(rest) >= 2:
         cmd_spread(rest[0], int(rest[1]), int(rest[2]) if len(rest) > 2 else 6)
+    elif command == "demo":
+        cmd_demo(float(rest[0]) if rest else None,
+                 int(rest[1]) if len(rest) > 1 else 6)
     elif command == "stability" and len(rest) == 2:
         cmd_stability(rest[0], int(rest[1]))
     elif command == "pick" and len(rest) == 2:
