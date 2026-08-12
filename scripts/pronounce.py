@@ -10,7 +10,8 @@ restart, no deploy, no file to edit.
     python3 scripts/pronounce.py sweep Lethanial 12       # resume at 12
     python3 scripts/pronounce.py sweep Lethanial 1,6,8    # finals, these only
     python3 scripts/pronounce.py spread Lethanial 15      # one candidate, many seeds
-    python3 scripts/pronounce.py stability Lethanial 15   # one candidate, many stabilities
+    python3 scripts/pronounce.py stability Lethanial 15            # coarse bracket
+    python3 scripts/pronounce.py stability Lethanial 15 .78 .82 .86  # narrow band
     python3 scripts/pronounce.py demo                     # real responses, current settings
     python3 scripts/pronounce.py demo 0.75 8              # real responses, 8 of them, at 0.75
     python3 scripts/pronounce.py pick Lethanial 7         # commit number 7
@@ -209,7 +210,14 @@ def cmd_spread(grapheme, number, runs=6):
         time.sleep(0.7)
 
 
-def cmd_stability(grapheme, number):
+# Coarse bracket, five points across the usable range. Once the good region is
+# known, pass explicit values to search inside it: stability is a continuous
+# float, not a set of presets, and the interesting differences are usually in a
+# band narrower than these steps.
+STABILITY_STEPS = (0.45, 0.60, 0.75, 0.90, 1.00)
+
+
+def cmd_stability(grapheme, number, steps=None):
     """Speak one candidate across stability values, at a fixed seed.
 
     stability is the setting that governs how much a rendition varies. If a
@@ -223,7 +231,7 @@ def cmd_stability(grapheme, number):
     print(f"candidate {number}: {value}   {note}")
     print("current production stability is "
           f"{config.TTS_VOICE_SETTINGS.stability}\n")
-    for stability in (0.45, 0.60, 0.75, 0.90, 1.00):
+    for stability in (steps or STABILITY_STEPS):
         print(f"  stability {stability:.2f}")
         settings = VoiceSettings(
             stability=stability,
@@ -346,8 +354,10 @@ def main():
     elif command == "demo":
         cmd_demo(float(rest[0]) if rest else None,
                  int(rest[1]) if len(rest) > 1 else 6)
-    elif command == "stability" and len(rest) == 2:
-        cmd_stability(rest[0], int(rest[1]))
+    elif command == "stability" and len(rest) >= 2:
+        # Trailing values narrow the search: stability Lethanial 15 .78 .82 .86
+        steps = tuple(float(v) for v in rest[2:]) or None
+        cmd_stability(rest[0], int(rest[1]), steps)
     elif command == "pick" and len(rest) == 2:
         cmd_pick(rest[0], int(rest[1]))
     elif command == "try" and len(rest) >= 2:

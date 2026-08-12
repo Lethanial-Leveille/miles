@@ -91,9 +91,13 @@ def test_no_module_reads_the_voice_id_from_the_environment():
 def test_settings_carry_the_values_that_were_chosen():
     """Pinned so a change is deliberate rather than incidental. stability in
     particular was chosen by ear across a sweep, 0.45 no through 0.90 good, and
-    0.60 is the value that was live while the voice sounded inconsistent."""
+    0.60 is the value that was live while the voice sounded inconsistent.
+
+    Expect to update this deliberately. 0.75 read better on ordinary sentences
+    and 0.90 held the name better, so the value is a live trade rather than a
+    settled fact."""
     s = config.TTS_VOICE_SETTINGS
-    assert (s.stability, s.similarity_boost, s.style) == (0.90, 0.75, 0.00)
+    assert (s.stability, s.similarity_boost, s.style) == (0.80, 0.75, 0.00)
     assert s.use_speaker_boost is True
     assert s.speed == 1.00, "an unset speed is an invisible API default"
 

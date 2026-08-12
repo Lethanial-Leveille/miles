@@ -202,8 +202,18 @@ TTS_PHONEME_TAGS = True
 # 0.90 rather than 1.00 because the gain stopped there. 0.75 to 0.90 was audible,
 # 0.90 to 1.00 was not, and 1.00 spends the last of the expressiveness that the
 # persona's dry wit depends on for nothing measurable.
+#
+# Then 0.75 turned out to read noticeably better on ordinary sentences while
+# occasionally missing the name, and 0.90 the reverse. Those are the two ends of
+# one trade: stability buys consistency by reducing variation, and the same
+# variation is what makes delivery sound alive. 0.80 sits in the band because
+# this is a continuous value, not a choice between the five points that happened
+# to get sampled.
+#
+# Interim. Narrow it further with:
+#   python3 scripts/pronounce.py stability Lethanial 15 .78 .80 .82 .85
 TTS_VOICE_SETTINGS = VoiceSettings(
-    stability=0.90, similarity_boost=0.75, style=0.00,
+    stability=0.80, similarity_boost=0.75, style=0.00,
     use_speaker_boost=True, speed=1.00,
 )
 
