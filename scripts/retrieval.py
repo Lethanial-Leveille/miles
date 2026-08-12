@@ -97,9 +97,15 @@ def cmd_review(zero_only):
         ids = json.loads(row["returned_ids"])
         scores = json.loads(row["scores"] or "[]")
 
+        methods = json.loads(row["method_ranks"] or "{}") if "method_ranks" in row.keys() else {}
         print("=" * 72)
         print(f"  {row['query']}")
         print(f"  terms: {terms or '(none survived the stopword list)'}")
+        if methods:
+            k, s = methods.get("keyword", []), methods.get("semantic", [])
+            both = set(k) & set(s)
+            print(f"  keyword found {len(k)}, semantic found {len(s)}, "
+                  f"agreed on {len(both)}")
         if not ids:
             print("  returned: nothing")
         else:

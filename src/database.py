@@ -3,7 +3,7 @@ import math
 import re
 import sqlite3
 from datetime import datetime
-from config import DB_PATH, RECALL_MIN_DF
+from config import DB_PATH, RECALL_MIN_DF, RRF_K
 
 
 # ── Schema migrations ──
@@ -379,6 +379,40 @@ def _migration_015_retrieval_log(conn):
     """)
 
 
+def _migration_016_memory_embeddings(conn):
+    """Vectors for semantic retrieval, one row per memory per model.
+
+    model is part of the key rather than metadata. Embeddings from two
+    different models occupy unrelated spaces, so mixing them produces cosine
+    scores that are well formed and meaningless. Keying on it means changing
+    the model re embeds instead of silently corrupting the ranking.
+
+    Stored as a float32 blob rather than through a vector extension. At 384
+    dimensions each row is 1536 bytes, so a corpus in the hundreds is under a
+    megabyte, and a brute force dot product in numpy costs less than the query
+    that fetched the rows. An index would be machinery for a problem this
+    corpus does not have."""
+    conn.execute("""
+        CREATE TABLE memory_embeddings (
+            memory_id INTEGER NOT NULL,
+            model TEXT NOT NULL,
+            vector BLOB NOT NULL,
+            PRIMARY KEY (memory_id, model)
+        )
+    """)
+
+
+def _migration_017_retrieval_method(conn):
+    """Which method surfaced each result, so the eval can attribute credit.
+
+    Hybrid retrieval that only records the fused output cannot answer the one
+    question worth asking: did the embeddings earn their place. Storing the
+    per method ranks means a labelled miss can be traced to keyword finding
+    nothing, semantics finding nothing, or fusion burying a hit that one of
+    them had at rank one."""
+    conn.execute("ALTER TABLE retrieval_log ADD COLUMN method_ranks TEXT")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -395,6 +429,8 @@ MIGRATIONS = [
     (13, _migration_013_supersede_and_expiry),
     (14, _migration_014_memory_tiers_and_search),
     (15, _migration_015_retrieval_log),
+    (16, _migration_016_memory_embeddings),
+    (17, _migration_017_retrieval_method),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -533,23 +569,78 @@ date day time today tomorrow tonight morning evening week month year
 """.split())
 
 
-def _log_retrieval(query, terms, rows, scores):
+def _log_retrieval(query, terms, rows, scores, ranks=None):
     """Record one retrieval. Never raises: a logging failure must not cost a turn."""
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.execute(
             "INSERT INTO retrieval_log (created_at, query, terms, returned_ids, "
-            "scores, hit_count) VALUES (?, ?, ?, ?, ?, ?)",
+            "scores, hit_count, method_ranks) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (datetime.now().isoformat(), query, json.dumps(terms),
              json.dumps([r[0] for r in rows]),
-             json.dumps([round(s, 3) for s in scores]), len(rows)))
+             json.dumps([round(s, 5) for s in scores]), len(rows),
+             json.dumps(ranks or {})))
         conn.commit()
         conn.close()
     except Exception:
         pass
 
 
+def _query_terms(query):
+    return [t for t in _FTS_SAFE.findall(query.lower())
+            if t not in _FTS_STOPWORDS and len(t) > 1]
+
+
 def search_memories(query, limit=5, tier=None, log=False):
+    """Hybrid retrieval: keyword and semantic, fused by reciprocal rank.
+
+    The two methods fail in opposite directions, which is the whole reason to
+    run both. Keyword is exact and blind to paraphrase: it cannot connect "who
+    am I closest to" with a memory about who he goes to when something is
+    wrong. Semantics handles that and is vaguer about names and dates, where an
+    exact token is the entire signal.
+
+    They are fused by reciprocal rank rather than by blending their scores,
+    because their scores are not comparable. One produces summed inverse
+    document frequencies in the single digits, the other cosines between zero
+    and one, and any mapping between the two is invented. RRF discards the
+    magnitudes and keeps only the ordering, so each method votes on equal terms
+    without either being calibrated against the other.
+
+    Each method is asked for more candidates than the caller wants, so fusion
+    has something to work with rather than merging two already truncated lists.
+    """
+    terms = _query_terms(query)
+    pool = max(limit * 3, 10)
+
+    keyword = search_keyword(query, limit=pool, tier=tier)
+    try:
+        import embeddings
+        semantic = embeddings.search(query, limit=pool, tier=tier)
+    except Exception:
+        # No model, no vectors, or a load failure. Degrading to keyword only is
+        # correct: retrieval getting worse is survivable, a turn that raises is
+        # not.
+        semantic = []
+
+    fused = {}
+    ranks = {"keyword": [], "semantic": []}
+    for name, results in (("keyword", keyword), ("semantic", semantic)):
+        for rank, row in enumerate(results):
+            ranks[name].append(row[0])
+            entry = fused.setdefault(row[0], {"row": row, "score": 0.0})
+            entry["score"] += 1.0 / (RRF_K + rank + 1)
+
+    ordered = sorted(fused.values(), key=lambda e: e["score"], reverse=True)
+    rows = [e["row"] for e in ordered[:limit]]
+
+    if log:
+        _log_retrieval(query, terms, rows,
+                       [round(e["score"], 5) for e in ordered[:limit]], ranks)
+    return rows
+
+
+def search_keyword(query, limit=5, tier=None):
     """Rank memories against a spoken query. Empty list when nothing matches.
 
     Returns (id, content, category) so results drop straight into the same
@@ -557,8 +648,6 @@ def search_memories(query, limit=5, tier=None, log=False):
     terms = [t for t in _FTS_SAFE.findall(query.lower())
              if t not in _FTS_STOPWORDS and len(t) > 1]
     if not terms:
-        if log:
-            _log_retrieval(query, [], [], [])
         return []
 
     conn = sqlite3.connect(DB_PATH)
@@ -620,16 +709,11 @@ def search_memories(query, limit=5, tier=None, log=False):
         floor = math.log(total / RECALL_MIN_DF) if total > RECALL_MIN_DF else 0.0
         ranked = sorted(((score(r), r) for r in rows), key=lambda p: p[0],
                         reverse=True)
-        kept = [(s, r) for s, r in ranked if s >= floor][:limit]
-        rows = [r for _, r in kept]
-        if log:
-            _log_retrieval(query, terms, rows, [s for s, _ in kept])
+        rows = [r for s, r in ranked if s >= floor][:limit]
     except sqlite3.OperationalError:
         # A query that still parses badly should cost Nova nothing. Losing the
         # retrieval is survivable; raising inside prompt assembly is not.
         rows = []
-        if log:
-            _log_retrieval(query, terms, [], [])
     conn.close()
     return rows
 

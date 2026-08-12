@@ -56,6 +56,10 @@ venv/
 .vscode/
 .DS_Store
 
+# Model caches. The embedding model is 80MB and downloads on demand.
+.cache/
+hf_cache/
+
 # ── Misc ──
 *.log
 # A bundle is the entire repository including every commit, so one sitting in

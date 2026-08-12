@@ -354,6 +354,21 @@ RECALL_LIMIT = 3
 # lowering it attaches noise. Tune against logged misses, not by feel.
 RECALL_MIN_DF = 15
 
+# Semantic retrieval. all-MiniLM-L6-v2 is 384 dimensions, around 80MB, and
+# measured at 31ms per query on this Pi, which is 0.7 percent of a 4298ms turn.
+# Changing this re embeds the corpus rather than mixing vectors from two
+# different spaces, which would yield similarity scores that look plausible and
+# mean nothing.
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+# Reciprocal rank fusion constant. Keyword scores are summed inverse document
+# frequencies and semantic scores are cosines; they are not on the same scale
+# and normalising one into the other is guesswork. RRF throws away the
+# magnitudes and keeps only the ranks, so both methods vote without either
+# having to be calibrated against the other. 60 is the value from the original
+# paper and there is no reason here to depart from it.
+RRF_K = 60
+
 # How long the follow up window stays open after Nova finishes speaking.
 #
 # Was a bare 10 in voice_main.py. Ten seconds is a long time to stand in a quiet
