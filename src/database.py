@@ -1,4 +1,5 @@
 import json
+import math
 import re
 import sqlite3
 from datetime import datetime
@@ -479,11 +480,24 @@ def get_seed_memories(tier=1):
 # search syntax, so terms are ORed and ranking decides what matters. Anything
 # that would be read as an operator is dropped, since a stray quote or NEAR in
 # a transcript is a syntax error rather than a search.
+# The stopword list has to be thorough rather than approximate. A first pass
+# missed "did", and the query "what did I build with the accelerometer" then
+# ranked a memory about VS Code first, because that memory happened to contain
+# both "did" and "build" while the MotionSense memory only carried the one rare
+# word. bm25 was right; the query was junk. With 209 short documents the IDF
+# spread is too compressed for a rare term to outweigh two function word hits,
+# so anything that carries no meaning has to be dropped before it reaches MATCH.
 _FTS_SAFE = re.compile(r"[A-Za-z0-9']+")
 _FTS_STOPWORDS = frozenset("""
-a an and are as at be by do does for from had has have he her his how i in is
-it its me my of on or she that the their them they this to was what when where
-which who why will with you your
+a about after all also am an and any are as at back be because been before
+being between both but by can come could did do does doing done down during
+each even every few first for from get give go had has have having he her here
+hers him his how i if in into is it its just know like make many me might more
+most much must my never no nor not now of off on once one only or other our
+out over own said same see she should so some such take tell than that the
+their them then there these they thing think this those through to too under
+until up us use used very was way we well were what when where which while who
+whom why will with would you your yours
 """.split())
 
 
@@ -505,11 +519,39 @@ def search_memories(query, limit=5, tier=None):
     if tier is not None:
         sql += "AND m.tier = ? "
         params.append(tier)
-    sql += "ORDER BY bm25(memories_fts) LIMIT ?"
-    params.append(limit)
 
     try:
         rows = conn.execute(sql, params).fetchall()
+        # Rank on rarity alone, deliberately not on bm25.
+        #
+        # bm25 normalises by document length, and for "what did I build with
+        # the accelerometer" that ranked a 251 character memory about VS Code
+        # above the 380 character one about MotionSense, because the long
+        # document was penalised for its length while the short one happened to
+        # contain "build". Length normalisation is there to stop a long
+        # document winning by sheer surface area, which is a real problem for
+        # web pages and no problem at all for a corpus of one sentence facts.
+        # Here it only punishes the memories that carry the most detail, which
+        # are exactly the ones worth retrieving.
+        #
+        # So: score a row by how rare the query terms it contains are, and
+        # ignore how long it is. One document frequency lookup per term, over a
+        # corpus in the hundreds.
+        total = conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE status = 'active'"
+        ).fetchone()[0] or 1
+        weights = {}
+        for term in terms:
+            df = conn.execute(
+                "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH ?",
+                (term,)).fetchone()[0]
+            weights[term] = math.log(total / df) if df else 0.0
+
+        def score(row):
+            words = set(_FTS_SAFE.findall(row[1].lower()))
+            return sum(w for t, w in weights.items() if t in words)
+
+        rows = sorted(rows, key=score, reverse=True)[:limit]
     except sqlite3.OperationalError:
         # A query that still parses badly should cost Nova nothing. Losing the
         # retrieval is survivable; raising inside prompt assembly is not.
