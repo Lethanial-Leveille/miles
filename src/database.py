@@ -439,6 +439,62 @@ def _migration_018_wake_log(conn):
     """)
 
 
+def _migration_019_people_and_tiers(conn):
+    """Who exists, what they are allowed, and when their birthday is.
+
+    Three things converge on one table. Birthdays are structured recurring data
+    that prose cannot answer ("is that soon" is not derivable from a sentence).
+    Authorization is a property of a person. And multi speaker verification
+    needs somewhere to hang a voiceprint that is not the same row as the
+    voiceprint itself.
+
+    tier is Naruto ranks by request, and the important property is that
+    recognition and authorization are independent. Enrolling a voice means Nova
+    knows who is speaking; it grants nothing. A roommate can be enrolled and
+    left at genin, and an unrecognised voice is treated as genin too, so the
+    unknown case needs no separate handling.
+
+    Default deny on anything about Lethanial. Classifying 252 memories by
+    sensitivity would get it 95 percent right and the other 5 percent would be
+    his financial aid figure, so nothing about him leaves hokage unless a
+    memory is explicitly marked shareable.
+
+    speaker_enrollments is separate rather than columns here because a person
+    exists whether or not their voice is ever enrolled, most rows would be all
+    null, and enrollment has its own lifecycle: BACKEND_TODO requires every
+    voiceprint be rebuilt when the microphone changes, which is an event about
+    the recording and not about the person."""
+    conn.execute("""
+        CREATE TABLE people (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            preferred_name TEXT,
+            relationship TEXT,
+            birthday TEXT,
+            pronunciation TEXT,
+            tier TEXT NOT NULL DEFAULT 'genin',
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE (full_name)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE speaker_enrollments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            person_id INTEGER NOT NULL REFERENCES people(id),
+            centroid BLOB NOT NULL,
+            samples BLOB,
+            model TEXT NOT NULL,
+            mic TEXT,
+            created_at TEXT NOT NULL,
+            retired_at TEXT
+        )
+    """)
+    # A memory may be shared below hokage only when this is set. Absent means
+    # private, which is the safe direction for a column added to 252 rows.
+    conn.execute("ALTER TABLE memories ADD COLUMN shareable INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -458,6 +514,7 @@ MIGRATIONS = [
     (16, _migration_016_memory_embeddings),
     (17, _migration_017_retrieval_method),
     (18, _migration_018_wake_log),
+    (19, _migration_019_people_and_tiers),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -594,6 +651,97 @@ until up us use used very was way we well were what when where which while who
 whom why will with would you your yours
 date day time today tomorrow tonight morning evening week month year
 """.split())
+
+
+# ── People and tiers ──
+# Ranks in ascending authority. Recognition and authorization are separate:
+# being enrolled means Nova knows who is speaking, not that they may ask
+# anything. An unrecognised voice is treated as genin, so the unknown case
+# needs no special path.
+TIERS = ("genin", "chunin", "jonin", "hokage")
+
+
+def add_person(full_name, relationship=None, preferred_name=None,
+               birthday=None, pronunciation=None, tier="genin", notes=None):
+    """Create a person. Returns the id, or None if the name already exists.
+
+    Enrollment attaches to a person rather than creating one, so this is the
+    only way a person comes into being. If enrollment created them, the first
+    time his mother enrolled as "mom" there would be two identities for one
+    human and nothing to notice it."""
+    if tier not in TIERS:
+        raise ValueError(f"tier must be one of {TIERS}, got {tier!r}")
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cur = conn.execute(
+            "INSERT INTO people (full_name, preferred_name, relationship, "
+            "birthday, pronunciation, tier, notes, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (full_name, preferred_name, relationship, birthday, pronunciation,
+             tier, notes, datetime.now().isoformat()))
+        conn.commit()
+        return cur.lastrowid
+    except sqlite3.IntegrityError:
+        return None
+    finally:
+        conn.close()
+
+
+def get_people(tier=None):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    sql = "SELECT * FROM people"
+    params = ()
+    if tier:
+        sql += " WHERE tier = ?"
+        params = (tier,)
+    rows = conn.execute(sql + " ORDER BY full_name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def set_tier(person_id, tier):
+    """Change someone's clearance.
+
+    Deliberately not reachable from voice. Voice is replayable from a recording
+    and the measured similarity spread between speakers is narrow, so it is not
+    a factor that should grant access to anything. A spoken request can propose
+    a tier change; confirming it happens here."""
+    if tier not in TIERS:
+        raise ValueError(f"tier must be one of {TIERS}, got {tier!r}")
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE people SET tier = ? WHERE id = ?", (tier, person_id))
+    conn.commit()
+    conn.close()
+
+
+def upcoming_birthdays(within_days=14):
+    """Birthdays due within the window, ignoring year.
+
+    Comparing month and day rather than dates because a birthday recurs and a
+    stored date does not. Handles the year boundary by checking both this year
+    and next."""
+    from datetime import date, timedelta
+    today = date.today()
+    horizon = today + timedelta(days=within_days)
+    due = []
+    for person in get_people():
+        if not person["birthday"]:
+            continue
+        try:
+            _, month, day = (int(x) for x in person["birthday"].split("-"))
+        except (ValueError, AttributeError):
+            continue
+        for year in (today.year, today.year + 1):
+            try:
+                occurrence = date(year, month, day)
+            except ValueError:      # February 29th in a non leap year
+                continue
+            if today <= occurrence <= horizon:
+                due.append({**person, "due": occurrence.isoformat(),
+                            "days_away": (occurrence - today).days})
+                break
+    return sorted(due, key=lambda p: p["days_away"])
 
 
 def log_wake_near_miss(score, threshold):
