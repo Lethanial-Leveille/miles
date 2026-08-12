@@ -413,6 +413,32 @@ def _migration_017_retrieval_method(conn):
     conn.execute("ALTER TABLE retrieval_log ADD COLUMN method_ranks TEXT")
 
 
+def _migration_018_wake_log(conn):
+    """Near miss wake word scores, so misses stop being invisible.
+
+    verification_log only gets a row when the wake word fires, so every time
+    Nova does not hear "hey nova" there is no trace of it anywhere. "It
+    sometimes does not work" cannot be debugged from an empty table.
+
+    Only near misses are recorded. A score of 0.02 is the model correctly
+    ignoring the room and there are twelve of those every second; a score of
+    0.35 against a 0.4 threshold is the interesting case. The floor keeps this
+    table small enough to read.
+
+    The two failure shapes need opposite fixes and cannot be told apart by
+    feel: scores clustering just under the threshold mean the threshold is
+    wrong, and scores near zero mean the model does not recognise the phrase in
+    that voice, which is a training data problem."""
+    conn.execute("""
+        CREATE TABLE wake_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            score REAL NOT NULL,
+            threshold REAL NOT NULL
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -431,6 +457,7 @@ MIGRATIONS = [
     (15, _migration_015_retrieval_log),
     (16, _migration_016_memory_embeddings),
     (17, _migration_017_retrieval_method),
+    (18, _migration_018_wake_log),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -567,6 +594,20 @@ until up us use used very was way we well were what when where which while who
 whom why will with would you your yours
 date day time today tomorrow tonight morning evening week month year
 """.split())
+
+
+def log_wake_near_miss(score, threshold):
+    """Record a wake score that did not fire. Never raises: the wake loop runs
+    twelve times a second and must not be taken down by a logging failure."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO wake_log (created_at, score, threshold) VALUES (?, ?, ?)",
+            (datetime.now().isoformat(), float(score), float(threshold)))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 def _log_retrieval(query, terms, rows, scores, ranks=None):

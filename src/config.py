@@ -22,6 +22,17 @@ RATE = 16000
 WAKE_THRESHOLD = 0.4
 VERIFY_THRESHOLD = 0.5
 
+# Below VERIFY_THRESHOLD but above this, the score is genuinely ambiguous rather
+# than a rejection. Three of five real rejections landed within 0.05 of the
+# threshold, so a hard line there turns a coin flip into "Nova ignored me".
+# Asking him to repeat converts those into a second, longer utterance, which is
+# also the thing that fixes the score.
+VERIFY_RETRY_THRESHOLD = 0.45
+
+# Wake scores at or above this are logged when they fail to fire. Below it the
+# model is correctly ignoring the room and there is nothing to learn.
+WAKE_LOG_FLOOR = 0.15
+
 # ── Voice activity detection ──
 # webrtcvad replaces the bare amplitude threshold that used to gate capture.
 # Amplitude cannot tell speech from a running AC unit, which is what drove the

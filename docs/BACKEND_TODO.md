@@ -85,11 +85,35 @@ extra arguments at both enrollment and verification, so both paths run
 identical resampling, normalization, and trimming. Verified by reading the
 resemblyzer source, not by assumption.
 
-**Utterance duration at verification was ruled out.** The apparent correlation
-between embedded duration and similarity (`r = +0.426`) collapsed to `+0.130`
-once a single degenerate row was removed, and attempts with three or more
-seconds of embedded audio averaged 0.579, no better than the 1 to 2 second
-bucket at 0.582. Duration mattered at **enrollment**, not verification.
+**Utterance duration at verification: RULED OUT ON AUG 10, RE OPENED AUG 12.
+The original conclusion was wrong.**
+
+What was written here on Aug 10: the apparent correlation between embedded
+duration and similarity (`r = +0.426`) collapsed to `+0.130` once a single
+degenerate row was removed, and attempts with three or more seconds averaged
+0.579, no better than the 1 to 2 second bucket at 0.582.
+
+That held on the sample available then. It does not hold on 149 scored
+attempts:
+
+| embedded duration | n | rejected | median similarity |
+|---|---|---|---|
+| under 1.0s | 7 | 29% | 0.543 |
+| 1.0 to 2.0s | 48 | 6% | 0.616 |
+| 2.0 to 3.0s | 30 | 0% | 0.694 |
+| 3.0s and over | 64 | 0% | 0.774 |
+
+`r = +0.516`. Median similarity climbs monotonically with duration, and **every
+rejection ever logged came from an utterance under two seconds. Zero failures
+in 94 attempts above it.**
+
+Duration is not a secondary factor at verification, it is the dominant one. The
+earlier reading came from a small sample plus a bucket comparison that averaged
+over too few long utterances to separate them.
+
+**Consequence:** the wake word concatenation idea in "Optional, low priority"
+below was deprioritised *because of this wrong conclusion*. It is not optional.
+It is the fix, and it is already confirmed feasible.
 
 ### The SNR curve, which is hardware independent
 

@@ -448,6 +448,7 @@ def measure_acoustics(wav_path):
 VERIFIED = 'verified'
 REJECTED = 'rejected'
 NO_AUDIO = 'no_audio'
+RETRY = 'retry'
 
 # Resemblyzer computes one partial utterance per 1.6s window and zero pads the
 # last one. Below roughly a third of that there is not enough voiced audio for
@@ -465,12 +466,53 @@ MIN_EMBED_SECONDS = 0.5
 MIN_TRUSTWORTHY_SECONDS = 2.0
 
 
+def wake_word_audio(seconds=1.5):
+    """The tail of openWakeWord's ring buffer, which still holds "hey nova".
+
+    Verification failures are a duration problem and nothing else. Across 149
+    scored attempts every rejection came from an utterance under two seconds,
+    and there were none at all in 94 attempts above it. Commands like "All
+    right" and "Okay, thank you" are simply too short to embed stably, and no
+    threshold tuning fixes an embedding that had a second of audio to work with.
+
+    The wake word is free audio of the right speaker, already captured, sitting
+    in a buffer nobody reads. openWakeWord fills raw_data_buffer inside
+    predict(), and nothing calls predict() between detection and verification,
+    so the buffer is frozen with "hey nova" at its tail while the command is
+    being recorded. reset() clears the prediction smoothing, not this.
+
+    Returns int16 at RATE, or None if the buffer is unavailable. Never raises:
+    losing the prepend costs accuracy, and an exception here costs the turn.
+    """
+    try:
+        buffer = wake_model.preprocessor.raw_data_buffer
+        wanted = int(RATE * seconds)
+        tail = np.array(list(buffer)[-wanted:], dtype=np.int16)
+        return tail if len(tail) else None
+    except Exception:
+        return None
+
+
 def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence=None,
                  session_trusted=False, recording_path=None):
-    from config import VERIFY_THRESHOLD
+    from config import VERIFY_THRESHOLD, VERIFY_RETRY_THRESHOLD
 
     verify_started = time.monotonic()
-    wav = preprocess_wav(wav_path)
+
+    # Prepend the wake word for initial turns. A follow up has no wake word,
+    # and the buffer would be stale from the turn before, so this is scoped to
+    # the only case where the audio genuinely belongs to this utterance.
+    prepended = None
+    if turn_type == 'initial':
+        prepended = wake_word_audio()
+
+    if prepended is not None:
+        with wave.open(wav_path, 'rb') as wf:
+            command = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+        wav = preprocess_wav(np.concatenate([prepended, command]).astype(np.float32) / 32768.0,
+                             source_sr=RATE)
+    else:
+        wav = preprocess_wav(wav_path)
 
     with wave.open(wav_path, 'rb') as wf:
         duration_seconds = wf.getnframes() / wf.getframerate()
@@ -534,6 +576,10 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
 
     print(f"Voice similarity: {similarity:.3f}", flush=True)
     accepted = similarity >= VERIFY_THRESHOLD
+    # An ambiguous band rather than a hard line. The scores between these two
+    # values are the model saying it does not know, and answering "I do not
+    # know" with silence is the worst of the three available responses.
+    ambiguous = (not accepted) and similarity >= VERIFY_RETRY_THRESHOLD
 
     log_verification(
         similarity=float(similarity),
@@ -544,7 +590,7 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
         embedded_duration_seconds=embedded_duration_seconds,
         turn_type=turn_type,
         wake_confidence=wake_confidence,
-        outcome='scored',
+        outcome='retry' if ambiguous else 'scored',
         rms_dbfs=rms_dbfs,
         snr_db=snr_db,
         spectral_tilt=spectral_tilt,
@@ -560,4 +606,6 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
           f"SNR {_fmt(snr_db, '.1f')} dB, "
           f"tilt {_fmt(spectral_tilt, '+.1f')} dB", flush=True)
 
-    return VERIFIED if accepted else REJECTED
+    if accepted:
+        return VERIFIED
+    return RETRY if ambiguous else REJECTED

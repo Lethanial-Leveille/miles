@@ -9,11 +9,13 @@ import timing
 import tts
 import actions
 from brain import ask_nova
-from database import init_db
+from database import init_db, log_wake_near_miss
 from parsing import is_noise_transcript
-from config import CHUNK, WAKE_THRESHOLD, MAX_FOLLOWUP_TURNS, FOLLOWUP_TIMEOUT
+from config import CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS, FOLLOWUP_TIMEOUT
 
 # Wire the speak callback so timer/reminder alerts play audio
+
+_last_wake_log = [0.0]  # mutable so the loop can update it without global
 
 print("Starting M.I.L.E.S. v0.7...", flush=True)
 audio.log_mic_gain()
@@ -72,6 +74,15 @@ try:
 
         for _, score in prediction.items():
             if score <= WAKE_THRESHOLD:
+                # Record only near misses. Twelve frames a second of 0.01 is
+                # the model correctly ignoring an empty room; a 0.35 against a
+                # 0.4 threshold is the case worth seeing. Rate limited so a
+                # sustained near miss cannot flood the table.
+                if score >= WAKE_LOG_FLOOR:
+                    now = time.monotonic()
+                    if now - _last_wake_log[0] >= 1.0:
+                        _last_wake_log[0] = now
+                        log_wake_near_miss(score, WAKE_THRESHOLD)
                 continue
 
             print(f"Wake word detected! ({score:.2f})", flush=True)
@@ -100,6 +111,18 @@ try:
 
             # No voiced audio is not an authorization failure, so it does not
             # get the intruder response.
+            # An ambiguous score is the model saying it does not know, and the
+            # honest response is to ask rather than to silently ignore him.
+            # Three of five real rejections sat within 0.05 of the threshold,
+            # and the repeat is usually longer than the original, which is
+            # itself the thing that fixes the score.
+            if verify_result == audio.RETRY:
+                print("Ambiguous voice match, asking to repeat.\n", flush=True)
+                tts.speak("Sorry, say that again?")
+                timing.abandon_turn()
+                print("Listening for 'hey nova'...", flush=True)
+                continue
+
             if verify_result == audio.NO_AUDIO:
                 print("Nothing to verify.\n", flush=True)
                 timing.abandon_turn()
@@ -180,6 +203,10 @@ try:
                     print("Nothing to verify. Returning to wake word.\n", flush=True)
                     timing.abandon_turn()
                     break
+
+                if followup_result == audio.RETRY:
+                    tts.speak("Sorry, say that again?")
+                    continue
 
                 if followup_result == audio.REJECTED:
                     print("Voice not recognized on follow up.", flush=True)
