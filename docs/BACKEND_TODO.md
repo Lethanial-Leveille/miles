@@ -640,6 +640,74 @@ are not users of this system. If this gets built, scope the read to specific
 threads rather than opening the database, and treat the result the way the
 recording archive is treated.
 
+## Ground truth: the only things Nova can know without being told
+
+Raised Aug 12 2026, out of the accountability question. Nova reads a
+transcript. Whisper strips affect, so she cannot tell effort from excuse, or
+tired from fine. Everything she believes about how Lethanial is doing is
+self reported, and self report is exactly what fails on the days it matters.
+
+Three APIs would give her facts she did not have to ask for. They are not
+about features, they are about whether the accountability work has anything
+underneath it.
+
+**Oura Ring 4.** Already owned, already worn. Sleep and activity, which covers
+the two things he actually said he cared about: sleep sitting at 6 to 7 hours
+against a stated target of 8 to 9, and whether a session happened. This is the
+highest value of the three because it is the only one that reports on a day he
+would rather not talk about. Check what the current API exposes before
+planning around specific endpoints.
+
+**Hevy.** Workout logging. His written program says "Log every session. Phone
+notes app is fine," and a notes app is not queryable. Hevy would turn the
+training block into structured sets and reps, which makes "did the muscle up
+work happen on Tuesday" answerable rather than a question. Confirm whether API
+access needs a paid tier before committing to it.
+
+**Canvas.** UF runs Canvas, and Canvas LMS has a REST API with courses,
+assignments, due dates, submissions, and grades, reached with a personal access
+token from account settings. This is the one that removes the most asking:
+grades and deadlines become facts rather than questions. Two things to verify
+before relying on it. Institutions can disable personal access tokens, so
+confirm UF allows them. And a grade only exists in Canvas once the instructor
+posts it, which can lag the exam by a week, so it is not a real time signal.
+
+**Google Calendar.** He said plainly he is going to use it, so it becomes the
+schedule source of truth: classes, pledging, shifts, deadlines. Also the thing
+that makes a morning briefing possible at all, which is already on the v0.8+
+list.
+
+**What none of them give you.** Every one of these reports what happened, not
+why. Canvas can say he failed the Physics exam; it cannot say whether he
+studied. That distinction is the whole basis of the accountability design, so
+the follow up question does not disappear when the APIs land, it just gets
+better: instead of "how did the test go", it becomes "I saw the Physics grade,
+what happened". She opens with the fact and asks only the part that is
+genuinely invisible.
+
+**Rank them by what they need from him.** Oura is passive: it reports whether
+he trained and slept with no action on his part. Hevy needs him to log. Canvas
+needs an instructor to post. The one that requires his participation is the one
+that fails on a bad week, and a bad week is exactly when the signal matters,
+because not logging and not going correlate. That argues for Oura as the
+primary training signal and Hevy as the detail on top, not the reverse.
+
+**Decide this deliberately.** Connecting these means he loses the ability to
+not mention something. That is the point of accountability and it is also a
+real change in the relationship. Worth choosing on purpose rather than drifting
+into it one integration at a time.
+
+**Do the OAuth once.** Life OS already runs n8n in Docker on this same Pi and
+already holds OAuth2 credentials for Google. Google Calendar should ride that
+rather than growing a second credential path, and the tunnel is already shared.
+Check the Life OS setup before writing any auth code.
+
+**Related and unbuilt: a commitment is not a memory or a reminder.** A memory
+is a durable fact. A reminder fires once and is finished. A commitment is
+something he said he would do, with a when, that stays open until it resolves
+either way. Accountability needs that third thing, and so do birthdays, which
+are commitments that recur annually. Probably one migration rather than two.
+
 ### Presence detection
 
 Raised alongside the accountability idea (Nova speaking unprompted only when
