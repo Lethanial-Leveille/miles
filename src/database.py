@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from datetime import datetime
 from config import DB_PATH
@@ -284,6 +285,69 @@ def _migration_013_supersede_and_expiry(conn):
     conn.execute("ALTER TABLE memories ADD COLUMN superseded_at TEXT")
 
 
+def _migration_014_memory_tiers_and_search(conn):
+    """Split the corpus into what is always in the prompt and what is looked up.
+
+    The corpus outgrew the prompt. Not on cost or latency, both of which were
+    measured and are fine well past a thousand memories, but on two things that
+    degrade much earlier: the remember tool decides store versus supersede by
+    reading the whole list, and that judgment falls apart long before the
+    context window does; and a model holding two hundred facts volunteers the
+    irrelevant ones.
+
+    tier 1 is resident, tier 2 is retrievable. Everything defaults to 1, so this
+    migration changes nothing on its own. A memory only leaves the prompt when
+    something deliberately demotes it, because a migration that silently removed
+    facts from Nova's context would be a miserable thing to debug.
+
+    The index is FTS5 in external content mode: memories_fts holds the inverted
+    index and reaches back into memories by rowid rather than storing a second
+    copy of every fact. That costs more careful triggers and buys exactly one
+    place where the text lives, which is worth it for a store whose contents are
+    personal enough to have been the subject of a history rewrite.
+
+    Triggers cover all three mutations. The delete form is FTS5's, where you
+    insert a 'delete' command carrying the old values rather than issuing a
+    DELETE, because an external content table cannot read a row that is already
+    gone. Getting this wrong leaves the index quietly stale, so if it is ever
+    suspect, INSERT INTO memories_fts(memories_fts) VALUES('rebuild') is the
+    recovery.
+
+    Nothing filters on status here. Search joins back to memories and filters
+    there, which keeps one definition of what active means."""
+    conn.execute("ALTER TABLE memories ADD COLUMN tier INTEGER NOT NULL DEFAULT 1")
+
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+            content,
+            content='memories',
+            content_rowid='id'
+        )""")
+
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS memories_fts_insert
+        AFTER INSERT ON memories BEGIN
+            INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+        END""")
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS memories_fts_delete
+        AFTER DELETE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content)
+            VALUES ('delete', old.id, old.content);
+        END""")
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS memories_fts_update
+        AFTER UPDATE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content)
+            VALUES ('delete', old.id, old.content);
+            INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+        END""")
+
+    # Backfill. The triggers only see mutations from here on, so every row that
+    # already exists has to be indexed once by hand.
+    conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -298,6 +362,7 @@ MIGRATIONS = [
     (11, _migration_011_alert_log),
     (12, _migration_012_pronunciations),
     (13, _migration_013_supersede_and_expiry),
+    (14, _migration_014_memory_tiers_and_search),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -384,14 +449,87 @@ def save_memory(content, source="explicit", status="active", category=None,
     return True
 
 
-def get_seed_memories():
-    """All active seed memories, grouped for prompt assembly by category then id."""
+def get_seed_memories(tier=1):
+    """Resident seed memories, grouped for prompt assembly by category then id.
+
+    tier 1 only by default. Tier 2 exists but is reached through
+    search_memories rather than by sitting in every prompt. Pass tier=None for
+    the whole corpus, which is what the seeder and the CLI want."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    rows = c.execute(
-        "SELECT id, content, category FROM memories "
-        "WHERE source = 'seed' AND status = 'active' "
-        "ORDER BY category, id"
+    if tier is None:
+        rows = c.execute(
+            "SELECT id, content, category FROM memories "
+            "WHERE source = 'seed' AND status = 'active' "
+            "ORDER BY category, id"
+        ).fetchall()
+    else:
+        rows = c.execute(
+            "SELECT id, content, category FROM memories "
+            "WHERE source = 'seed' AND status = 'active' AND tier = ? "
+            "ORDER BY category, id", (tier,)
+        ).fetchall()
+    conn.close()
+    return rows
+
+
+# FTS5 treats a bare multi word MATCH as an implicit AND, so "sister anime"
+# asks for one memory containing both words and finds nothing, even though a
+# memory about each exists. Queries here are spoken questions rather than
+# search syntax, so terms are ORed and ranking decides what matters. Anything
+# that would be read as an operator is dropped, since a stray quote or NEAR in
+# a transcript is a syntax error rather than a search.
+_FTS_SAFE = re.compile(r"[A-Za-z0-9']+")
+_FTS_STOPWORDS = frozenset("""
+a an and are as at be by do does for from had has have he her his how i in is
+it its me my of on or she that the their them they this to was what when where
+which who why will with you your
+""".split())
+
+
+def search_memories(query, limit=5, tier=None):
+    """Rank memories against a spoken query. Empty list when nothing matches.
+
+    Returns (id, content, category) so results drop straight into the same
+    prompt blocks the resident memories use."""
+    terms = [t for t in _FTS_SAFE.findall(query.lower())
+             if t not in _FTS_STOPWORDS and len(t) > 1]
+    if not terms:
+        return []
+
+    conn = sqlite3.connect(DB_PATH)
+    sql = ("SELECT m.id, m.content, m.category "
+           "FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid "
+           "WHERE memories_fts MATCH ? AND m.status = 'active' ")
+    params = [" OR ".join(terms)]
+    if tier is not None:
+        sql += "AND m.tier = ? "
+        params.append(tier)
+    sql += "ORDER BY bm25(memories_fts) LIMIT ?"
+    params.append(limit)
+
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        # A query that still parses badly should cost Nova nothing. Losing the
+        # retrieval is survivable; raising inside prompt assembly is not.
+        rows = []
+    conn.close()
+    return rows
+
+
+def memory_manifest(tier=2):
+    """Category counts for the non resident tier, for the prompt's index.
+
+    Nova cannot search for something she does not know exists, so the prompt
+    carries the shape of what is retrievable even when the facts themselves are
+    not present. Roughly a hundred tokens, and without it search either never
+    fires or fires on everything."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT category, COUNT(*) FROM memories "
+        "WHERE status = 'active' AND tier = ? "
+        "GROUP BY category ORDER BY COUNT(*) DESC", (tier,)
     ).fetchall()
     conn.close()
     return rows
