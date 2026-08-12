@@ -666,11 +666,20 @@ access needs a paid tier before committing to it.
 
 **Canvas.** UF runs Canvas, and Canvas LMS has a REST API with courses,
 assignments, due dates, submissions, and grades, reached with a personal access
-token from account settings. This is the one that removes the most asking:
-grades and deadlines become facts rather than questions. Two things to verify
-before relying on it. Institutions can disable personal access tokens, so
-confirm UF allows them. And a grade only exists in Canvas once the instructor
-posts it, which can lag the exam by a week, so it is not a real time signal.
+token from account settings. **UF appears to block personal access tokens**
+(Lethanial, Aug 12 2026), so treat the REST API as unavailable unless that is
+re confirmed. Institutional OAuth developer keys exist but need admin approval,
+which is slow and probably not worth chasing.
+
+The workaround covers half of it and needs no API at all. **Canvas exposes an
+ICS calendar feed** from the calendar sidebar, which works without a token and
+carries assignments and due dates. Subscribe Google Calendar to it and the
+deadline half arrives for free, through an integration already planned. One
+integration instead of two.
+
+Grades stay self reported, and that is survivable. The grade conversation was
+always the one where the follow up question mattered, because a grade never
+told you whether he studied anyway.
 
 **Google Calendar.** He said plainly he is going to use it, so it becomes the
 schedule source of truth: classes, pledging, shifts, deadlines. Also the thing
