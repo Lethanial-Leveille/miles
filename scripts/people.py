@@ -24,6 +24,7 @@ spoken request may propose a change; confirming it happens at this keyboard.
     python3 scripts/people.py add "Marcus Webb" --relationship roommate --tier chunin
     python3 scripts/people.py set-birthday 12 2004-03-19
     python3 scripts/people.py promote 12 jonin
+    python3 scripts/people.py restore          # clear a self imposed demotion
 """
 
 import argparse
@@ -33,7 +34,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from config import DB_PATH
-from database import TIERS, add_person, get_people, set_tier, upcoming_birthdays
+from database import (TIERS, add_person, effective_tier, get_people, set_tier,
+                      set_tier_override, upcoming_birthdays)
 
 # What each rank can reach. Enforced in prompt assembly, not by asking Nova
 # nicely: below jonin the corpus is not in her context at all.
@@ -113,6 +115,21 @@ def cmd_promote(person_id, tier):
     print(f"  now has: {CLEARANCE[tier]}")
 
 
+def cmd_restore():
+    """Clear a demotion he set by voice.
+
+    This lives here and not in the voice path deliberately. Demoting yourself
+    over a channel that can be replayed from a recording is harmless; restoring
+    yourself over it is the whole attack. The asymmetry is the point."""
+    in_force = effective_tier()
+    set_tier_override(None)
+    now = effective_tier()
+    if in_force == now:
+        print(f"Nothing to clear, already {now}.")
+    else:
+        print(f"{in_force} -> {now}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -128,6 +145,7 @@ def main():
     a.add_argument("--tier", choices=TIERS, default="genin")
     s = sub.add_parser("set-birthday")
     s.add_argument("id", type=int); s.add_argument("birthday")
+    sub.add_parser("restore")
     m = sub.add_parser("promote")
     m.add_argument("id", type=int); m.add_argument("tier", choices=TIERS)
 
@@ -140,6 +158,8 @@ def main():
         cmd_add(args)
     elif args.cmd == "set-birthday":
         cmd_set_birthday(args.id, args.birthday)
+    elif args.cmd == "restore":
+        cmd_restore()
     elif args.cmd == "promote":
         cmd_promote(args.id, args.tier)
 

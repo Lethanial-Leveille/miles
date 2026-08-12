@@ -9,7 +9,7 @@ from tts import speak
 from prompts import build_enhanced_prompt
 from database import (save_message, get_seed_memories, get_episodic_memories,
                       get_recent_messages, search_memories, memory_manifest,
-                      get_shareable_memories)
+                      get_shareable_memories, effective_tier)
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
 from tools import registry
@@ -23,6 +23,7 @@ import alerts
 import actions        # noqa: F401
 import memory_tool    # noqa: F401
 import system_state   # noqa: F401
+import tier_tool      # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
                     HISTORY_ASSISTANT_WORDS, RECALL_LIMIT)
@@ -472,6 +473,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
 
 def ask_nova(user_text: str, device: str = "pi",
-             channel: str = "voice", tier: str = "hokage") -> TurnResult:
+             channel: str = "voice", tier: str = None) -> TurnResult:
+    # None means "look it up", so a demotion set in one turn is in force on the
+    # next without the caller having to thread it through.
     return asyncio.run(ask_nova_async(user_text, device=device, channel=channel,
-                                      tier=tier))
+                                      tier=tier or effective_tier()))

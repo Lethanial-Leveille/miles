@@ -495,6 +495,20 @@ def _migration_019_people_and_tiers(conn):
     conn.execute("ALTER TABLE memories ADD COLUMN shareable INTEGER NOT NULL DEFAULT 0")
 
 
+def _migration_020_tier_override(conn):
+    """A temporary self imposed demotion, so guest behaviour can be tested alone.
+
+    Testing the tier boundary otherwise needs a second person in the room, which
+    means it does not get tested. This lets him drop himself to genin, hold a
+    conversation as a stranger would, and see what Nova actually withholds.
+
+    Demotion only, and that asymmetry is the whole security argument. Lowering
+    your own access cannot be an attack because it removes capability; raising
+    it is the thing worth protecting, so it stays at a keyboard. A recording of
+    him saying "restore my access" is then worth nothing."""
+    conn.execute("ALTER TABLE people ADD COLUMN tier_override TEXT")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -515,6 +529,7 @@ MIGRATIONS = [
     (17, _migration_017_retrieval_method),
     (18, _migration_018_wake_log),
     (19, _migration_019_people_and_tiers),
+    (20, _migration_020_tier_override),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -675,6 +690,80 @@ date day time today tomorrow tonight morning evening week month year
 # anything. An unrecognised voice is treated as genin, so the unknown case
 # needs no special path.
 TIERS = ("genin", "chunin", "jonin", "hokage")
+
+
+def find_person(name):
+    """Resolve a spoken name to one person, or None when it is not unambiguous.
+
+    Matches preferred name first, then full name, then a leading word of the
+    full name, all case insensitively. Returns None on no match and on more
+    than one, because acting on the wrong person is worse than asking again."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    needle = (name or "").strip().lower()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM people")]
+    conn.close()
+    if not needle:
+        return None
+    for field in ("preferred_name", "full_name"):
+        exact = [r for r in rows if (r[field] or "").lower() == needle]
+        if len(exact) == 1:
+            return exact[0]
+        if len(exact) > 1:
+            return None
+    starts = [r for r in rows if r["full_name"].lower().split()[0] == needle]
+    return starts[0] if len(starts) == 1 else None
+
+
+def lower_person_tier(person_id, tier):
+    """Demote someone else, for real. Returns the new tier, or None if refused.
+
+    Demotion only, same asymmetry as everywhere else: removing capability is
+    safe over a channel that can be replayed, granting it is not."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT tier FROM people WHERE id = ?", (person_id,)).fetchone()
+    if row is None or tier not in TIERS or TIERS.index(tier) >= TIERS.index(row[0]):
+        conn.close()
+        return None
+    conn.execute("UPDATE people SET tier = ? WHERE id = ?", (tier, person_id))
+    conn.commit()
+    conn.close()
+    return tier
+
+
+def effective_tier(full_name="Lethanial LeeAndon Leveille"):
+    """The tier actually in force: an override if one is set, otherwise the real
+    one. Everything that gates on tier reads this rather than the column."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT tier, tier_override FROM people WHERE full_name = ?",
+        (full_name,)).fetchone()
+    conn.close()
+    if row is None:
+        return "genin"          # unknown speaker, lowest by default
+    return row[1] or row[0]
+
+
+def set_tier_override(tier, full_name="Lethanial LeeAndon Leveille"):
+    """Demote only. Returns the tier now in force.
+
+    A request to raise is refused rather than silently ignored, because a
+    security control that quietly does nothing is worse than one that says no."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT tier FROM people WHERE full_name = ?",
+                       (full_name,)).fetchone()
+    if row is None:
+        conn.close()
+        return None
+    real = row[0]
+    if tier is not None and TIERS.index(tier) >= TIERS.index(real):
+        conn.close()
+        return None             # not a demotion, refuse
+    conn.execute("UPDATE people SET tier_override = ? WHERE full_name = ?",
+                 (tier, full_name))
+    conn.commit()
+    conn.close()
+    return tier or real
 
 
 def add_person(full_name, relationship=None, preferred_name=None,

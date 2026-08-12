@@ -11,6 +11,7 @@ import pytest
 import actions        # noqa: F401  registers the action tools
 import memory_tool    # noqa: F401  registers remember
 import system_state   # noqa: F401  registers get_system_state
+import tier_tool      # noqa: F401  registers lower_access
 from tools import Permission, registry
 
 EXPECTED = {
@@ -21,6 +22,18 @@ EXPECTED = {
     "cancel_reminder":  (Permission.WRITE,   False),
     "remember":         (Permission.WRITE,   False),
     "dismiss":          (Permission.CONTROL, False),
+    "lower_access":     (Permission.WRITE,   True),
+}
+
+# WRITE tools that legitimately cost a second round trip, with the reason.
+# The default remains that a write just happens and is not spoken about; this
+# is the list of cases where that default is wrong, kept short on purpose.
+ROUND_TRIP_WRITES = {
+    # It can refuse: an escalation dressed as a demotion, a name that matches
+    # nobody, someone already at the floor. A security control that fails
+    # silently is worse than one that costs a second, and Nova cannot announce
+    # the outcome before the call because she does not know it yet.
+    "lower_access",
 }
 
 
@@ -51,7 +64,7 @@ def test_only_read_tools_make_a_second_call():
     round trip, work that just happens does not."""
     for name in registry.names():
         spec = registry.get(name)
-        if spec.returns_to_model:
+        if spec.returns_to_model and name not in ROUND_TRIP_WRITES:
             assert spec.permission is Permission.READ, name
 
 
