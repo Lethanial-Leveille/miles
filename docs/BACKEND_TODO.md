@@ -564,6 +564,93 @@ the prompt silently, by id, regardless of value.
 
 ---
 
+## Outbound channels: phone calls and iPhone messages
+
+Raised Aug 12 2026. Neither is started. Recorded here so the constraints are
+known before either becomes a session's plan.
+
+### Phone calls (inbound, outbound, hold, hangup)
+
+Feasible, and half the infrastructure already exists: a telephony provider
+needs a public HTTPS webhook target, and `miles.lethanial.com` behind the
+Cloudflare Tunnel already is one.
+
+Shape, with Twilio as the reference provider (Telnyx and SignalWire are
+equivalent):
+
+- Inbound call POSTs to a FastAPI endpoint. Answer with TwiML.
+  `<Connect><Stream>` opens a bidirectional WebSocket carrying live call audio.
+- Outbound is a REST POST to the Calls resource.
+- Hangup, hold, and transfer are TwiML verbs plus REST modification of a live
+  call. All four asks are covered by the provider API.
+- Audio format: Media Streams carries 8kHz mulaw base64. ElevenLabs can emit
+  `ulaw_8000` directly, so the outbound leg needs no conversion. The inbound
+  leg must be resampled to 16kHz for whisper.cpp.
+
+Four things gate it, in rough order of difficulty:
+
+1. **Latency.** Median perceived is 4298ms (`timing_log`, Aug 12 2026). That is
+   comfortable in a room and unacceptable on a call, where silence reads as a
+   dropped connection. Phone conversation wants under 1.5 seconds. There is no
+   Anthropic realtime speech to speech API, so the whisper to Claude to
+   ElevenLabs chain stays as it is. Fast mode does not help: it is Opus 5 and
+   Opus 4.8 only, and production is Haiku 4.5.
+2. **Barge in is mandatory, not optional.** People interrupt on the phone. See
+   "Barge in, and why the enclosure changes it" above; this shares that
+   dependency and should not be started before it.
+3. **Telephony audio is band limited** to roughly 300 to 3400 Hz. `base.en`
+   will do measurably worse than it does on the Seiren V3. Expect the
+   `compare_whisper.py` accuracy question to reopen on a different distribution.
+4. **The audio layer assumes one session.** A global `speak_lock` and a single
+   aplay process is one speaker and one mic. A call is a second concurrent
+   audio session, which is an architecture change rather than a feature.
+
+**Legal:** Florida is a two party consent state for recording. `ARCHIVE_RECORDINGS`
+currently captures a person in a room who knows about it. Capturing a caller who
+does not is a different thing, and the archive path would need a consent gate
+before any call audio reaches `ARCHIVE_DIR`.
+
+### iPhone messages
+
+Harder than calls, and for a different reason: the constraint is Apple's, not
+latency.
+
+- **There is no iOS API for reading or sending arbitrary iMessages.** Apple's
+  Messages framework covers iMessage app extensions, meaning stickers and mini
+  apps rendered inside a conversation. It does not expose the message store and
+  does not send on the user's behalf.
+- **macOS is the only real path.** The Messages database is a SQLite file at
+  `~/Library/Messages/chat.db`, readable with Full Disk Access, and Messages.app
+  accepts AppleScript to send. This is the standard approach and it works, but
+  it requires a Mac that is powered on and logged in. The Pi cannot do it. This
+  is the same dependency as "Mac control" already on the v0.8+ list, so the two
+  should be planned as one piece of work.
+- **iOS Shortcuts is the thin alternative.** A personal automation can trigger
+  on a received message and call a webhook, and the Send Message action can run
+  from an automation. Fragile, per trigger, and not a general read path, but it
+  needs no Mac.
+- **Twilio SMS is not iMessage.** It is a different number and a different
+  thread. Fine for notifications, useless for participating in existing
+  conversations.
+
+**Privacy, and this one is not a footnote.** `chat.db` holds every conversation
+with everyone, including people who never agreed to any of this. Reading it
+wholesale to answer "what did my mom text me" ingests messages from people who
+are not users of this system. If this gets built, scope the read to specific
+threads rather than opening the database, and treat the result the way the
+recording archive is treated.
+
+### Presence detection
+
+Raised alongside the accountability idea (Nova speaking unprompted only when
+Lethanial is present and idle). Options on the Pi, cheapest first: BLE or wifi
+presence of a known phone MAC (unreliable, randomized MACs); a PIR sensor
+(motion, not presence, so it misses someone sitting still); an LD2410 or
+similar mmWave module over UART, which detects a stationary person and is the
+right answer if this is built. Mic activity alone is not presence.
+
+---
+
 ## Quick reference
 
 ```bash

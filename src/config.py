@@ -135,6 +135,13 @@ VOICEPRINT_PATH = os.path.expanduser("~/miles/models/voiceprint.npy")
 ENROLLMENT_DATA_PATH = os.path.expanduser("~/miles/models/enrollment.npz")
 DB_PATH         = os.path.expanduser("~/miles/data/miles.db")
 
+# The seed corpus lives under data/ rather than in src/ because data/ is
+# gitignored and src/ is not. seed_memories.py used to carry the corpus inline
+# as a Python literal, which meant every fact about Lethanial and everyone he
+# named was committed to a public repository. The loader is worth showing; the
+# payload is not, and the people named in it never agreed to be published.
+SEED_PATH       = os.path.expanduser("~/miles/data/seed_memories.json")
+
 # ── External services ──
 
 # ROLLBACK: Fish Audio config preserved for emergency rollback
