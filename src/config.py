@@ -33,6 +33,17 @@ VERIFY_RETRY_THRESHOLD = 0.45
 # model is correctly ignoring the room and there is nothing to learn.
 WAKE_LOG_FLOOR = 0.15
 
+# Incremental voiceprint learning. A sample is only kept when it clears this
+# similarity and this duration, both well above the accept bar: folding in a
+# wrong embedding poisons the profile permanently and quietly, which is exactly
+# how the April voiceprint died. The accept threshold is 0.5; this is not a
+# second accept bar, it is a much stricter "certain enough to learn from".
+VOICEPRINT_LEARN_MIN_SIMILARITY = 0.75
+VOICEPRINT_LEARN_MIN_SECONDS = 3.0
+# Rolling window, oldest dropped. Tracks how he sounds now rather than
+# averaging over every room he has ever been in.
+VOICEPRINT_SAMPLE_CAP = 60
+
 # ── Voice activity detection ──
 # webrtcvad replaces the bare amplitude threshold that used to gate capture.
 # Amplitude cannot tell speech from a running AC unit, which is what drove the

@@ -78,7 +78,7 @@ from config import (
     ARCHIVE_RECORDINGS, ARCHIVE_DIR, ARCHIVE_MAX_FILES,
     TTS_FLUSH_MARGIN_MS,
 )
-from database import log_verification
+from database import keep_voiceprint_sample, log_verification
 import timing
 
 FORMAT = pyaudio.paInt16
@@ -164,10 +164,17 @@ with silence_stderr():
     _audio = pyaudio.PyAudio()
 
 mic_index = None
+# Recorded so that a voiceprint sample can be tagged with the capsule that
+# produced it. A voiceprint does not transfer across microphones, and samples
+# gathered on one must never be folded into a centroid built on another. When
+# the array arrives this string changes and the old samples become identifiable
+# as belonging to the previous mic rather than silently averaging in.
+MIC_NAME = "unknown"
 for i in range(_audio.get_device_count()):
     info = _audio.get_device_info_by_index(i)
     if "Razer" in info["name"] or "Seiren" in info["name"]:
         mic_index = i
+        MIC_NAME = info["name"]
         print(f"Found mic: {info['name']} (index {i})", flush=True)
         break
 
@@ -495,7 +502,9 @@ def wake_word_audio(seconds=1.5):
 
 def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence=None,
                  session_trusted=False, recording_path=None):
-    from config import VERIFY_THRESHOLD, VERIFY_RETRY_THRESHOLD
+    from config import (VERIFY_THRESHOLD, VERIFY_RETRY_THRESHOLD,
+                        VOICEPRINT_LEARN_MIN_SIMILARITY,
+                        VOICEPRINT_LEARN_MIN_SECONDS)
 
     verify_started = time.monotonic()
 
@@ -596,6 +605,17 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
         spectral_tilt=spectral_tilt,
         recording_path=recording_path,
     )
+
+    # Keep the embedding when this turn is well clear of the accept bar and
+    # long enough to have embedded stably. Both conditions matter and neither
+    # is the accept threshold: a sample that merely passed is not evidence
+    # strong enough to change what "he sounds like" means, and the profile is
+    # not correctable once a wrong one is averaged in.
+    if (accepted
+            and similarity >= VOICEPRINT_LEARN_MIN_SIMILARITY
+            and embedded_duration_seconds >= VOICEPRINT_LEARN_MIN_SECONDS):
+        keep_voiceprint_sample(embedding, similarity, embedded_duration_seconds,
+                               model="resemblyzer", mic=MIC_NAME)
 
     # Any of these can be None for a degenerate clip, so format defensively
     # rather than letting a log line take down the voice loop.

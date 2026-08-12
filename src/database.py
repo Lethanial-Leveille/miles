@@ -509,6 +509,47 @@ def _migration_020_tier_override(conn):
     conn.execute("ALTER TABLE people ADD COLUMN tier_override TEXT")
 
 
+def _migration_021_voiceprint_samples(conn):
+    """Embeddings kept from real use, so a voiceprint can improve without a
+    second enrollment session.
+
+    Staged enrollment is twelve samples of eight seconds across four
+    conditions, which is ten minutes of somebody reading prompts and moving
+    around a room. That is a thing you do once and never again, so the profile
+    stays as good as one afternoon made it. Real conversation produces the same
+    audio for free, in the conditions that actually occur.
+
+    The danger is poisoning, and this codebase has already been bitten by it: a
+    single enrollment sample at 33 percent voiced audio dragged the centroid's
+    average pairwise similarity to 0.63 and caused months of unexplained
+    rejections. Automated collection makes that failure quiet and permanent
+    rather than loud and one off.
+
+    So collection is deliberately narrow. Only clips well above the accept
+    threshold, only clips long enough to embed stably, and nothing is applied
+    to the live voiceprint automatically. Samples accumulate here and a human
+    runs the recompute, which is the same reasoning behind the memory review
+    queue: automated writes into a store that cannot be corrected are worse
+    than manual capture.
+
+    mic is recorded because a voiceprint is not portable across microphones.
+    Samples gathered on one capsule must not be folded into a centroid built on
+    another, and without this column there would be no way to tell."""
+    conn.execute("""
+        CREATE TABLE voiceprint_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            person_id INTEGER REFERENCES people(id),
+            embedding BLOB NOT NULL,
+            similarity REAL NOT NULL,
+            duration_seconds REAL NOT NULL,
+            model TEXT NOT NULL,
+            mic TEXT,
+            created_at TEXT NOT NULL,
+            applied_at TEXT
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -530,6 +571,7 @@ MIGRATIONS = [
     (18, _migration_018_wake_log),
     (19, _migration_019_people_and_tiers),
     (20, _migration_020_tier_override),
+    (21, _migration_021_voiceprint_samples),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -690,6 +732,44 @@ date day time today tomorrow tonight morning evening week month year
 # anything. An unrecognised voice is treated as genin, so the unknown case
 # needs no special path.
 TIERS = ("genin", "chunin", "jonin", "hokage")
+
+
+def keep_voiceprint_sample(embedding, similarity, duration_seconds,
+                           model, mic=None, person_id=None):
+    """Store one confidently verified embedding, oldest dropped past the cap.
+
+    A rolling window rather than an ever growing set, so the profile tracks how
+    he actually sounds now rather than averaging over a year of rooms. Never
+    raises: losing a sample costs nothing, taking down a turn costs the turn."""
+    from config import VOICEPRINT_SAMPLE_CAP
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO voiceprint_samples (person_id, embedding, similarity, "
+            "duration_seconds, model, mic, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (person_id, embedding.astype("float32").tobytes(), float(similarity),
+             float(duration_seconds), model, mic, datetime.now().isoformat()))
+        conn.execute(
+            "DELETE FROM voiceprint_samples WHERE id NOT IN "
+            "(SELECT id FROM voiceprint_samples ORDER BY id DESC LIMIT ?)",
+            (VOICEPRINT_SAMPLE_CAP,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def get_voiceprint_samples(mic=None):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    sql = "SELECT * FROM voiceprint_samples"
+    params = ()
+    if mic:
+        sql += " WHERE mic = ?"
+        params = (mic,)
+    rows = conn.execute(sql + " ORDER BY id", params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def find_person(name):
@@ -881,8 +961,23 @@ def _log_retrieval(query, terms, rows, scores, ranks=None):
 
 
 def _query_terms(query):
-    return [t for t in _FTS_SAFE.findall(query.lower())
-            if t not in _FTS_STOPWORDS and len(t) > 1]
+    """Tokenise a spoken question into searchable terms.
+
+    Possessives have to be stripped. The tokeniser keeps apostrophes so that
+    "don't" survives as one word, which meant "what's my sister's name" came
+    out as ["what's", "sister's", "name"] and matched nothing: no memory
+    contains the string "sister's". Keyword search returned zero on both name
+    questions he actually asked, and it looked like a ranking problem rather
+    than a tokenising one.
+
+    Stripping the possessive also feeds the stopword list correctly, since
+    "what's" only becomes the stopword "what" once the suffix is gone."""
+    terms = []
+    for token in _FTS_SAFE.findall(query.lower()):
+        token = token[:-2] if token.endswith("'s") else token.rstrip("'")
+        if token and token not in _FTS_STOPWORDS and len(token) > 1:
+            terms.append(token)
+    return terms
 
 
 def search_memories(query, limit=5, tier=None, log=False):
@@ -939,8 +1034,7 @@ def search_keyword(query, limit=5, tier=None):
 
     Returns (id, content, category) so results drop straight into the same
     prompt blocks the resident memories use."""
-    terms = [t for t in _FTS_SAFE.findall(query.lower())
-             if t not in _FTS_STOPWORDS and len(t) > 1]
+    terms = _query_terms(query)
     if not terms:
         return []
 
