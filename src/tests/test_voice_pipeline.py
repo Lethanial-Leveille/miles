@@ -36,6 +36,9 @@ def captured(monkeypatch, db):
     monkeypatch.setattr(tts, "_elevenlabs",
                         type("C", (), {"text_to_speech": FakeTTS()})())
     monkeypatch.setattr(tts, "get_pronunciations", db.get_pronunciations)
+    # Alias mode pinned: these assert the text handed to the API, and the
+    # phoneme tag is asserted separately in test_pronunciation.py.
+    monkeypatch.setattr(tts, "TTS_PHONEME_TAGS", False)
     monkeypatch.setattr(tts.subprocess, "Popen", lambda *a, **k: type("P", (), {
         "stdin": type("S", (), {"write": lambda s, c: None,
                                 "flush": lambda s: None,

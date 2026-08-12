@@ -176,10 +176,17 @@ DEFAULT_TTS_MODEL = "eleven_flash_v2"
 # Use the arpabet column instead of the alias respelling. Requires a model that
 # honors phoneme tags; on v2_5 this would delete the word.
 #
-# Aliases are guesses tuned by ear. Phonemes are exact. Off by default so the
-# model change can be judged on its own first: turn it on once you are happy
-# with how v2 sounds generally.
-TTS_PHONEME_TAGS = False
+# Aliases are guesses tuned by ear. Phonemes are exact.
+#
+# On, after an audition. Candidate 15 of the sweep, L AE0 TH AE1 N Y AH0 L, was
+# judged good in five of six renditions at different seeds. That measurement is
+# the point: an earlier pass ranked candidates on one rendition each, and the
+# same string came out wrong once and right the next time, so the ranking was
+# partly recording which generation got lucky.
+#
+# No respelling survived the first pass, which is what settled alias against
+# phoneme. See scripts/pronounce.py.
+TTS_PHONEME_TAGS = True
 
 # ElevenLabs accepts 0.7 to 1.2. Set explicitly rather than left to the API
 # default, because an unset speed is an invisible dependency on whatever the

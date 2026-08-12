@@ -13,8 +13,14 @@ import tts
 
 @pytest.fixture(autouse=True)
 def pronunciations(db, monkeypatch):
-    """Point the normalizer at a throwaway database seeded by the migration."""
+    """Throwaway database, and alias mode pinned on.
+
+    The flag is pinned rather than inherited from config. Production flipped to
+    phoneme tags after an audition, and every assertion below is about alias
+    substitution, so inheriting would make these tests fail for a reason that
+    has nothing to do with what they check."""
     monkeypatch.setattr(tts, "get_pronunciations", db.get_pronunciations)
+    monkeypatch.setattr(tts, "TTS_PHONEME_TAGS", False)
     return db
 
 
@@ -177,3 +183,28 @@ def test_lethanial_is_seeded_with_phonetics(db):
     ).fetchone()
     conn.close()
     assert row == ("Luhthanyul", "ləˈθænjəl", "L AH0 TH AE1 N Y AH0 L", 1)
+
+
+# ── phoneme mode ──
+
+def test_phoneme_mode_emits_a_tag_instead_of_the_alias(db, monkeypatch):
+    """What production does now. The tag wraps the real spelling, so the model
+    is told how to say the word rather than handed a respelling of it."""
+    monkeypatch.setattr(tts, "TTS_PHONEME_TAGS", True)
+    out = tts.normalize_pronunciation("Hello Lethanial")
+    assert out == ('Hello <phoneme alphabet="cmu-arpabet" '
+                   'ph="L AH0 TH AE1 N Y AH0 L">Lethanial</phoneme>')
+
+
+def test_phoneme_mode_falls_back_to_the_alias_without_arpabet(db, monkeypatch):
+    """A row added by ear has no phonemes. It must still be substituted rather
+    than skipped, or turning the flag on would silently drop every alias only
+    entry."""
+    monkeypatch.setattr(tts, "TTS_PHONEME_TAGS", True)
+    db.upsert_pronunciation("Hevy", "Heavy", verified=True)
+    assert tts.normalize_pronunciation("open Hevy") == "open Heavy"
+
+
+def test_alias_mode_ignores_arpabet_entirely(db, monkeypatch):
+    monkeypatch.setattr(tts, "TTS_PHONEME_TAGS", False)
+    assert "phoneme" not in tts.normalize_pronunciation("Hello Lethanial")
