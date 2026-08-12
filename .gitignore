@@ -1,13 +1,63 @@
-build/
-whisper.cpp/
-__pycache__/
-*.pyc
-models/*.onnx
-models/*.bin
-models/voiceprint.npy
-models/enrollment.npz
-*.npy
-*.npz
+# ── Secrets ──
+# .env alone does not cover the variants people actually create under pressure.
+# A .env.backup made before rotating a key is the same secret with a different
+# name, and it is the classic way one leaks.
+.env
+.env.*
+!.env.example
+
+# ── Personal data ──
+# data/ holds the database, the seed corpus, and the recording archive. The
+# recordings are of a real person in a real room and the corpus names people
+# who never agreed to be published, so this directory never goes to a remote.
 data/
 CLAUDE.md
-.env
+
+# Belt and braces on the recordings. data/ already covers the archive, but a
+# stray capture written anywhere else is the same audio of the same room.
+# assets/ is exempt: wake_chime.wav is a project sound, not a recording of
+# anybody, and it is tracked on purpose.
+*.wav
+!assets/*.wav
+
+# Databases outside data/, for the same reason.
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Models and weights ──
+# The whole directory, not per extension. This used to list *.onnx and *.npz
+# individually, which meant a model in any other format was committable by
+# accident. openWakeWord also ships .tflite, so that was a live gap rather than
+# a hypothetical one.
+models/
+*.npy
+*.npz
+
+# ── Build artifacts and vendored source ──
+build/
+whisper.cpp/
+
+# ── Python ──
+__pycache__/
+*.pyc
+.venv/
+venv/
+# pytest writes its own .gitignore inside this directory, which is the only
+# reason it has been ignored so far. That is pytest protecting itself, not a
+# decision recorded here, and it disappears the moment the cache is cleared.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ── Editor and OS ──
+# VS Code Remote SSH writes settings server side, and workspace settings carry
+# absolute paths and occasionally tokens.
+.vscode/
+.DS_Store
+
+# ── Misc ──
+*.log
+# A bundle is the entire repository including every commit, so one sitting in
+# the working tree republishes anything a history rewrite was meant to remove.
+*.bundle
