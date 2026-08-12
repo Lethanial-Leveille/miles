@@ -1,3 +1,4 @@
+import threading
 import time
 import numpy as np
 
@@ -18,6 +19,29 @@ print("Starting M.I.L.E.S. v0.7...", flush=True)
 audio.log_mic_gain()
 print("Initializing database...", flush=True)
 init_db()
+
+# Load the embedding model off the critical path.
+#
+# It takes about seven seconds to load and 34ms to query. Left lazy, that seven
+# seconds lands on whichever turn first triggers retrieval, which is a turn the
+# user is waiting through and which would otherwise have taken four. Boot is not
+# latency sensitive and this is, so it moves here.
+#
+# A daemon thread rather than a blocking call: the wake word loop should be
+# listening immediately, and a retrieval in the first few seconds is only as
+# slow as it would have been anyway. If the model fails to load, hybrid search
+# degrades to keyword and nothing raises.
+def _warm_embeddings():
+    try:
+        import embeddings
+        embeddings.get_model()
+        print("Embedding model ready.", flush=True)
+    except Exception as exc:
+        print(f"Embedding model unavailable, retrieval is keyword only: {exc}",
+              flush=True)
+
+
+threading.Thread(target=_warm_embeddings, daemon=True).start()
 
 print("\n=== M.I.L.E.S. v0.7 — Nova is online ===", flush=True)
 print("Listening for 'hey nova'... (Ctrl+C to stop)\n", flush=True)
