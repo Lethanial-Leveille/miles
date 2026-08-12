@@ -59,6 +59,25 @@ VOICEPRINT_SAMPLE_CAP = 60
 # watch it.
 BARGE_IN = False
 
+# Barge in has its own threshold, and it is deliberately lower than
+# WAKE_THRESHOLD rather than sharing it.
+#
+# The prior is different. Cold, "hey nova" competes with a whole room of speech
+# that is not addressed to Nova, so the bar guards against a false start. While
+# she is speaking, almost nothing else explains him saying her name: people do
+# not discuss their assistant during its sentences. A bare "Nova" scores lower
+# than the full phrase the model was trained on, and this is what lets that
+# still count, without touching the cold threshold where his own worry applies:
+# talking *about* Nova should never wake her.
+#
+# The cost of a false interrupt is also small. She stops talking and he repeats
+# himself. The cost of a false cold wake is she starts listening to a
+# conversation she is not part of.
+#
+# Do not lower this below about 0.25 without checking wake_log. That table
+# records what nearly fired and is the only evidence for where the floor is.
+BARGE_IN_THRESHOLD = 0.30
+
 # ── Voice activity detection ──
 # webrtcvad replaces the bare amplitude threshold that used to gate capture.
 # Amplitude cannot tell speech from a running AC unit, which is what drove the

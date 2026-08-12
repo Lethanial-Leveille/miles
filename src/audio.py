@@ -72,7 +72,7 @@ with silence_stderr():
 from config import (
     CHUNK, CHANNELS, RATE,
     WHISPER_MODEL, WHISPER_CLI, WHISPER_AUDIO_CTX, TEMP_WAV,
-    WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD,
+    WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL,
     ARCHIVE_RECORDINGS, ARCHIVE_DIR, ARCHIVE_MAX_FILES,
@@ -503,7 +503,7 @@ def watch_for_interrupt(stop_event):
         frame = np.frombuffer(data, dtype=np.int16)
         try:
             for _, score in watcher.predict(frame).items():
-                if score > WAKE_THRESHOLD:
+                if score > BARGE_IN_THRESHOLD:
                     heard = True
                     stop_event.set()
                     break
