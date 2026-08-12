@@ -695,7 +695,7 @@ def get_people(tier=None):
     if tier:
         sql += " WHERE tier = ?"
         params = (tier,)
-    rows = conn.execute(sql + " ORDER BY full_name").fetchall()
+    rows = conn.execute(sql + " ORDER BY full_name", params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
