@@ -115,7 +115,7 @@ def _with_recalled(messages: list, query: str) -> list:
     if not messages or messages[-1]["role"] != "user":
         return messages
 
-    hits = search_memories(query, limit=RECALL_LIMIT, tier=2)
+    hits = search_memories(query, limit=RECALL_LIMIT, tier=2, log=True)
     if not hits:
         return messages
 

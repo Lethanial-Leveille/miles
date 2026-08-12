@@ -349,6 +349,36 @@ def _migration_014_memory_tiers_and_search(conn):
     conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
 
 
+def _migration_015_retrieval_log(conn):
+    """Log every retrieval so the decision about embeddings can be made on data.
+
+    A miss cannot be logged directly, because it is invisible: an empty result
+    means either the question was not about him or the words did not line up,
+    and nothing in the query distinguishes those. So every retrieval is
+    recorded and judged afterwards by hand.
+
+    terms is stored separately from query because both retrieval bugs so far
+    were visible in the terms before they were visible in the results. Seeing
+    ['did', 'build', 'accelerometer'] explains the wrong answer immediately.
+
+    verdict stays null until a human fills it in. Once enough rows are labelled
+    this stops being a log and becomes an eval set built from real questions,
+    which is what turns 'add a vector store' from a guess into a measurement."""
+    conn.execute("""
+        CREATE TABLE retrieval_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            query TEXT NOT NULL,
+            terms TEXT NOT NULL,
+            returned_ids TEXT NOT NULL,
+            scores TEXT,
+            hit_count INTEGER NOT NULL,
+            verdict TEXT,
+            note TEXT
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -364,6 +394,7 @@ MIGRATIONS = [
     (12, _migration_012_pronunciations),
     (13, _migration_013_supersede_and_expiry),
     (14, _migration_014_memory_tiers_and_search),
+    (15, _migration_015_retrieval_log),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -502,7 +533,23 @@ date day time today tomorrow tonight morning evening week month year
 """.split())
 
 
-def search_memories(query, limit=5, tier=None):
+def _log_retrieval(query, terms, rows, scores):
+    """Record one retrieval. Never raises: a logging failure must not cost a turn."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO retrieval_log (created_at, query, terms, returned_ids, "
+            "scores, hit_count) VALUES (?, ?, ?, ?, ?, ?)",
+            (datetime.now().isoformat(), query, json.dumps(terms),
+             json.dumps([r[0] for r in rows]),
+             json.dumps([round(s, 3) for s in scores]), len(rows)))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def search_memories(query, limit=5, tier=None, log=False):
     """Rank memories against a spoken query. Empty list when nothing matches.
 
     Returns (id, content, category) so results drop straight into the same
@@ -510,6 +557,8 @@ def search_memories(query, limit=5, tier=None):
     terms = [t for t in _FTS_SAFE.findall(query.lower())
              if t not in _FTS_STOPWORDS and len(t) > 1]
     if not terms:
+        if log:
+            _log_retrieval(query, [], [], [])
         return []
 
     conn = sqlite3.connect(DB_PATH)
@@ -571,11 +620,16 @@ def search_memories(query, limit=5, tier=None):
         floor = math.log(total / RECALL_MIN_DF) if total > RECALL_MIN_DF else 0.0
         ranked = sorted(((score(r), r) for r in rows), key=lambda p: p[0],
                         reverse=True)
-        rows = [r for s, r in ranked if s >= floor][:limit]
+        kept = [(s, r) for s, r in ranked if s >= floor][:limit]
+        rows = [r for _, r in kept]
+        if log:
+            _log_retrieval(query, terms, rows, [s for s, _ in kept])
     except sqlite3.OperationalError:
         # A query that still parses badly should cost Nova nothing. Losing the
         # retrieval is survivable; raising inside prompt assembly is not.
         rows = []
+        if log:
+            _log_retrieval(query, terms, [], [])
     conn.close()
     return rows
 
