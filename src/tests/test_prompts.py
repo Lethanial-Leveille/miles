@@ -21,8 +21,8 @@ def test_prompt_with_seed_memories_groups_by_category():
     assert "WHAT YOU KNOW ABOUT LETHANIAL" in prompt
     assert "IDENTITY:" in prompt
     assert "FAMILY:" in prompt
-    assert "- Full name is Lethanial LeeAndon Leveille." in prompt
-    assert "- Has a younger sister, Rye." in prompt
+    assert "Full name is Lethanial LeeAndon Leveille." in prompt
+    assert "Has a younger sister, Rye." in prompt
     # identity heading should appear before family heading (query orders by category)
     assert prompt.index("IDENTITY:") < prompt.index("FAMILY:")
 
@@ -30,7 +30,7 @@ def test_prompt_with_seed_memories_groups_by_category():
 def test_prompt_with_episodic_memories_in_separate_block():
     prompt = build_enhanced_prompt([], EPISODIC_ROWS, channel="voice")
     assert "THINGS LETHANIAL HAS TOLD YOU TO REMEMBER" in prompt
-    assert "- Exam is Friday." in prompt
+    assert "Exam is Friday." in prompt
 
 
 def test_prompt_memory_context_section_removed():

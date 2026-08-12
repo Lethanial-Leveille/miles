@@ -7,7 +7,8 @@ import anthropic
 import timing
 from tts import speak
 from prompts import build_enhanced_prompt
-from database import save_message, get_seed_memories, get_episodic_memories, get_recent_messages, save_memory
+from database import (save_message, get_seed_memories, get_episodic_memories,
+                      get_recent_messages)
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
 from tools import registry
@@ -19,6 +20,7 @@ import alerts
 # capabilities. Kept explicit, with this comment, because an unused looking
 # import is exactly what a later cleanup deletes.
 import actions        # noqa: F401
+import memory_tool    # noqa: F401
 import system_state   # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
@@ -286,12 +288,12 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     timing.note_cache(getattr(usage, 'cache_read_input_tokens', None) or 0,
                       getattr(usage, 'cache_creation_input_tokens', None) or 0)
 
-    accumulated, explicit_mems, implicit_mems = extract_memories(accumulated)
+    # Tags are stripped and discarded rather than saved. The prompt teaches the
+    # remember tool now, so a bracket tag reaching here is a leak, not an
+    # instruction. Saving it as well would double write the fact the tool
+    # already stored, which is the exact duplication the tool exists to prevent.
+    accumulated, _, _ = extract_memories(accumulated)
     accumulated = strip_leading_bracket_cue(accumulated, leaks_seen)
-    for mem in explicit_mems:
-        save_memory(mem, source="explicit", status="active")
-    for mem in implicit_mems:
-        save_memory(mem, source="implicit", status="pending")
 
     tool_uses = [b for b in final_message.content if b.type == "tool_use"]
 

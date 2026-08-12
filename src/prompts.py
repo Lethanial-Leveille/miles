@@ -113,22 +113,24 @@ Never state a value, a number, or a conclusion before the call. Saying "ninety f
 After the result comes back, answer it directly. Do not restate what you already said and do not narrate that you looked something up."""
 
 
-MEMORY_INSTRUCTIONS = """MEMORY INSTRUCTION:
-When Lethanial shares a personal fact, preference, habit, schedule detail, or anything worth remembering for future conversations, include it in your response wrapped in memory tags.
+MEMORY_INSTRUCTIONS = """MEMORY:
+Everything you know about Lethanial is listed above with an id, like (#61). Those ids exist so you can point at a memory when you use the remember tool. They are never spoken. Do not read a number aloud and do not mention that memories have numbers.
 
-Use [MEMORY-EXPLICIT: ...] when Lethanial directly asks you to store something:
-- "remember that my exam is Friday"
-- "remind me to push my code tonight"
-- "don't forget I switched to morning classes"
+Before storing anything, read what is already there. Most things worth remembering are already known in some form, and a second copy of a fact you already have is worse than not storing it: both copies end up in front of you, and when one is later corrected they disagree.
 
-Use [MEMORY: ...] when Lethanial shares something worth remembering but didn't ask you to store it:
-- "I just started watching Naruto"
-- "my exam got moved to Thursday"
-- "I hit 225 on bench today"
+So there are three moves, not one:
 
-Do NOT tag retrieval questions like "do you remember when my exam is" or "what did I tell you about my schedule." Those are questions, not new information.
+Store it, when the fact is genuinely new.
+Supersede, when you already have this fact and it has changed or become more precise. Pass the id of the memory it replaces. "His exam is Thursday" replacing (#42) "his exam is Friday" is a supersede, not a new memory.
+Do nothing, when you already know it. This is the most common case and it is not a failure. Say nothing about having considered it.
 
-Do NOT mention the memory tags out loud. They will be silently extracted. Only tag genuinely useful facts, not every detail. Do not tag things already in your current memories."""
+Set certainty to "asked" only when Lethanial directly told you to remember something. Everything you noticed on your own is "inferred", which holds it for his review rather than believing it immediately. Getting this wrong in the confident direction puts your guesses into his permanent record.
+
+Mark a fact temporary when it has a shelf life, and give the date it stops being true. "Training for the March meet" is temporary. "Graduated in 2025" is not. A temporary fact with no date never expires, so the date is the point.
+
+Do not store questions. "Do you remember when my exam is" is a retrieval, not new information.
+
+Never mention that you stored, updated, or skipped anything unless he asks. It happens quietly."""
 
 
 # Applies in both the tag path and the tool path: reminder due dates are
@@ -145,13 +147,13 @@ def _seed_block(seed_rows):
     if not seed_rows:
         return ""
     by_category = {}
-    for _, content, category in seed_rows:
-        by_category.setdefault(category or "general", []).append(content)
+    for mid, content, category in seed_rows:
+        by_category.setdefault(category or "general", []).append((mid, content))
 
     lines = ["\nWHAT YOU KNOW ABOUT LETHANIAL:"]
     for category, items in by_category.items():
         lines.append(f"\n{category.upper()}:")
-        lines.extend(f"- {item}" for item in items)
+        lines.extend(f"- (#{mid}) {item}" for mid, item in items)
     return "\n".join(lines) + "\n"
 
 
@@ -160,7 +162,7 @@ def _episodic_block(episodic_rows):
     separate from the seed facts."""
     if not episodic_rows:
         return ""
-    lines = [f"- {content}" for _, content in episodic_rows]
+    lines = [f"- (#{mid}) {content}" for mid, content in episodic_rows]
     return "\nTHINGS LETHANIAL HAS TOLD YOU TO REMEMBER:\n" + "\n".join(lines) + "\n"
 
 

@@ -85,8 +85,8 @@ new drift is caught.
 | Claim | How to check | Last verified |
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
-| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Aug 11 2026 (6) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (251) |
+| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Aug 11 2026 (7) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (273) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -556,3 +556,49 @@ Migration 013. `supersede_memory`, `get_memory_chain`, `expire_memories`, and
   fifteen seed rows are in exactly that state.
 - **`remember` is now unblocked** and deliberately still not built. The reason
   it was blocked is gone; the work itself has not been done.
+
+
+### remember as a tool, with memory ids in the prompt (Aug 11 2026) (DONE)
+
+`src/memory_tool.py`, ids rendered as `(#61)` in both memory blocks, bracket tag
+instructions deleted. Tests 251 to 273. Prefix 7338, margin +3242.
+
+- **The trigger was a real duplicate.** A pending implicit memory read "Traveled
+  to Singapore before summer 2026", while seed rows 61 and 99 already covered
+  the Singapore internship. The duplicate guard is exact string match, so two
+  different sentences about one fact both stored.
+- **Ids mattered more than retrieval.** Nova already sees every memory every
+  turn, so she never needed to *fetch* one to notice a duplicate. What she
+  lacked was a way to *name* one. `(#61)` costs a few tokens and makes
+  `supersedes` expressible.
+- **The tool makes three moves possible where the tag made one.** Store,
+  supersede, or do nothing. The tag could only add a row, which is why the only
+  available outcome for an already known fact was a second copy.
+- **`certainty` preserves the review queue.** "asked" writes active, "inferred"
+  writes pending, matching exactly what explicit and implicit meant. It defaults
+  to inferred, because defaulting to asked would put every guess straight into
+  his permanent record, which is the expensive direction to be wrong in.
+- **A bad `supersedes` id stores rather than dropping the fact.** A wrong
+  reference is a worse reason to lose information than a duplicate is to keep
+  it, and the model is told so it can correct itself.
+- **One write path, deliberately.** `brain.py` still strips bracket tags so a
+  stray one is not spoken, but no longer saves them. Leaving both live would
+  double write the fact the tool just stored, which is the exact duplication
+  being fixed.
+- Verified live on the first attempt: "remember my exam is Friday" stored,
+  "actually it moved to Thursday" superseded 103 with 104, and "remember I go to
+  UF" drew "You're already on record for that" with no tool call at all.
+
+**RAG was considered and rejected**, and the reasoning is worth keeping because
+it will come up again. 100 memories is 2293 tokens against a 200,000 token
+window, roughly 1 percent. RAG solves a corpus that does not fit, and this one
+fits forty times over. It also does not deduplicate, since it is retrieval, and
+it would make deduplication *worse*: with top k retrieval Nova sees only part of
+what she knows, so she cannot reliably tell whether a fact is already stored and
+would write duplicates precisely because the original was not retrieved. Full
+corpus in prompt is strictly better for this. Revisit around 400 to 500 rows or
+10,000 tokens of memory blocks.
+
+What actually breaks first is not context size, it is
+`get_episodic_memories` being `ORDER BY id DESC LIMIT 20` with no ranking.
+Deferred by choice.

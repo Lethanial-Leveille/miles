@@ -9,6 +9,7 @@ anywhere. This is the test that notices.
 import pytest
 
 import actions        # noqa: F401  registers the action tools
+import memory_tool    # noqa: F401  registers remember
 import system_state   # noqa: F401  registers get_system_state
 from tools import Permission, registry
 
@@ -18,6 +19,7 @@ EXPECTED = {
     "set_timer":        (Permission.WRITE,   False),
     "set_reminder":     (Permission.WRITE,   False),
     "cancel_reminder":  (Permission.WRITE,   False),
+    "remember":         (Permission.WRITE,   False),
     "dismiss":          (Permission.CONTROL, False),
 }
 

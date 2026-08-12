@@ -537,7 +537,7 @@ Not yet urgent. There are currently zero active episodic memories, so nothing is
 being displaced today. That is runway to build this properly rather than
 retrofitting it under pressure, not a reason to skip it.
 
-### 3. `remember` as a tool (UNBLOCKED, not built)
+### 3. `remember` as a tool (DONE Aug 11 2026)
 
 During the native tool use migration (Aug 11 2026) the question came up of
 whether `[MEMORY:]` and `[MEMORY-EXPLICIT:]` should become a `remember` tool
@@ -555,16 +555,8 @@ notices and fixes. Automated capture into an append only store produces errors
 that are permanent, accumulate silently, and are only removable by hand editing
 SQLite. The failure gets worse the better the tool works.
 
-SUPERSEDE and expiry both landed Aug 11 2026, so this is no longer blocked. It
-is simply not built yet: bracket tags still capture memories and
-`extract_memories` in `parsing.py` is still what strips them.
-
-What building it now involves: a `remember` tool with `returns_to_model=False`,
-carrying content plus the classification the model is already choosing badly by
-implication (volatile or not, and a date when volatile). The reason to give the
-tool an explicit expiry argument is that the current implicit path cannot set
-one, which is why fifteen seed rows are flagged volatile with no date and can
-never expire.
+Built. `src/memory_tool.py`. The bracket tags are gone from the prompt and
+`brain.py` strips any stray tag without saving it, so there is one write path.
 
 Still open regardless: `get_episodic_memories` is `ORDER BY id DESC LIMIT 20`
 with no ranking, so past twenty active episodic memories the oldest fall out of

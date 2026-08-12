@@ -75,9 +75,12 @@ def test_prompt_can_only_claim_registered_tools(native):
 # ── blocks that survive both paths ──
 
 def test_memory_instructions_survive_the_migration(native):
+    """The memory section outlived the action tag migration, then became tool
+    instructions of its own when remember replaced the bracket tags."""
     prompt = _build()
-    assert "MEMORY INSTRUCTION:" in prompt
-    assert "[MEMORY-EXPLICIT:" in prompt
+    assert "MEMORY:" in prompt
+    assert "supersede" in prompt.lower()
+    assert "[MEMORY-EXPLICIT:" not in prompt, "the tag path is gone"
 
 
 def test_clock_instructions_survive_the_migration(native):
