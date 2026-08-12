@@ -6,6 +6,9 @@ sentence, so a change here takes effect on the very next thing Nova says. No
 restart, no deploy, no file to edit.
 
     python3 scripts/pronounce.py list
+    python3 scripts/pronounce.py sweep Lethanial          # audition all 25
+    python3 scripts/pronounce.py sweep Lethanial 12       # resume at 12
+    python3 scripts/pronounce.py pick Lethanial 7         # commit number 7
     python3 scripts/pronounce.py try Lethanial Luthanyull "La-thanyull"
     python3 scripts/pronounce.py tryph Lethanial "L AA1 TH AE0 N Y AH0 L"
     python3 scripts/pronounce.py set Lethanial Luthanyull
@@ -92,6 +95,89 @@ def cmd_tryph(grapheme, arpabets):
     print(f"\npick one:  python3 scripts/pronounce.py phonemes {grapheme} \"<string>\"")
 
 
+# Candidate sweep, built from Lethanial's own description of the sounds:
+# "Luh" as in love, "than" with the unvoiced th of thighs, "yull" as in dull
+# with a y in front.
+#
+# That maps to L + AH + TH + AE + N + Y + AH + L. The unvoiced th is the reason
+# the phoneme rows exist at all: English spells voiced and unvoiced th
+# identically, so "than" is voiced and "thigh" is not, and no respelling picks
+# one reliably. TH is unvoiced, DH is voiced.
+#
+# Stress digits are 0 unstressed, 1 primary, 2 secondary. Most of the variation
+# below is stress placement, because a name that sounds butchered is usually
+# stressed wrong rather than voweled wrong.
+SWEEP = [
+    # ── phonemes: stress placement on the target sounds ──
+    ("arpabet", "L AH0 TH AE1 N Y AH0 L",  "current stored, stress on THAN"),
+    ("arpabet", "L AH1 TH AE1 N Y AH1 L",  "every syllable stressed"),
+    ("arpabet", "L AH0 TH AE1 N Y AH1 L",  "stress THAN and YULL"),
+    ("arpabet", "L AH1 TH AE1 N Y AH0 L",  "stress LUH and THAN"),
+    ("arpabet", "L AH1 TH AE0 N Y AH1 L",  "stress LUH and YULL"),
+    ("arpabet", "L AH1 TH AE0 N Y AH0 L",  "stress LUH only"),
+    ("arpabet", "L AH0 TH AE2 N Y AH1 L",  "secondary THAN, primary YULL"),
+    ("arpabet", "L AH2 TH AE1 N Y AH0 L",  "secondary LUH, primary THAN"),
+    # ── phonemes: the last vowel, yull like dull ──
+    ("arpabet", "L AH0 TH AE1 N Y UH1 L",  "YULL closer to book"),
+    ("arpabet", "L AH0 TH AE1 N Y AO1 L",  "YULL closer to all"),
+    ("arpabet", "L AH0 TH AE1 N Y OW0 L",  "YULL closer to yolk"),
+    # ── phonemes: controls, to confirm the diagnosis ──
+    ("arpabet", "L AH0 DH AE1 N Y AH0 L",  "voiced th, should sound wrong"),
+    ("arpabet", "L AH0 TH AE1 N AH0 L",    "no Y at all, should lose the glide"),
+    ("arpabet", "L AA0 TH AE1 N Y AH0 L",  "LA as in father"),
+    ("arpabet", "L AE0 TH AE1 N Y AH0 L",  "LA as in cat"),
+    ("arpabet", "L AH0 TH AA1 N Y AH0 L",  "THAN closer to thon"),
+    # ── respellings, for comparison ──
+    ("alias", "Luh-thanyull",   "your description, split once"),
+    ("alias", "Luhthanyull",    "no split"),
+    ("alias", "Luh-than-yull",  "split twice"),
+    ("alias", "Luthanyull",     "single h"),
+    ("alias", "Luh-thann-yull", "double n to harden the a"),
+    ("alias", "Luh-thinyull",   "thin spelling to force unvoiced th"),
+    ("alias", "Luh-thanyul",    "single l"),
+    ("alias", "Luhth-anyull",   "split inside the th"),
+    ("alias", "Luh-thawnyull",  "aw vowel in the middle"),
+]
+
+
+def cmd_sweep(grapheme, start=0):
+    """Speak every candidate in order, numbered. Writes nothing.
+
+    Twenty five of them is several minutes of listening, so it takes a starting
+    index: run `sweep Lethanial 12` to resume where you stopped rather than
+    sitting through the first dozen again."""
+    print(f"{len(SWEEP)} candidates for {grapheme!r}, starting at {start}")
+    print("nothing is saved; note the number you like, then `pick <n>`\n")
+
+    print("  0. (as written, no substitution)")
+    tts.speak(FRAME.format(grapheme))
+    time.sleep(0.7)
+
+    for i, (kind, value, note) in enumerate(SWEEP, 1):
+        if i < start:
+            continue
+        print(f"  {i:2}. [{kind:7}] {value:28} {note}")
+        spoken = value if kind == "alias" else (
+            f'<phoneme alphabet="cmu-arpabet" ph="{value}">{grapheme}</phoneme>')
+        tts.speak(FRAME.format(spoken))
+        time.sleep(0.7)
+
+    print(f"\npick one:  python3 scripts/pronounce.py pick {grapheme} <number>")
+
+
+def cmd_pick(grapheme, number):
+    """Commit whichever sweep candidate won."""
+    if not 1 <= number <= len(SWEEP):
+        print(f"pick a number between 1 and {len(SWEEP)}")
+        return
+    kind, value, note = SWEEP[number - 1]
+    print(f"{number}. [{kind}] {value}   {note}")
+    if kind == "alias":
+        cmd_set(grapheme, value)
+    else:
+        cmd_phonemes(grapheme, value)
+
+
 def cmd_set(grapheme, alias):
     existing = {g: (a, p) for g, a, p in get_pronunciations()}
     arpabet = existing.get(grapheme, (None, None))[1]
@@ -129,6 +215,10 @@ def main():
     command, rest = args[0], args[1:]
     if command == "list":
         cmd_list()
+    elif command == "sweep" and rest:
+        cmd_sweep(rest[0], int(rest[1]) if len(rest) > 1 else 0)
+    elif command == "pick" and len(rest) == 2:
+        cmd_pick(rest[0], int(rest[1]))
     elif command == "try" and len(rest) >= 2:
         cmd_try(rest[0], rest[1:])
     elif command == "tryph" and len(rest) >= 2:
