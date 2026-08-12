@@ -107,3 +107,36 @@ def extract_memories(response_text):
     clean = re.sub(r'  +', ' ', clean).strip()
 
     return clean, explicit_memories, implicit_memories
+
+
+# The wake phrase as Whisper actually renders it. "Hey Nova" comes back with
+# varying punctuation and casing, and occasionally as "Hey, Nova."
+# "hey" is required rather than optional. A bare "Nova" would also catch him
+# saying her name to somebody else in the room, which is the same addressing
+# problem the follow up window already has, and he was explicit about being
+# sure of the full phrase and unsure of the short one. Dropping the requirement
+# is one word here if the logs later say it is safe.
+_WAKE_LEAD = re.compile(r"^\s*hey[\s,]+nova\b[\s,.!?]*", re.I)
+
+
+def split_wake_phrase(transcript):
+    """Return (said_wake_word, remainder) for a follow up transcript.
+
+    Saying the wake word during a follow up should start a fresh turn rather
+    than being transcribed into the middle of one. Without this, "hey nova what
+    is the weather" reaches Claude with the wake phrase attached, and the turn
+    is still session trusted rather than verified.
+
+    Treating it as a fresh turn is the better behaviour twice over: he gets the
+    chime that tells him she is listening, and the utterance is long enough to
+    verify properly instead of being accepted on session state.
+
+    The full phrase is required. A bare "Nova" would also match him saying her
+    name to somebody else during the window, which is the addressing problem
+    rather than a solution to it."""
+    if not transcript:
+        return False, transcript
+    match = _WAKE_LEAD.match(transcript)
+    if not match or not match.group(0).strip():
+        return False, transcript
+    return True, transcript[match.end():].strip()

@@ -10,7 +10,7 @@ import tts
 import actions
 from brain import ask_nova
 from database import init_db, log_wake_near_miss
-from parsing import is_noise_transcript
+from parsing import is_noise_transcript, split_wake_phrase
 from config import CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS, FOLLOWUP_TIMEOUT
 
 # Wire the speak callback so timer/reminder alerts play audio
@@ -189,14 +189,34 @@ try:
                     timing.abandon_turn()
                     break
 
+                # Saying the wake word during the window starts a fresh turn
+                # rather than being transcribed into the middle of one. He gets
+                # the chime that confirms she is listening, and the turn is
+                # verified properly instead of accepted on session state, since
+                # "hey nova" plus a command is long enough to embed.
+                said_wake, remainder = split_wake_phrase(followup_text)
+                if said_wake:
+                    tts.play_chime()
+                    if not remainder:
+                        # Only the wake phrase. She is listening; wait for the
+                        # rest rather than sending an empty turn to Claude.
+                        print("Wake word during follow up, listening again.", flush=True)
+                        continue
+                    followup_text = remainder
+                    print(f"Wake word during follow up, treating as a new turn.",
+                          flush=True)
+
                 print(f"You: {followup_text}", flush=True)
 
                 # The session already authenticated on the initial command, so
                 # a follow up too short to embed reliably is trusted rather
                 # than scored. Only follow ups long enough to judge are judged.
+                #
+                # A wake word restart is not session trusted: it is a fresh
+                # request and long enough to score, so it gets scored.
                 followup_result = audio.verify_voice(followup_path, transcript=followup_text,
                                                       turn_type='followup',
-                                                      session_trusted=True,
+                                                      session_trusted=not said_wake,
                                                       recording_path=recording)
 
                 if followup_result == audio.NO_AUDIO:

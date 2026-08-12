@@ -434,7 +434,17 @@ RRF_K = 60
 #
 # Lower bound is set by thinking time, not by speech: the window has to survive
 # the pause between deciding to say something and starting to say it.
-FOLLOWUP_TIMEOUT = 6
+# How long the microphone stays open after Nova answers, waiting for speech to
+# start. Six seconds was generous and the generosity had a cost: everything
+# said in the room during that window reaches her, including him turning to
+# talk to somebody else.
+#
+# This is also the practical mitigation for the session trust hole. A follow up
+# too short to embed is accepted on session state rather than verified, so a
+# stranger's "yeah" inside the window is accepted as his. Shortening the window
+# shrinks that exposure far more cheaply than trying to verify a one second
+# utterance, which today is not possible.
+FOLLOWUP_TIMEOUT = 2.5
 
 # Conversation exit is no longer a phrase list. Twenty six exact strings could
 # not match "alright thanks Nova" or "that's all for now", and seven of them

@@ -107,3 +107,36 @@ def test_noise_word_inside_a_real_sentence_is_kept():
 
 def test_annotation_alongside_speech_is_kept():
     assert is_noise_transcript("(beep) what's the weather") is False
+
+
+# ── wake phrase during a follow up ──
+
+@pytest.mark.parametrize("said,expected_rest", [
+    ("Hey Nova, what is the weather?", "what is the weather?"),
+    ("hey, nova. remind me",           "remind me"),
+    ("HEY NOVA set a timer",           "set a timer"),
+    ("hey nova",                       ""),
+])
+def test_wake_phrase_is_split_off(said, expected_rest):
+    from parsing import split_wake_phrase
+    heard, rest = split_wake_phrase(said)
+    assert heard is True
+    assert rest == expected_rest
+
+
+@pytest.mark.parametrize("said", [
+    "What about tomorrow?",
+    "Nova what time is it",          # bare name is not enough, deliberately
+    "Nova told me it was raining",   # him talking about her, not to her
+    "Novak Djokovic is playing",     # the word boundary earns its keep here
+    "",
+])
+def test_ordinary_follow_ups_are_left_alone(said):
+    """A false positive here hijacks a follow up into a new turn and plays a
+    chime over him, so the phrase has to be required in full. A bare "Nova"
+    would also match him saying her name to somebody else in the room, which is
+    the addressing problem rather than a fix for it."""
+    from parsing import split_wake_phrase
+    heard, rest = split_wake_phrase(said)
+    assert heard is False
+    assert rest == said
