@@ -1,0 +1,22 @@
+[Unit]
+Description=Run the M.I.L.E.S. health check every 15 minutes
+
+[Timer]
+# Five minutes after boot, not immediately. miles-voice spends its first
+# seconds loading the wake model, the voice encoder, and the embedding model,
+# and a check racing that start up would report a healthy system as broken.
+OnBootSec=5min
+OnUnitActiveSec=15min
+
+# Spread the fire time slightly so this never lands on the same second as
+# anything else, and so a restart does not put every future run on a boundary.
+AccuracySec=30s
+RandomizedDelaySec=60
+
+# Run once on the next boot if the Pi was asleep through a scheduled fire.
+# Cheap here, and it means the first thing a rebooted Pi does is tell you
+# whether it came back correctly.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

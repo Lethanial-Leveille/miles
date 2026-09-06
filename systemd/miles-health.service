@@ -1,0 +1,19 @@
+[Unit]
+Description=M.I.L.E.S. Health Check
+# Ordered after the network so the tunnel probe is not answering a question
+# about DNS that was really about boot ordering.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=theycallmelee
+WorkingDirectory=/home/theycallmelee/miles
+# Carries the SMTP variables when they exist. The notifier stays inert without
+# them, so this is correct today and needs no edit the day they are added.
+EnvironmentFile=-/home/theycallmelee/miles/.env
+ExecStart=/usr/bin/python3 /home/theycallmelee/miles/scripts/healthcheck.py
+
+# No Restart. A oneshot that exits 1 has reported a real failure, and retrying
+# would either hide it behind an eventual success or send the same alert
+# repeatedly. The timer is what decides when to look again.
