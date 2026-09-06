@@ -42,6 +42,10 @@ class TurnResult(NamedTuple):
     and the HTTP server, which does not."""
     text: str
     dismissed: bool = False
+    # Set when Nova judged the speech was not addressed to her at all. Distinct
+    # from dismissed: dismissed ends a conversation he ended, this ends one he
+    # was never having with her, and the difference is whether she says anything.
+    ignored: bool = False
 
 # Turn counter for the A/B alternation. Resets on service restart, which is
 # harmless: alternation stays balanced from whatever point it resumes.
@@ -404,6 +408,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # transition happens here. Read before filtering so a turn that both
         # answers something and says goodbye still runs its real tools.
         dismissed = any(r["block"].name == "dismiss" for r in results)
+        ignored   = any(r["block"].name == "ignore" for r in results)
 
         # This replaces the hardcoded `any(r["type"] == "weather")` whitelist.
         # Whether a second call happens is now a property of the tool, declared
@@ -503,12 +508,13 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         timing.note_action((time.monotonic() - action_start) * 1000.0)
     else:
         dismissed = False
+        ignored   = False
         await router.finalize()
         await tts_task
         final_text = accumulated
 
     save_message("assistant", final_text, device=device)
-    return TurnResult(text=final_text, dismissed=dismissed)
+    return TurnResult(text=final_text, dismissed=dismissed, ignored=ignored)
 
 
 def ask_nova(user_text: str, device: str = "pi",

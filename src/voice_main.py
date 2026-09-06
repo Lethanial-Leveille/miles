@@ -1,26 +1,55 @@
+import random
+import re
 import threading
+from collections import deque
 import time
+import anthropic
 import numpy as np
 
 # audio import triggers mic/wake word hardware init and ALSA silencing
 import alerts
 import audio
+import netcheck
+import phrasebank
 import timing
 import tts
 import actions
-from brain import ask_nova
-from database import init_db, log_wake_near_miss
+import local_intent
+from brain import ask_nova, TurnResult
+from database import init_db, log_wake_near_miss, save_message
 from parsing import is_noise_transcript, split_wake_phrase
-from config import CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS, FOLLOWUP_TIMEOUT
+from config import (CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS,
+                    FOLLOWUP_TIMEOUT, ACK_SPOKEN_CHANCE, RATE,
+                    WAKE_MISS_FLOOR, WAKE_MISS_PREROLL_MS)
 
 # Wire the speak callback so timer/reminder alerts play audio
 
 _last_wake_log = [0.0]  # mutable so the loop can update it without global
 
+# Rolling window of raw wake frames, so a near miss can keep the audio that
+# produced it rather than only the number. Sized to hold the phrase itself,
+# since the score arrives at the end of it.
+_wake_window = deque(maxlen=max(1, int(WAKE_MISS_PREROLL_MS / (CHUNK / RATE * 1000))))
+_last_wake_capture = [0.0]
+
 print("Starting M.I.L.E.S. v0.7...", flush=True)
 audio.log_mic_gain()
 print("Initializing database...", flush=True)
 init_db()
+
+# Reminders are fired by a poller reading the reminders table, not by a thread
+# held from the moment they were set. Started here and nowhere else: the server
+# process can create reminders but must never deliver them, because its alert
+# queue has nothing draining it and a second poller would only race this one for
+# the same rows.
+#
+# This is also the boot rearm. There is nothing to rearm, which is the point:
+# anything that came due while the service was down is simply due when the first
+# pass runs.
+fired = actions.poll_reminders()
+if fired:
+    print(f"{fired} reminder(s) came due while Nova was offline.", flush=True)
+actions.start_reminder_poller()
 
 # Load the embedding model off the critical path.
 #
@@ -37,6 +66,10 @@ def _warm_embeddings():
     try:
         import embeddings
         embeddings.get_model()
+        # Encoding the intent examples is a separate cost from loading the
+        # model, and it is lazy. Left to the first real command it lands on a
+        # turn he is waiting through: measured at 10.8s against 100ms warm.
+        local_intent.warm()
         print("Embedding model ready.", flush=True)
     except Exception as exc:
         print(f"Embedding model unavailable, retrieval is keyword only: {exc}",
@@ -47,6 +80,103 @@ threading.Thread(target=_warm_embeddings, daemon=True).start()
 
 print("\n=== M.I.L.E.S. v0.7 — Nova is online ===", flush=True)
 print("Listening for 'hey nova'... (Ctrl+C to stop)\n", flush=True)
+
+def _say_cached(key):
+    """Cached audio first, live synthesis only if nothing is rendered yet.
+
+    The order is not an optimization. In the offline case tts.speak needs the
+    same network that just failed and would return silently, so the phrase bank
+    is the only thing that can make a sound at all. The fallback exists for a
+    bank that has not been rendered, not because it is expected to work."""
+    if phrasebank.play(key) is None:
+        tts.speak(phrasebank.PHRASES[key][0])
+
+
+# Belt and braces for the ignore tool.
+#
+# The tool is the intended path and its description is explicit, but the model
+# does not always take it: observed twice in a row saying "I'm not part of that
+# conversation." as plain text with no tool call, which then left the follow up
+# window open to catch the next sentence of the same overheard exchange.
+#
+# Matching on her own output is crude and is deliberately narrow. It only has to
+# catch the phrasing she actually produces when she has recognised the situation
+# and reached for words instead of the tool.
+_NOT_ADDRESSED = re.compile(
+    r"\b(not (a )?part of (that|this) conversation|"
+    r"(wasn't|weren't|not) (talking|speaking) to me|"
+    r"that wasn't (meant )?for me|not addressed to me)\b", re.I)
+
+
+def reads_as_not_addressed(text):
+    return bool(text) and bool(_NOT_ADDRESSED.search(text))
+
+
+def _run_local(match, user_text):
+    """Answer without Claude, leaving the same trace behind that Claude would.
+
+    The two save_message calls are not optional bookkeeping. brain.py writes
+    both sides of every turn, and a local turn that skipped them would leave a
+    hole in history: "set a timer for ten minutes" followed by "make it fifteen
+    instead" would reach Claude as a follow up whose subject it never saw."""
+    print(f"(local intent: {match.name} {match.slots} @ {match.score:.2f})", flush=True)
+    fallback, key, dismissed = local_intent.execute(match)
+
+    save_message("user", user_text)
+    # What history records is what she actually said, which is why play returns
+    # the variant text rather than a bool. The fallback is only reached when
+    # nothing is rendered for the key.
+    #
+    # A null key means the intent composed its answer rather than choosing one,
+    # which weather does because temperature times condition is not a space that
+    # can be enumerated and rendered. Checked explicitly instead of passing None
+    # through to play and relying on it finding no files.
+    spoken = (phrasebank.play(key, thanked=match.slots.get('thanked', False))
+              if key else None)
+    if spoken is None:
+        spoken = fallback
+        tts.speak(spoken)
+    save_message("assistant", spoken)
+    return TurnResult(text=spoken, dismissed=dismissed)
+
+
+def run_turn(text):
+    """Run one turn, returning None if it could not be completed.
+
+    The boundary is here rather than in brain.py because brain serves two
+    callers whose failure needs are opposite: the server has to surface a
+    failure as a 503 so the app can retry, and this loop has to stay alive and
+    keep listening. A handler inside brain would have to choose one of those,
+    and choosing this loop's answer would hand the server a fabricated response
+    to store as a real assistant turn.
+
+    Broad on purpose. The specific exception matters for the log, but no
+    exception should be able to end the process: an unhandled one escapes to
+    systemd, which restarts under Restart=always, and the room sees a chime
+    followed by silence with no way to tell that anything went wrong."""
+    try:
+        # Local first, and inside the try rather than before it. A bad regex or
+        # an unparseable duration in here is exactly the kind of exception the
+        # boundary exists to absorb, and code sitting outside it would reopen
+        # the hole this function was written to close.
+        match = local_intent.classify(text)
+        if match is not None:
+            return _run_local(match, text)
+        return ask_nova(text)
+    except anthropic.APIConnectionError as exc:
+        # The exception says a connection failed, not which one. Ask locally so
+        # she names the cause she has actually ruled everything else out for.
+        cause = netcheck.diagnose()
+        print(f"Turn failed, {cause}: {exc}", flush=True)
+        timing.abandon_turn()
+        _say_cached(cause)
+        return None
+    except Exception as exc:
+        print(f"Turn failed ({type(exc).__name__}): {exc}", flush=True)
+        timing.abandon_turn()
+        _say_cached('error')
+        return None
+
 
 def speak_pending_alerts():
     """Announce anything still queued, on its own.
@@ -69,6 +199,7 @@ try:
             speak_pending_alerts()
 
         raw       = audio.stream.read(CHUNK, exception_on_overflow=False)
+        _wake_window.append(raw)
         audio_arr = np.frombuffer(raw, dtype=np.int16)
         prediction = audio.wake_model.predict(audio_arr)
 
@@ -83,6 +214,15 @@ try:
                     if now - _last_wake_log[0] >= 1.0:
                         _last_wake_log[0] = now
                         log_wake_near_miss(score, WAKE_THRESHOLD)
+
+                # Captured on a lower floor than the log, because the misses
+                # that matter most may be the ones scoring near zero, and those
+                # are precisely what WAKE_LOG_FLOOR hides.
+                if score >= WAKE_MISS_FLOOR:
+                    now = time.monotonic()
+                    if now - _last_wake_capture[0] >= 1.5:
+                        _last_wake_capture[0] = now
+                        audio.save_wake_miss(list(_wake_window), float(score))
                 continue
 
             print(f"Wake word detected! ({score:.2f})", flush=True)
@@ -92,7 +232,21 @@ try:
                 audio.stream.read(CHUNK, exception_on_overflow=False)
             audio.wake_model.reset()
 
-            tts.play_chime()
+            # The chime is a tone, and webrtcvad at mode 2 does not read a tone
+            # as speech, so it overlaps capture harmlessly. A spoken ack does
+            # read as speech: overlapped, it endpoints the recording on Nova's
+            # own voice and puts her at the head of the clip Resemblyzer scores
+            # against his voiceprint. So it plays to completion and the buffer
+            # is flushed before the mic opens, which costs its own length.
+            #
+            # play() returning False when nothing is rendered is what makes the
+            # chime the fallback: an unrendered bank degrades to today.
+            if (random.random() < ACK_SPOKEN_CHANCE
+                    and phrasebank.play('ack') is not None):
+                audio.flush_input()
+            else:
+                tts.play_chime()
+
             timing.begin_turn('initial')
             wav_path  = audio.record_command()
             recording = audio.archive_recording(wav_path, 'initial')
@@ -138,7 +292,26 @@ try:
                 continue
 
             start  = time.time()
-            result = ask_nova(user_text)
+            result = run_turn(user_text)
+
+            # Nothing to say and nothing to save. Back to the wake word rather
+            # than into the follow up window, which would only collect more
+            # speech that cannot be answered either.
+            if result is None:
+                audio.flush_input()
+                print("Listening for 'hey nova'...", flush=True)
+                continue
+
+            # Not addressed to her. Say nothing and go back to standby rather
+            # than announcing that she was not part of it, which is itself a
+            # way of joining in and costs him a wait to hear.
+            if result.ignored or reads_as_not_addressed(result.text):
+                print("Not addressed to Nova, staying quiet.\n", flush=True)
+                timing.end_turn(transcript=user_text, response=None)
+                audio.flush_input()
+                print("Listening for 'hey nova'...", flush=True)
+                continue
+
             nova_response = result.text
             print(f"Nova: {nova_response}", flush=True)
             print(f"(Total: {time.time() - start:.2f}s)\n", flush=True)
@@ -237,7 +410,24 @@ try:
                     break
 
                 start  = time.time()
-                result = ask_nova(followup_text)
+                result = run_turn(followup_text)
+
+                if result is None:
+                    audio.flush_input()
+                    in_conversation = False
+                    break
+
+                # Overheard speech during the follow up window, which is where
+                # this happens most: the window is open and the room is not.
+                # Ends the conversation rather than reopening it, so an ongoing
+                # exchange nearby cannot hold her attention turn after turn.
+                if result.ignored or reads_as_not_addressed(result.text):
+                    print("Not addressed to Nova, returning to standby.\n", flush=True)
+                    timing.end_turn(transcript=followup_text, response=None)
+                    audio.flush_input()
+                    in_conversation = False
+                    break
+
                 nova_response = result.text
                 print(f"Nova: {nova_response}", flush=True)
                 print(f"(Total: {time.time() - start:.2f}s)\n", flush=True)

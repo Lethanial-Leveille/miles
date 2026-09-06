@@ -101,3 +101,41 @@ def test_prompt_text_channel_uses_longer_response_length_and_normal_numerals():
 def test_prompt_cannot_do_scoped_to_actions_not_questions():
     prompt = build_enhanced_prompt([], [], channel="voice")
     assert "applies only to actions" in prompt
+
+
+# ── the transcript is not his words ──
+
+def test_every_tier_is_told_the_input_is_a_transcript():
+    """Nova had no notion that what reaches her is speech recognition output.
+
+    On Aug 13 2026 "Where do you think that I live right now?" arrived as the
+    fragment "live right now." Asked afterwards what he had just said, she did
+    not report the fragment. She reconstructed an intent for it, landed on
+    wording from the lower_access tool description, and told him he had asked
+    to drop his own clearance. No tool was ever called and his tier never
+    changed, but he had every reason to believe otherwise.
+
+    Present at every tier, because transcription is no more reliable when the
+    person speaking is not him."""
+    for tier in ("hokage", "jonin", "genin"):
+        prompt = build_enhanced_prompt([], [], channel="voice", tier=tier)
+        assert "WHAT REACHES YOU" in prompt, tier
+        assert "speech recognition output" in prompt, tier
+
+
+def test_prompt_forbids_reconstructing_intent_from_a_fragment():
+    prompt = build_enhanced_prompt([], [], channel="voice")
+    assert "Never reconstruct an intent from a fragment" in prompt
+    # The specific trap: a fragment matching tool wording, presented back as
+    # his meaning, reads as a report that the tool ran.
+    assert "belongs to a tool" in prompt
+
+
+def test_transcript_warning_precedes_the_instruction_to_answer_confidently():
+    """GENERAL KNOWLEDGE tells her to answer directly and confidently from what
+    she has. This is the counterweight and has to be read alongside it, not
+    hundreds of lines later among the tier specific blocks."""
+    prompt = build_enhanced_prompt([], [], channel="voice")
+    knowledge = prompt.index("GENERAL KNOWLEDGE:")
+    reaches = prompt.index("WHAT REACHES YOU:")
+    assert 0 < reaches - knowledge < 1200, "the two blocks have drifted apart"

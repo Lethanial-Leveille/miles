@@ -813,3 +813,197 @@ sudo systemctl start miles-voice
 Key config in `config.py`: `VERIFY_THRESHOLD`, `VAD_MODE`, `VAD_PREROLL_MS`,
 `VAD_ONSET_FRAMES`, `TTS_FLUSH_MARGIN_MS`, `EXPECTED_MIC_GAIN`,
 `MIN_VOICED_SECONDS`, `MAX_FOLLOWUP_TURNS`.
+
+---
+
+## Wake word misses (Aug 12 2026)
+
+### The symptom
+
+"Hey nova" does not fire every time. Transcription hears him fine on the same
+turns, so it is not capture level and not the mic.
+
+### What the data says
+
+`wake_log` records only FAILED wakes, at or above `WAKE_LOG_FLOOR = 0.15`.
+Successful wakes are not in it; they print their score to the journal instead.
+Reading wake_log alone makes it look like a cluster of attempts sitting just
+under the threshold, and that reading led to lowering `WAKE_THRESHOLD` from 0.4
+to 0.3, which was then reverted. Pull both:
+
+```bash
+journalctl -u miles-voice --since "3 hours ago" \
+  | grep -oP "Wake word detected! \(\K[0-9.]+" | sort -n
+sqlite3 data/miles.db "select score from wake_log order by score"
+```
+
+| | n | min | median | max |
+|---|---|---|---|---|
+| successful | 16 | 0.520 | 0.800 | 0.970 |
+| failed | 17 | 0.161 | 0.271 | 0.365 |
+
+The band 0.365 to 0.520 is empty. The model separates cleanly and 0.4 already
+sits in that gap, so **the threshold is not the binding constraint** and moving
+it only trades one error for the other.
+
+### Why it cannot be diagnosed further today
+
+Two gaps, and the first blocks everything:
+
+**1. `wake_log` stores a score and no audio.** There is no way to tell whether a
+0.27 was a real "hey nova" spoken quietly, a fragment of unrelated speech, or
+the television. Without that, "the model is weak" and "those were not attempts"
+are indistinguishable, and there is nothing to retrain against.
+
+**2. A missed attempt may produce no row at all.** Anything scoring under 0.15
+is not logged, so the failures that matter most may be entirely invisible.
+
+### The actual fix, in order
+
+**Step 1, and nothing else is possible before it: capture the audio behind a
+near miss.** The wake loop already reads 80ms frames continuously. Keep a rolling
+deque of roughly the last two seconds, and on a near miss write it next to the
+score. Cheap, and it turns wake_log from a number into a dataset. Drop
+`WAKE_LOG_FLOOR` while collecting, or the interesting failures stay invisible.
+
+**Step 2: label what comes back.** If the clips are clearly him saying the phrase
+and still scoring 0.27, the model is the problem. If they are the room, the
+model is fine and the misses are elsewhere (frame alignment, or attempts that
+never reached the mic at usable level).
+
+**Step 3, only if step 2 says so: retrain `hey_nova.onnx`.** The current file is
+dated Apr 8 2026, which predates the mic gain tuning of Aug 10 and possibly the
+capsule itself. openWakeWord trains custom models from synthetic speech; the
+collected real clips from step 1 are what makes an evaluation set possible, so
+the retrain can be measured rather than hoped at.
+
+### Do not
+
+Tune `WAKE_THRESHOLD` from `wake_log` alone. It is a table of failures and will
+always argue for lowering.
+
+---
+
+## Mute (planned, not built, Aug 13 2026)
+
+Pinned mid design. The plan is settled apart from one open problem; write it
+down rather than rediscover it.
+
+### Why it exists
+
+Speaker verification cannot currently separate Lethanial from his sister. Her
+scores ran 0.463 to 0.606 against his median 0.683, and no threshold splits
+them: 0.50 accepts her 89 percent of the time, 0.65 excludes her entirely and
+rejects him 43 percent of the time. Mute is the only deterministic control
+available while that is true.
+
+### Settled
+
+- State in `data/mute.state`, a file rather than a DB row, because the CLI, the
+  voice loop and the server all read it and a file needs no migration. Survives
+  restart by construction.
+- **Mute spares the app.** JWT authentication already proves it is him, so
+  muting the room must not lock him out of his own phone.
+- Blocks the voice channel entirely: no chime, no ack, no Claude call, no
+  speech. Timer and reminder alerts are queued through the existing `alerts`
+  deferral and spoken on unmute, so muting never silently loses a timer.
+- **Default variant, not strict.** The wake word keeps running while muted and
+  the only reachable outcome is an unmute: wake silently, transcribe, check
+  local intent, do nothing otherwise. Strict (wake word ignored entirely,
+  unmute only by CLI) stays available as a config flag.
+- Fail **closed** if the state file is unreadable, with a loud journal line.
+  This is a security control, so ambiguity must not resolve to "listening".
+- Audible confirmation both directions from the phrase bank, so it works
+  offline and so a mute that did not take is obvious.
+
+### The asymmetry that drives the design
+
+Muting is fail safe and unmuting is not. Anyone saying "mute" is harmless;
+anyone saying "unmute" defeats the feature.
+
+So unmute by voice requires a much higher verification score, around 0.75. Her
+measured maximum was 0.606, so 0.75 excludes her outright. It also rejects him
+about 61 percent of the time, and that is the correct place to spend a false
+rejection: the cost is one repeat on a rare action. Unmute by CLI or app needs
+no verification, since shell access or a valid JWT is a stronger credential
+than a voice.
+
+### The open problem that stopped it
+
+Turning it on by voice is the hard half, not turning it off.
+
+"Be quiet" or "go to sleep" said to a person in the room could mute Nova by
+accident, and because unmuting is deliberately hard, a false mute is expensive.
+Two rules were proposed:
+
+1. Mute fires only on an **initial** turn, never on a follow up. An initial turn
+   requires the wake word, and the follow up window is exactly where overheard
+   speech leaks in (see the `ignore` tool).
+2. Only unambiguous phrasing, so "mute yourself" and "stop listening" but never
+   "be quiet" or "go to sleep".
+
+He found rule 1 too limiting and pinned the feature there. **That is the thing
+to solve before building.** Options not yet explored: a confirmation step, a
+short grace window after muting where unmute does not need the high threshold,
+or a GPIO button making the voice path unnecessary.
+
+### Worth knowing
+
+The Pi is headless, so "keyboard" means the CLI over SSH. The real version of
+what he described is a **GPIO button**, which becomes trivial once the state
+file exists: it only has to toggle one file.
+
+---
+
+## Encoder swap: Resemblyzer to ECAPA (measured Aug 13 2026, not yet done)
+
+### The measurement that finally became possible
+
+`encoder_bench.py` always said it could not measure false acceptance because
+every archived clip was Lethanial. On Aug 12 2026 his sister used Nova for
+about twenty minutes, and 23 of those clips are now labelled by ear in
+`data/speaker_eval/manifest.csv`. `--eer` uses them.
+
+    python3 scripts/encoder_bench.py --eer --models resemblyzer ecapa
+
+| | resemblyzer | ecapa |
+|---|---|---|
+| genuine median | 0.764 | 0.542 |
+| impostor median | 0.653 | 0.090 |
+| impostor max | 0.843 | 0.179 |
+| EER | 22.3% | 4.8% |
+| threshold to exclude every impostor | >0.843 | >0.179 |
+| ...which rejects him | 82.5% | 5.3% |
+
+**Resemblyzer's impostor max exceeds its genuine median.** Her best clip scored
+above half of his. No threshold fixes that; it is a resolution problem, and
+same family voices are exactly where a 2019 GE2E model is weakest.
+
+### Migration hazards, in the order they will bite
+
+**1. The scales are different and are NOT interchangeable.** ECAPA cosines run
+much lower: his median is 0.542 where Resemblyzer's is 0.764. Carrying
+`VERIFY_THRESHOLD = 0.5` across would sit near his median and reject about half
+his turns. The threshold must be re-derived, not migrated. Measured landmark:
+0.179 excluded all 23 impostors at a 5.3% cost to him. Pick above that with
+margin, then re-measure.
+
+**2. The voiceprint has to be rebuilt, not converted.** `models/voiceprint.npy`
+is a 256 dimension Resemblyzer embedding; ECAPA is 192. Re-embed the enrollment
+audio with the new encoder.
+
+**3. `voiceprint_samples` already has a `model` column.** Use it. Samples
+embedded by different encoders must never be averaged into one centroid, which
+is the same class of mistake that poisoned the April voiceprint.
+
+**4. `verification_log` history becomes incomparable across the switch.** Every
+tuning argument in CLAUDE.md that quotes a similarity number is about
+Resemblyzer and stops applying the moment this lands.
+
+### What this evidence is and is not
+
+23 impostor clips, one person, one evening. Enough to decide between two
+encoders, which is the decision in front of us. Not enough for a precise error
+rate, and the genuine set is *presumed* his rather than labelled, so the false
+acceptance figures are optimistic. Do not quote the EER as a property of the
+system.

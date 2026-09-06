@@ -550,6 +550,46 @@ def _migration_021_voiceprint_samples(conn):
     """)
 
 
+def _migration_022_local_intent_timing(conn):
+    """Flag turns answered locally, without Claude.
+
+    These turns were logged already, but with every stage after transcription
+    null, including total_perceived_ms: they never reach tts.speak, so nothing
+    closed out the measurement. The effect was that the fastest turns in the
+    system were the ones missing from the latency numbers, and the reported
+    median described the Claude path rather than the room.
+
+    A column rather than inferring it from a null claude_ttft_ms. The two agree
+    today, but only because a turn that fails before first token is abandoned
+    rather than logged, and that is a property of voice_main's error handling
+    rather than anything this table guarantees."""
+    conn.execute("ALTER TABLE timing_log ADD COLUMN local_intent INTEGER DEFAULT 0")
+
+
+def _migration_023_normalize_mic_names(conn):
+    """Collapse the phantom microphones already recorded in voiceprint_samples.
+
+    PyAudio appends the ALSA hardware address to a device name, and the card
+    number inside it shifts between boots. So one physical Razer Seiren wrote
+    itself into this table three different ways, as hw:0,0, hw:1,0 and hw:3,0,
+    across ten samples.
+
+    The column exists to stop samples from two capsules being averaged into one
+    centroid, which is the same class of mistake that poisoned the April
+    voiceprint. Split three ways it did the opposite: get_voiceprint_samples
+    filters on an exact string, so a recompute scoped to "this microphone" would
+    quietly have used a third of the samples and reported nothing unusual.
+
+    Stripping the suffix here rather than only at the write site, because the
+    rows already written are the ones a recompute would read, and the fix in
+    audio.py only helps samples collected from now on."""
+    conn.execute(r"""
+        UPDATE voiceprint_samples
+           SET mic = TRIM(SUBSTR(mic, 1, INSTR(mic, ' (hw:') - 1))
+         WHERE mic LIKE '% (hw:%,%)'
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -572,6 +612,8 @@ MIGRATIONS = [
     (19, _migration_019_people_and_tiers),
     (20, _migration_020_tier_override),
     (21, _migration_021_voiceprint_samples),
+    (22, _migration_022_local_intent_timing),
+    (23, _migration_023_normalize_mic_names),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -1358,7 +1400,8 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
                tts_ttfb_ms, tts_first_audio_ms, action_ms, total_perceived_ms,
                model=None, response=None, cache_read_tokens=None,
                cache_creation_tokens=None, first_sentence_ms=None,
-               max_pause_ms=None, tool_ms=None, second_ttft_ms=None):
+               max_pause_ms=None, tool_ms=None, second_ttft_ms=None,
+               local_intent=False):
     # Derived here rather than at every call site so the count and the text it
     # describes can never drift apart.
     response_words = len(response.split()) if response else None
@@ -1372,14 +1415,14 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
             claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
             action_ms, total_perceived_ms, model, response, response_words,
             cache_read_tokens, cache_creation_tokens, first_sentence_ms, max_pause_ms,
-            tool_ms, second_ttft_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            tool_ms, second_ttft_ms, local_intent)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (datetime.now().isoformat(), turn_type, int(action_fired), transcript,
          speech_end_to_endpoint_ms, transcribe_ms, verify_ms,
          claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
          action_ms, total_perceived_ms, model, response, response_words,
          cache_read_tokens, cache_creation_tokens, first_sentence_ms,
-         max_pause_ms, tool_ms, second_ttft_ms)
+         max_pause_ms, tool_ms, second_ttft_ms, int(local_intent))
     )
     conn.commit()
     conn.close()
@@ -1496,3 +1539,64 @@ def log_verification(similarity, accepted, threshold_used, transcript, duration_
     )
     conn.commit()
     conn.close()
+
+
+def due_reminders(now_iso):
+    """Reminders that have come due and have not been delivered.
+
+    The table is the only state a reminder has. It used to be the thread that
+    set_reminder spawned: the row was written and then a time.sleep thread did
+    the actual firing, so the row recorded that a reminder existed while the
+    thread was the only thing that could act on it. A restart kept the row and
+    dropped the thread, which meant every pending reminder was silently lost on
+    any deploy or crash, and Restart=always makes both routine.
+
+    due_at is stored as an ISO 8601 string, and ISO 8601 sorts and compares
+    lexicographically in the same order as chronologically, so a string
+    comparison here is a time comparison. That holds only while every writer
+    uses the same format and no timezone suffixes are mixed in; set_reminder
+    builds it with datetime.isoformat() and nothing else writes the column.
+
+    Rows with a NULL due_at are never returned. Those are reminders saved
+    without a time, which the tool description explicitly supports, and they
+    are notes rather than alarms."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT id, content, due_at FROM reminders "
+            "WHERE completed = 0 AND due_at IS NOT NULL AND due_at <= ? "
+            "ORDER BY due_at", (now_iso,)).fetchall()
+    finally:
+        conn.close()
+
+
+def complete_reminder(reminder_id):
+    """Mark one reminder delivered, by id.
+
+    By id specifically. The old code matched on content AND due_at, so two
+    reminders that happened to agree on both were completed by a single firing
+    and only one of them was ever spoken."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "UPDATE reminders SET completed = 1 WHERE id = ? AND completed = 0",
+            (reminder_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def active_reminder_count():
+    """How many reminders are outstanding.
+
+    Local intent uses this to decide whether "cancel that" is unambiguous.
+    Exactly one outstanding reminder means there is nothing to disambiguate;
+    zero or several means Claude should handle it, because picking the wrong
+    one is worse than taking four seconds to pick the right one."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM reminders WHERE completed = 0").fetchone()[0]
+    finally:
+        conn.close()

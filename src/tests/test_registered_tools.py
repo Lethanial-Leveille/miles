@@ -22,6 +22,7 @@ EXPECTED = {
     "cancel_reminder":  (Permission.WRITE,   False),
     "remember":         (Permission.WRITE,   False),
     "dismiss":          (Permission.CONTROL, False),
+    "ignore":           (Permission.CONTROL, False),
     "lower_access":     (Permission.WRITE,   True),
 }
 

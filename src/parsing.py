@@ -140,3 +140,70 @@ def split_wake_phrase(transcript):
     if not match or not match.group(0).strip():
         return False, transcript
     return True, transcript[match.end():].strip()
+
+
+# ── Number words ──
+# Both directions are needed. Whisper writes numbers as digits or as words
+# depending on the phrasing, so parsing a transcript has to accept either, and
+# Nova spells them out when speaking, so building a phrase bank sentence has to
+# go the other way.
+
+_ONES = ("one two three four five six seven eight nine ten eleven twelve "
+         "thirteen fourteen fifteen sixteen seventeen eighteen nineteen").split()
+_TENS = {"twenty": 2, "thirty": 3, "forty": 4, "fifty": 5, "sixty": 6}
+
+
+def _build_number_words():
+    words = {word: value + 1 for value, word in enumerate(_ONES)}
+    for tens_word, tens in _TENS.items():
+        words[tens_word] = tens * 10
+        for index, ones_word in enumerate(_ONES[:9]):
+            words[f"{tens_word} {ones_word}"] = tens * 10 + index + 1
+    return words
+
+
+# One through sixty. Past that a spoken duration is said in hours, and a timer
+# longer than an hour is rare enough to be worth a fall through to Claude
+# rather than sixty more entries that are never played.
+NUMBER_WORDS = _build_number_words()
+
+
+# Output only, and deliberately wider than _TENS. NUMBER_WORDS is the input
+# side and stays capped at sixty, because widening it would teach the duration
+# parser to read "eighty minutes" as a timer it has no rendered clip for. This
+# table is only ever read when spelling a number back out.
+_TENS_SPOKEN = {**_TENS, "seventy": 7, "eighty": 8, "ninety": 9}
+
+_SPELL_MIN, _SPELL_MAX = -60, 130
+
+
+def words_for_number(n):
+    """Spell a number the way Nova says it aloud.
+
+    Durations use one through sixty. Temperatures use the rest: Gainesville
+    reaches the nineties every summer, and a local weather answer is composed
+    here rather than by Claude, so the speller has to cover what a thermometer
+    can actually read.
+
+    Output for one through sixty is frozen. phrasebank.timer_text and time_text
+    build rendered WAV filenames out of these strings, so changing one would
+    orphan a file on disk and silently fall back to live synthesis."""
+    if not _SPELL_MIN <= n <= _SPELL_MAX:
+        raise ValueError(
+            f"only {_SPELL_MIN} through {_SPELL_MAX} are spelled: {n}")
+
+    if n < 0:
+        return f"minus {words_for_number(-n)}"
+    if n == 0:
+        return "zero"
+    if n <= 19:
+        return _ONES[n - 1]
+
+    if n >= 100:
+        hundreds, rest = divmod(n, 100)
+        spoken = f"{_ONES[hundreds - 1]} hundred"
+        return spoken if rest == 0 else f"{spoken} {words_for_number(rest)}"
+
+    tens, ones = divmod(n, 10)
+    tens_word = next(w for w, t in _TENS_SPOKEN.items() if t == tens)
+    return tens_word if ones == 0 else f"{tens_word} {_ONES[ones - 1]}"

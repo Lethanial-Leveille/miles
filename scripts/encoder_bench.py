@@ -98,6 +98,106 @@ def load_ecapa():
 ENCODERS = {"resemblyzer": load_resemblyzer, "ecapa": load_ecapa}
 
 
+EVAL_DIR = os.path.expanduser("~/miles/data/speaker_eval")
+MANIFEST = os.path.join(EVAL_DIR, "manifest.csv")
+
+
+def labelled_sets():
+    """Genuine and impostor clips, keyed off the hand labelled manifest.
+
+    Impostor is everything a human listened to and marked `other`. `unclear`
+    is deliberately excluded rather than guessed: a wrong label does not crash,
+    it quietly moves the error rate.
+
+    Genuine is every other archived clip, which is presumed to be him. That
+    presumption is the weak point of this whole measurement and is worth saying
+    out loud: it holds only because one intrusion is known about. If anyone else
+    has ever spoken to Nova, some of those clips are impostors labelled genuine,
+    and the false acceptance rate below is optimistic."""
+    import csv
+    impostor_names, impostor = set(), []
+    if os.path.exists(MANIFEST):
+        for row in csv.DictReader(open(MANIFEST)):
+            impostor_names.add(row["file"])
+            if row["label"] == "other":
+                path = os.path.join(EVAL_DIR, row["file"])
+                if os.path.exists(path):
+                    impostor.append((path, float(row["embedded_s"] or 0)))
+
+    genuine = [(p, d) for p, d, _ in clips()
+               if os.path.basename(p) not in impostor_names]
+    return genuine, impostor
+
+
+def compute_eer(genuine, impostor):
+    """The threshold where false accepts and false rejects cross."""
+    best = None
+    for t in sorted(set(genuine) | set(impostor)):
+        frr = sum(1 for s in genuine if s < t) / len(genuine)
+        far = sum(1 for s in impostor if s >= t) / len(impostor)
+        gap = abs(far - frr)
+        if best is None or gap < best[0]:
+            best = (gap, t, far, frr)
+    _, threshold, far, frr = best
+    return (far + frr) / 2, threshold, far, frr
+
+
+def evaluate_eer(name):
+    """Can this encoder keep her out without locking him out?
+
+    The question the duration sweep below could never answer, because it had no
+    impostor audio. Enrollment clips are held out of the test set: scoring a
+    centroid against the clips that built it measures nothing."""
+    print(f"\n{'=' * 66}\n{name}  (equal error rate)\n{'=' * 66}")
+    try:
+        embed = ENCODERS[name]()
+    except Exception as exc:
+        print(f"  unavailable: {exc}")
+        return
+
+    genuine, impostor = labelled_sets()
+    if len(impostor) < 5:
+        print(f"  only {len(impostor)} impostor clips, not enough to trust a rate")
+        return
+
+    long_genuine = sorted(p for p, d in genuine if d >= ENROLL_MIN_SECONDS)
+    enroll_paths = set(long_genuine[::2])          # deterministic half
+    if len(enroll_paths) < 3:
+        print("  not enough long clips to build an enrollment centroid")
+        return
+
+    vectors = {}
+    for path, _ in genuine + impostor:
+        vector = embed(_read(path))
+        if vector is not None:
+            vectors[path] = vector
+
+    enroll = [v for p, v in vectors.items() if p in enroll_paths]
+    centroid = np.mean(enroll, axis=0)
+    centroid /= np.linalg.norm(centroid)
+
+    gen_scores = [float(np.dot(vectors[p], centroid))
+                  for p, _ in genuine if p in vectors and p not in enroll_paths]
+    imp_scores = [float(np.dot(vectors[p], centroid))
+                  for p, _ in impostor if p in vectors]
+
+    print(f"  centroid from {len(enroll)} held out clips")
+    print(f"  genuine tested {len(gen_scores)}, impostor tested {len(imp_scores)}")
+    print(f"\n  genuine  median {statistics.median(gen_scores):.3f}  "
+          f"min {min(gen_scores):.3f}")
+    print(f"  impostor median {statistics.median(imp_scores):.3f}  "
+          f"max {max(imp_scores):.3f}")
+
+    eer, threshold, far, frr = compute_eer(gen_scores, imp_scores)
+    print(f"\n  EER {eer * 100:5.1f}%  at threshold {threshold:.3f}")
+
+    # The number that actually matters here: what it costs him to lock her out.
+    shut_out = max(imp_scores)
+    rejected = sum(1 for s in gen_scores if s <= shut_out) / len(gen_scores)
+    print(f"  to exclude every impostor, threshold must exceed {shut_out:.3f},")
+    print(f"  which rejects him {rejected * 100:.1f}% of the time")
+
+
 def evaluate(name, samples):
     print(f"\n{'=' * 66}\n{name}\n{'=' * 66}")
     try:
@@ -172,7 +272,14 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--models", nargs="+", default=list(ENCODERS),
                    choices=list(ENCODERS))
+    p.add_argument("--eer", action="store_true",
+                   help="false accept vs false reject against labelled impostors")
     args = p.parse_args()
+
+    if args.eer:
+        for name in args.models:
+            evaluate_eer(name)
+        return
 
     samples = clips()
     print(f"{len(samples)} archived clips on disk with a logged duration")

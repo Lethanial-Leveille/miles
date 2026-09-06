@@ -65,18 +65,24 @@ from datetime import datetime
 
 with silence_stderr():
     from openwakeword.model import Model
-    from resemblyzer import VoiceEncoder, preprocess_wav
     from resemblyzer.hparams import sampling_rate as RESEMBLYZER_SR
     import webrtcvad
 
+import speaker_encoder
+
 from config import (
     CHUNK, CHANNELS, RATE,
-    WHISPER_MODEL, WHISPER_CLI, WHISPER_AUDIO_CTX, TEMP_WAV,
+    WHISPER_MODEL, WHISPER_CLI, WHISPER_AUDIO_CTX, WHISPER_INITIAL_PROMPT,
+    TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
-    EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL,
+    EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL, MIC_NAME_HINT,
+    capsule_name, SPEAKER_ENCODER,
     ARCHIVE_RECORDINGS, ARCHIVE_DIR, ARCHIVE_MAX_FILES,
     TTS_FLUSH_MARGIN_MS,
+    SPECULATIVE_TRANSCRIBE, SPECULATIVE_SILENCE_MS, SPECULATIVE_THREADS,
+    SPECULATIVE_WAV,
+    CAPTURE_WAKE_MISSES, WAKE_MISS_DIR, WAKE_MISS_MAX_FILES,
 )
 from database import keep_voiceprint_sample, log_verification
 import timing
@@ -134,10 +140,15 @@ print("Loading wake word model...", flush=True)
 with silence_stderr():
     wake_model = Model(wakeword_model_paths=[WAKE_MODEL_PATH])
 
-print("Loading voice encoder...", flush=True)
+print(f"Loading voice encoder ({SPEAKER_ENCODER})...", flush=True)
 with silence_stderr():
-    voice_encoder = VoiceEncoder()
-voiceprint = np.load(VOICEPRINT_PATH)
+    embed_voice = speaker_encoder.get_encoder(SPEAKER_ENCODER)
+
+# Refuses a voiceprint built by a different encoder rather than scoring against
+# it. Two embedding spaces are unrelated, so a mismatch does not produce a
+# slightly wrong similarity, it produces a meaningless one, and every turn
+# afterwards would be decided by noise. Failing at boot is the loud version.
+voiceprint = speaker_encoder.load_voiceprint(VOICEPRINT_PATH, SPEAKER_ENCODER)
 
 # ── Mic lock ──
 # Exclusive OS level lock, held for the life of this process. Guards against
@@ -174,7 +185,7 @@ for i in range(_audio.get_device_count()):
     info = _audio.get_device_info_by_index(i)
     if "Razer" in info["name"] or "Seiren" in info["name"]:
         mic_index = i
-        MIC_NAME = info["name"]
+        MIC_NAME = capsule_name(info["name"])
         print(f"Found mic: {info['name']} (index {i})", flush=True)
         break
 
@@ -209,6 +220,9 @@ def record_command():
     total_chunks    = 0
     last_speech_at  = None
 
+    cancel_speculation()
+    spec_chunks = int(SPECULATIVE_SILENCE_MS / 30.0)
+
     while total_chunks < max_chunks:
         data  = stream.read(VAD_FRAME, exception_on_overflow=False)
         frames.append(data)
@@ -225,8 +239,17 @@ def record_command():
             longest_pause = max(longest_pause, silent_chunks)
             silent_chunks = 0
             last_speech_at = time.monotonic()
+
+            # He spoke through the pause, so anything started on it covers only
+            # part of the turn. Discard and let the next pause try again.
+            cancel_speculation()
         else:
             silent_chunks += 1
+
+            # Start Whisper on what is captured so far, while endpointing keeps
+            # waiting out the rest of SILENCE_LIMIT.
+            maybe_speculate(frames, silent_chunks, spec_chunks,
+                            total_chunks > min_chunks)
 
         if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
             break
@@ -284,6 +307,10 @@ def listen_for_followup(timeout=10):
     silent_chunks  = 0
     longest_pause  = 0
     last_speech_at = time.monotonic()
+
+    cancel_speculation()
+    spec_chunks = int(SPECULATIVE_SILENCE_MS / 30.0)
+
     while total_chunks < max_chunks:
         data   = stream.read(VAD_FRAME, exception_on_overflow=False)
         frames.append(data)
@@ -293,8 +320,11 @@ def listen_for_followup(timeout=10):
             longest_pause = max(longest_pause, silent_chunks)
             silent_chunks = 0
             last_speech_at = time.monotonic()
+            cancel_speculation()
         else:
             silent_chunks += 1
+            maybe_speculate(frames, silent_chunks, spec_chunks,
+                            total_chunks > min_chunks)
 
         if total_chunks > min_chunks and silent_chunks >= int(SILENCE_LIMIT / 0.03):
             break
@@ -312,6 +342,32 @@ def listen_for_followup(timeout=10):
     print(f"Follow up recorded {total_chunks * 0.03:.1f}s", flush=True)
     _write_wav(frames)
     return TEMP_WAV
+
+
+def save_wake_miss(frames, score):
+    """Keep the audio behind a near miss, named by score so the worst sort first.
+
+    Never fatal. This is a diagnostic, and losing a clip is not a reason to lose
+    the wake loop."""
+    if not CAPTURE_WAKE_MISSES:
+        return None
+    try:
+        os.makedirs(WAKE_MISS_DIR, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%dT%H%M%S_%f")[:-3]
+        dest  = os.path.join(WAKE_MISS_DIR, f"{score:.3f}_{stamp}.wav")
+        _write_wav(frames, dest)
+
+        # Pruned by modification time rather than by name, because the name
+        # leads with the score so it can be sorted by severity.
+        existing = sorted(
+            (os.path.join(WAKE_MISS_DIR, f) for f in os.listdir(WAKE_MISS_DIR)
+             if f.endswith(".wav")), key=os.path.getmtime)
+        for stale in existing[:max(0, len(existing) - WAKE_MISS_MAX_FILES)]:
+            os.remove(stale)
+        return dest
+    except OSError as exc:
+        print(f"Could not save wake miss: {exc}", flush=True)
+        return None
 
 
 def archive_recording(wav_path, turn_type):
@@ -339,23 +395,128 @@ def archive_recording(wav_path, turn_type):
         return None
 
 
-def _write_wav(frames):
-    wf = wave.open(TEMP_WAV, 'wb')
+def _whisper_cmd(wav_path, threads=None):
+    """The one place the Whisper command line is built.
+
+    Both the speculative run and the full one have to pass identical decoding
+    settings or the speculation is transcribing under different rules than the
+    fallback it stands in for, and the two would disagree for reasons nobody
+    would think to look for. They differ only in thread count."""
+    cmd = [WHISPER_CLI, "-m", WHISPER_MODEL, "-f", wav_path,
+           "-bs", "1", "-bo", "1", "--no-prints", "--no-timestamps",
+           "-ac", str(WHISPER_AUDIO_CTX)]
+    if threads is not None:
+        cmd += ["-t", str(threads)]
+    if WHISPER_INITIAL_PROMPT:
+        cmd += ["--prompt", WHISPER_INITIAL_PROMPT]
+    return cmd
+
+
+class _Speculation:
+    """A Whisper run started before the recording finished.
+
+    Holds a snapshot of the frames captured up to the moment speech stopped.
+    The final clip differs only by the trailing silence that endpointing was
+    still waiting out, and silence carries no words, so the transcript is the
+    one the full clip would have produced."""
+
+    def __init__(self, frames):
+        _write_wav(frames, SPECULATIVE_WAV)
+        self.stale = False
+        self.proc = subprocess.Popen(
+            _whisper_cmd(SPECULATIVE_WAV, threads=SPECULATIVE_THREADS),
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+
+    def cancel(self):
+        """He spoke again, so this covers only part of the turn."""
+        self.stale = True
+        try:
+            self.proc.terminate()
+        except Exception:
+            pass
+
+    def result(self):
+        """The transcript, or None if the run failed. Blocks if it is still
+        going, which is the point: it started earlier, so it ends earlier."""
+        try:
+            out, _ = self.proc.communicate(timeout=30)
+        except Exception:
+            self.cancel()
+            return None
+        return out.strip() if self.proc.returncode == 0 else None
+
+
+# Handed from the capture loops to transcribe. Module state rather than a return
+# value because audio.py owns both ends and threading it through would change
+# the signature every caller already uses.
+_pending_speculation = None
+
+
+def cancel_speculation():
+    """Drop any pending run. Safe to call when there is nothing pending."""
+    global _pending_speculation
+    if _pending_speculation is not None:
+        _pending_speculation.cancel()
+        _pending_speculation = None
+
+
+def maybe_speculate(frames, silent_chunks, spec_chunks, past_minimum):
+    """Start Whisper on what is captured so far, mid pause.
+
+    Called from both capture loops rather than inlined in each, because it was
+    inlined in each and the follow up loop never got it. Phase 2 of
+    listen_for_followup is a deliberate copy of record_command's loop, and a
+    copy only stays correct until one side changes: follow ups paid the full
+    transcription cost for as long as speculation had existed, and they are the
+    majority of turns.
+
+    Equality on silent_chunks rather than a threshold is what makes this fire
+    once per pause. The caller cancels on resumed speech, which resets the
+    count and lets the next pause try again."""
+    global _pending_speculation
+    if not (SPECULATIVE_TRANSCRIBE and past_minimum
+            and _pending_speculation is None and silent_chunks == spec_chunks):
+        return
+    try:
+        _pending_speculation = _Speculation(list(frames))
+    except Exception as exc:
+        print(f"Speculative transcribe unavailable: {exc}", flush=True)
+
+
+def _write_wav(frames, path=TEMP_WAV):
+    wf = wave.open(path, 'wb')
     wf.setnchannels(CHANNELS)
     wf.setsampwidth(_audio.get_sample_size(FORMAT))
     wf.setframerate(RATE)
     wf.writeframes(b''.join(frames))
     wf.close()
+    return path
 
 
 def transcribe(wav_path):
+    """Transcribe, collecting a speculative run if one is still valid.
+
+    A speculation that survived to here started during the endpoint wait and is
+    already partly or wholly done, so the stopwatch records only what was left.
+    Anything that failed or went stale falls back to a full run, which is
+    exactly today's behaviour."""
+    global _pending_speculation
+    speculation, _pending_speculation = _pending_speculation, None
+
     with timing.stopwatch('transcribe_ms'):
-        result = subprocess.run(
-            [WHISPER_CLI, "-m", WHISPER_MODEL, "-f", wav_path,
-             "-bs", "1", "-bo", "1", "--no-prints", "--no-timestamps",
-             "-ac", str(WHISPER_AUDIO_CTX)],
-            capture_output=True, text=True
-        )
+        if speculation is not None and not speculation.stale:
+            text = speculation.result()
+            if text:
+                # Printed rather than marked: end_turn only reads known keys, so
+                # an unrecognised stage is silently dropped. The hit rate is what
+                # tunes SPECULATIVE_SILENCE_MS, so it needs to reach the journal.
+                print("(speculative transcript hit)", flush=True)
+                return text
+        elif speculation is not None:
+            speculation.cancel()
+
+        result = subprocess.run(_whisper_cmd(wav_path),
+                                capture_output=True, text=True)
     return result.stdout.strip()
 
 
@@ -369,6 +530,14 @@ def log_mic_gain():
     restore runs against a stale state file. A silent revert does not fail
     loudly, it just quietly halves the data quality of everything recorded
     afterward, so it gets checked where it will be seen."""
+    # None means no card matched MIC_NAME_HINT. Saying so is the honest
+    # outcome: the previous behaviour was to fall back to card 0, which is the
+    # speaker adapter here, and report its level as though it were the mic.
+    if MIC_MIXER_CARD is None:
+        print(f"Mic gain unchecked: no ALSA card matching {MIC_NAME_HINT!r} in "
+              f"/proc/asound/cards.", flush=True)
+        return None
+
     try:
         result = subprocess.run(
             ["amixer", "-c", MIC_MIXER_CARD, "sget", MIC_MIXER_CONTROL],
@@ -557,10 +726,11 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
     if prepended is not None:
         with wave.open(wav_path, 'rb') as wf:
             command = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
-        wav = preprocess_wav(np.concatenate([prepended, command]).astype(np.float32) / 32768.0,
-                             source_sr=RATE)
+        wav = speaker_encoder.trim(
+            np.concatenate([prepended, command]).astype(np.float32) / 32768.0,
+            source_sr=RATE)
     else:
-        wav = preprocess_wav(wav_path)
+        wav = speaker_encoder.trim(wav_path)
 
     with wave.open(wav_path, 'rb') as wf:
         duration_seconds = wf.getnframes() / wf.getframerate()
@@ -614,7 +784,14 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
         timing.mark('verify_ms', (time.monotonic() - verify_started) * 1000.0)
         return VERIFIED
 
-    embedding = voice_encoder.embed_utterance(wav)
+    embedding = embed_voice(wav)
+    if embedding is None:
+        # The encoder declined the clip as too short. The guard above normally
+        # catches this; reaching here means the two disagree by a hair, and
+        # inventing a score for it would be worse than saying there was nothing
+        # to score.
+        print("Encoder declined the clip as too short to embed.", flush=True)
+        return NO_AUDIO
     similarity = np.dot(embedding, voiceprint) / (
         np.linalg.norm(embedding) * np.linalg.norm(voiceprint)
     )
@@ -653,8 +830,11 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
     if (accepted
             and similarity >= VOICEPRINT_LEARN_MIN_SIMILARITY
             and embedded_duration_seconds >= VOICEPRINT_LEARN_MIN_SECONDS):
+        # Tagged with whichever encoder is live, never a literal. The column
+        # exists so embeddings from two encoders are never averaged into one
+        # centroid, and a hardcoded name would defeat it on the day it matters.
         keep_voiceprint_sample(embedding, similarity, embedded_duration_seconds,
-                               model="resemblyzer", mic=MIC_NAME)
+                               model=SPEAKER_ENCODER, mic=MIC_NAME)
 
     # Any of these can be None for a degenerate clip, so format defensively
     # rather than letting a log line take down the voice loop.

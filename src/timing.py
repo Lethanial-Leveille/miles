@@ -40,6 +40,7 @@ def begin_turn(turn_type):
             "turn_type": turn_type,
             "speech_end": None,
             "action_fired": False,
+            "local_intent": False,
             "model": None,
             "stages": {},
         }
@@ -174,6 +175,33 @@ def note_tts(ttfb_ms, first_audio_ms):
             ) * 1000.0
 
 
+def note_local_audio(first_audio_ms):
+    """Close out perceived latency for a turn answered from the phrase bank.
+
+    The mirror of note_tts for turns that never call it. A local turn plays a
+    rendered WAV through aplay directly, so nothing was closing out
+    total_perceived_ms and these rows carried a null. That silently excluded
+    them from every latency figure, and they are the fastest turns the system
+    has: the reported median described the Claude path rather than the room.
+
+    Measured just before aplay is invoked, which is the same boundary note_tts
+    uses, with one asymmetry worth knowing. There, aplay is already running and
+    a chunk is written to it; here, the process still has to spawn and open the
+    file. So this understates a local turn slightly, in the direction of
+    flattering it."""
+    with _lock:
+        if _turn is None or "tts_first_audio_ms" in _turn["stages"]:
+            return
+        _turn["local_intent"] = True
+        # Deliberately not written as tts_ttfb_ms. There is no network leg here
+        # at all, and a zero would drag the median of a stage that measures one.
+        _turn["stages"]["tts_first_audio_ms"] = first_audio_ms
+        if _turn["speech_end"] is not None:
+            _turn["stages"]["total_perceived_ms"] = (
+                time.monotonic() - _turn["speech_end"]
+            ) * 1000.0
+
+
 def end_turn(transcript=None, response=None):
     """Write the turn to the timing log and close it out."""
     global _turn
@@ -204,14 +232,25 @@ def end_turn(transcript=None, response=None):
         max_pause_ms=stages.get("max_pause_ms"),
         tool_ms=stages.get("tool_ms"),
         second_ttft_ms=stages.get("second_ttft_ms"),
+        local_intent=turn["local_intent"],
     )
 
     total = stages.get("total_perceived_ms")
-    if total is not None:
-        print(f"  [{turn['model'] or 'model n/a'}] "
-              f"perceived latency {total:.0f}ms "
+    if total is None:
+        return
+
+    if turn["local_intent"]:
+        print(f"  [local] perceived latency {total:.0f}ms "
               f"(endpoint {stages.get('speech_end_to_endpoint_ms', 0):.0f} + "
               f"stt {stages.get('transcribe_ms', 0):.0f} + "
               f"verify {stages.get('verify_ms', 0):.0f} + "
-              f"llm {stages.get('claude_ttft_ms', 0):.0f} + "
-              f"tts {stages.get('tts_first_audio_ms', 0):.0f})", flush=True)
+              f"play {stages.get('tts_first_audio_ms', 0):.0f})", flush=True)
+        return
+
+    print(f"  [{turn['model'] or 'model n/a'}] "
+          f"perceived latency {total:.0f}ms "
+          f"(endpoint {stages.get('speech_end_to_endpoint_ms', 0):.0f} + "
+          f"stt {stages.get('transcribe_ms', 0):.0f} + "
+          f"verify {stages.get('verify_ms', 0):.0f} + "
+          f"llm {stages.get('claude_ttft_ms', 0):.0f} + "
+          f"tts {stages.get('tts_first_audio_ms', 0):.0f})", flush=True)

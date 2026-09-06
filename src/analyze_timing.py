@@ -109,6 +109,24 @@ def caveat(n):
     return ""
 
 
+def is_local(row):
+    """Answered from the phrase bank, without Claude.
+
+    Guarded with a key check because rows predating migration 22 have no such
+    column, and an older database should still analyze rather than crash."""
+    try:
+        return bool(row["local_intent"])
+    except (IndexError, KeyError):
+        return False
+
+
+def _spread(label, values):
+    print(f"  {label:<16} n={len(values):<4} "
+          f"p50 {statistics.median(values):>6.0f}   "
+          f"p90 {percentile(values, 0.90):>6.0f}   "
+          f"max {max(values):>6.0f}{caveat(len(values))}")
+
+
 def report_totals(rows):
     header("1. PERCEIVED LATENCY  (speech end to first audio)")
     totals = [r["total_perceived_ms"] for r in rows if r["total_perceived_ms"] is not None]
@@ -123,6 +141,29 @@ def report_totals(rows):
     print(f"  p90     {percentile(totals, 0.90):>8.0f} ms")
     print(f"  max     {max(totals):>8.0f} ms")
     print(f"  mean    {statistics.mean(totals):>8.0f} ms{caveat(len(totals))}")
+
+    # Split out, because the two paths are different systems wearing one median.
+    # A local turn stops after transcription; a Claude turn carries a network
+    # round trip and synthesis on top. Reporting only the blend means any shift
+    # in how often local intent fires reads as a latency change.
+    local = [r["total_perceived_ms"] for r in rows
+             if is_local(r) and r["total_perceived_ms"] is not None]
+    remote = [r["total_perceived_ms"] for r in rows
+              if not is_local(r) and r["total_perceived_ms"] is not None]
+    if local and remote:
+        print()
+        print("By path:")
+        _spread("local (no Claude)", local)
+        _spread("Claude", remote)
+        print()
+        print(f"  local intent answered {100 * len(local) / len(totals):.0f}% of "
+              f"these turns, {statistics.median(remote) - statistics.median(local):.0f}ms "
+              f"faster at the median.")
+    elif not local:
+        print()
+        print("No local intent turns carry a measurement. Before migration 22")
+        print("these rows existed but had a null total, so a window that")
+        print("predates it will always read this way.")
     return totals
 
 
@@ -131,6 +172,19 @@ def report_stages(rows, totals):
     if not totals:
         print("No complete turns.")
         return
+
+    # Claude turns only. A local turn has no TTFT and no synthesis, so mixing
+    # them in would lower every stage median by changing which turns are in the
+    # sample rather than by anything getting faster.
+    rows = [r for r in rows if not is_local(r)]
+    totals = [r["total_perceived_ms"] for r in rows
+              if r["total_perceived_ms"] is not None]
+    if not totals:
+        print("No Claude turns in this window.")
+        return
+    print(f"Claude turns only (n={len(totals)}). Local intent turns are in "
+          f"section 2b.")
+    print()
 
     median_total = statistics.median(totals)
     print(f"{'stage':<22} {'p50':>8} {'p90':>8} {'% of p50 total':>16}")
@@ -166,6 +220,41 @@ def report_stages(rows, totals):
             continue
         print(f"{label:<22} {statistics.median(values):>8.0f} "
               f"{percentile(values, 0.90):>8.0f}{caveat(len(values))}")
+
+
+LOCAL_STAGES = [
+    ("speech_end_to_endpoint_ms", "Endpointing"),
+    ("transcribe_ms", "Whisper"),
+    ("verify_ms", "Verification"),
+    ("tts_first_audio_ms", "Phrase bank"),
+]
+
+
+def report_local_stages(rows):
+    header("2b. STAGE BREAKDOWN  (local intent turns)")
+    rows = [r for r in rows if is_local(r) and r["total_perceived_ms"] is not None]
+    if not rows:
+        print("No local intent turns with a measurement in this window.")
+        return
+
+    totals = [r["total_perceived_ms"] for r in rows]
+    median_total = statistics.median(totals)
+    print(f"n={len(rows)}, p50 {median_total:.0f}ms, "
+          f"p90 {percentile(totals, 0.90):.0f}ms")
+    print()
+    print(f"{'stage':<22} {'p50':>8} {'p90':>8} {'% of p50 total':>16}")
+    for field, label in LOCAL_STAGES:
+        values = [r[field] for r in rows if r[field] is not None]
+        if not values:
+            print(f"{label:<22} {'-':>8} {'-':>8} {'-':>16}")
+            continue
+        p50 = statistics.median(values)
+        print(f"{label:<22} {p50:>8.0f} {percentile(values, 0.90):>8.0f} "
+              f"{p50 / median_total * 100 if median_total else 0:>15.1f}%")
+    print()
+    print("Everything here is local, so this is the floor the pipeline can")
+    print("reach with the network removed entirely. Whatever fraction of it is")
+    print("endpointing plus Whisper is what an STT change would act on.")
 
 
 def report_by_turn_type(rows):
@@ -384,6 +473,7 @@ def main():
 
     totals = report_totals(rows)
     report_stages(rows, totals)
+    report_local_stages(rows)
     report_by_turn_type(rows)
     report_by_model(rows)
     report_extremes(rows)

@@ -5,6 +5,8 @@ import sqlite3
 from datetime import datetime
 from config import DEFAULT_LOCATION, WEATHER_API_KEY, DB_PATH
 from tools import Permission, tool
+from parsing import words_for_number
+from database import due_reminders, complete_reminder
 import alerts
 
 
@@ -15,6 +17,24 @@ def _plural(amount, unit):
     offers, so "1 minutes timer is up" was announced on every single one minute
     timer."""
     return unit[:-1] if amount == 1 and unit.endswith("s") else unit
+
+
+def _spoken_amount(amount):
+    """Spelled out when it can be, because Nova says this aloud."""
+    try:
+        return words_for_number(amount)
+    except ValueError:
+        return str(amount)
+
+
+def _attributive(unit):
+    """Singular, for a unit used as a modifier rather than as a quantity.
+
+    "Timer set for five minutes" is a quantity and stays plural. "Your five
+    minutes timer is up" is a modifier on `timer` and is simply wrong; English
+    wants "your five minute timer". Two different grammatical roles, so two
+    different helpers, rather than one that is right half the time."""
+    return unit[:-1] if unit.endswith("s") else unit
 
 
 # ── Weather ──
@@ -94,8 +114,12 @@ def _precip_outlook(lat, lon, raining_now):
     return None
 
 
-def _fetch_weather(location=None):
+def fetch_weather(location=None):
     """Current conditions as structured data.
+
+    Public, like set_timer and cancel_reminder, because local_intent calls it
+    directly to answer a weather turn without Claude. The tool wrapper below is
+    one of two callers, not the only one.
 
     Deliberately a dict rather than a sentence. The previous version returned a
     finished English paragraph carrying four facts, so Nova read the paragraph
@@ -171,7 +195,7 @@ def _fetch_weather(location=None):
     returns_to_model=True,
 )
 def get_weather_tool(location=None):
-    return _fetch_weather(location)
+    return fetch_weather(location)
 
 
 # ── Timer ──
@@ -214,8 +238,9 @@ def set_timer(duration_str):
         # question being asked. alerts.py explains the mechanism.
         alerts.fire(
             kind="timer",
-            text=f"[calmly] Lethanial, your {amount} {spoken_unit} timer is up.",
-            summary=f"the {amount} {spoken_unit} timer just finished",
+            text=(f"[calmly] Lethanial, your {_spoken_amount(amount)} "
+                  f"{_attributive(unit)} timer is up."),
+            summary=f"the {amount} {_attributive(unit)} timer just finished",
         )
 
     threading.Thread(target=timer_thread, daemon=True).start()
@@ -224,7 +249,51 @@ def set_timer(duration_str):
 
 # ── Reminders ──
 
+# How often the poller asks the table what is due. Reminders are set to the
+# minute in practice, so twenty seconds is well inside tolerance and costs one
+# indexed count query against a local SQLite file.
+REMINDER_POLL_S = 20
+
+# Past this much lateness, the announcement says so. A reminder delivered four
+# hours after it was due is still worth hearing, but presenting it as though it
+# had just come due is a small lie that makes the clock look broken.
+REMINDER_LATE_S = 3600
+
+
 def set_reminder(content, due_time=None):
+    """Save a reminder. Firing is the poller's job, not this function's.
+
+    This used to spawn a threading.Thread that slept until the due time and
+    fired from there. That made the thread the real state and the row merely a
+    record of it: the row survived a restart and the thread did not, so every
+    pending reminder was silently dropped on any deploy or crash, and
+    Restart=always makes both routine. Nothing scanned the table at boot, so a
+    reminder set for tomorrow morning simply never happened.
+
+    It also meant a reminder set through the app fired inside the uvicorn
+    process, where its alert queued into that process's alerts._pending and was
+    delivered only if another chat message arrived inside the fifteen second
+    fold window. Otherwise it was lost without even reaching alert_log.
+
+    Now the row is the only state and poll_reminders is the only thing that
+    fires, which fixes both: a restart re reads the table, and it does not
+    matter which process wrote the row.
+
+    A due time already in the past is stored and fires on the next pass rather
+    than being quietly dropped. It is a bug when it happens, almost always the
+    clock guidance in the prompt being ignored, and the whole argument in
+    alerts.py is that a silent non delivery is the worst available outcome. So
+    it announces, late, and says it is late."""
+    if due_time:
+        # Validated here so an unparseable string is refused at the point it can
+        # still be corrected, rather than being stored and skipped forever by a
+        # poller that cannot read it.
+        try:
+            datetime.fromisoformat(due_time)
+        except (TypeError, ValueError):
+            return (f"Could not read '{due_time}' as a date and time, so "
+                    f"nothing was saved. Use YYYY-MM-DDTHH:MM:SS.")
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
@@ -234,34 +303,88 @@ def set_reminder(content, due_time=None):
     conn.commit()
     conn.close()
 
-    if due_time:
-        try:
-            due_dt = datetime.fromisoformat(due_time)
-            delay  = (due_dt - datetime.now()).total_seconds()
-            if delay > 0:
-                def reminder_thread():
-                    time.sleep(delay)
-                    print(f"\n*** REMINDER: {content} ***")
-                    alerts.fire(
-                        kind="reminder",
-                        text=f"[calmly] Lethanial, a reminder. {content}.",
-                        summary=f"a reminder just came due: {content}",
-                    )
-                    conn2 = sqlite3.connect(DB_PATH)
-                    conn2.execute(
-                        "UPDATE reminders SET completed = 1 WHERE content = ? AND due_at = ?",
-                        (content, due_time)
-                    )
-                    conn2.commit()
-                    conn2.close()
-
-                threading.Thread(target=reminder_thread, daemon=True).start()
-            else:
-                return "That time has already passed. Reminder saved but won't trigger."
-        except Exception:
-            pass
+    if due_time and datetime.fromisoformat(due_time) <= datetime.now():
+        return (f"Reminder saved: {content}. That time has already passed, so "
+                f"it will announce now.")
 
     return f"Reminder saved: {content}" + (f" (due: {due_time})" if due_time else "")
+
+
+def poll_reminders(now=None):
+    """One pass over the table. Returns how many fired.
+
+    Marks delivered BEFORE queueing the alert, and that order is deliberate.
+    complete_reminder returns whether it actually changed a row, so the UPDATE
+    doubles as a claim: two passes racing the same reminder cannot both win it.
+
+    The two orderings fail differently. Firing first and completing second is at
+    least once, and its failure mode is a reminder that announces every twenty
+    seconds forever if the completion keeps failing, which is unusable. Claiming
+    first is at most once, and its failure mode is losing one reminder if the
+    process dies in the microseconds between the commit and the in memory
+    append. The second failure is rarer and far less bad, so the loss window is
+    accepted on purpose."""
+    now = now or datetime.now()
+    fired = 0
+
+    for reminder_id, content, due_at in due_reminders(now.isoformat()):
+        if not complete_reminder(reminder_id):
+            continue                    # another pass already claimed it
+
+        try:
+            late_seconds = (now - datetime.fromisoformat(due_at)).total_seconds()
+        except (TypeError, ValueError):
+            late_seconds = 0
+
+        if late_seconds > REMINDER_LATE_S:
+            text = (f"[calmly] Lethanial, a reminder that came due while you "
+                    f"were away. {content}.")
+            summary = f"a reminder came due while he was away: {content}"
+        else:
+            text = f"[calmly] Lethanial, a reminder. {content}."
+            summary = f"a reminder just came due: {content}"
+
+        print(f"\n*** REMINDER: {content} ***", flush=True)
+        alerts.fire(kind="reminder", text=text, summary=summary)
+        fired += 1
+
+    return fired
+
+
+_poller_started = False
+
+
+def start_reminder_poller(interval=REMINDER_POLL_S):
+    """Start the one thread that fires reminders.
+
+    Called from the voice loop only, never from the server. Both processes can
+    create reminders, but exactly one may deliver them: a poller in each would
+    race for the same rows, and the claim in poll_reminders would keep them
+    correct while the alert still landed in whichever process won, which for the
+    server is a queue nothing drains.
+
+    Guarded against a second start rather than left to the caller, because two
+    pollers in one process is a bug with no symptom other than reminders
+    announcing twice."""
+    global _poller_started
+    if _poller_started:
+        return False
+
+    def loop():
+        while True:
+            try:
+                poll_reminders()
+            except Exception as exc:
+                # A poller that dies takes every future reminder with it, and
+                # silently, which is the failure this whole change exists to
+                # remove. Log and keep the thread alive.
+                print(f"Reminder poll failed ({type(exc).__name__}): {exc}",
+                      flush=True)
+            time.sleep(interval)
+
+    threading.Thread(target=loop, daemon=True).start()
+    _poller_started = True
+    return True
 
 
 def cancel_reminder(content):
@@ -364,6 +487,38 @@ def set_reminder_tool(content, due=None):
 )
 def cancel_reminder_tool(content):
     return cancel_reminder(content)
+
+
+@tool(
+    name="ignore",
+    description=(
+        "Stay silent and end the turn. Call this when what you heard was not "
+        "addressed to you at all: Lethanial talking to someone else in the "
+        "room, a fragment of a conversation you are not part of, a television, "
+        "or speech that only makes sense as part of an exchange you cannot "
+        "see. The follow up window stays open after a turn, so it does pick up "
+        "the room.\n\n"
+        "Say NOTHING alongside this call. Not an explanation, not an offer to "
+        "help, not a single word. Announcing that you are not part of a "
+        "conversation is itself joining it, and it is worse than silence "
+        "because he then has to wait through it.\n\n"
+        "Writing a sentence like 'I'm not part of that conversation' WITHOUT "
+        "calling this tool is the specific failure to avoid. If that sentence "
+        "is what you were about to say, this tool is what you actually meant, "
+        "and the sentence should not be said at all. There is no case where "
+        "explaining your non participation out loud is the better answer.\n\n"
+        "Do not use this merely because a request is unclear or you lack the "
+        "information to answer. Asking him to repeat himself is right when he "
+        "was talking to you. This is only for when he was not."
+    ),
+    input_schema={"type": "object", "properties": {}, "required": []},
+    permission=Permission.CONTROL,
+    returns_to_model=False,
+)
+def ignore_tool():
+    # A state change, not work. brain.py reads the call itself; there is
+    # nothing to execute and nothing to say.
+    return ""
 
 
 @tool(

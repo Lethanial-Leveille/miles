@@ -96,14 +96,14 @@ def test_description_tells_the_model_when_to_call_it():
 def test_returns_a_dict_not_a_sentence(api):
     """The whole reason for step 3. A finished English paragraph gets read
     aloud as a paragraph no matter what the prompt says."""
-    out = actions._fetch_weather("Gainesville")
+    out = actions.fetch_weather("Gainesville")
     assert isinstance(out, dict)
     assert set(out) == {"location", "temp", "feels_like", "condition",
                         "humidity", "wind_mph", "precip"}
 
 
 def test_temperatures_are_rounded(api):
-    out = actions._fetch_weather("Gainesville")
+    out = actions.fetch_weather("Gainesville")
     assert out["temp"] == 91
     assert out["feels_like"] == 99
     assert out["wind_mph"] == 5
@@ -111,32 +111,32 @@ def test_temperatures_are_rounded(api):
 
 def test_unknown_location_reports_rather_than_raising(api):
     api["geo"] = []
-    assert "Could not find location" in actions._fetch_weather("Atlantis")["error"]
+    assert "Could not find location" in actions.fetch_weather("Atlantis")["error"]
 
 
 # ── precipitation outlook ──
 
 def test_clear_now_and_clear_ahead_says_nothing(api):
-    assert actions._fetch_weather("Gainesville")["precip"] is None
+    assert actions.fetch_weather("Gainesville")["precip"] is None
 
 
 def test_clear_now_with_rain_coming_names_the_hour(api):
     api["forecast"] = _forecast(800, 800, 500, 500, start_hour=16)
-    out = actions._fetch_weather("Gainesville")
+    out = actions.fetch_weather("Gainesville")
     assert out["precip"] == "rain likely around 10 PM"
 
 
 def test_raining_now_reports_when_it_eases(api):
     api["current"] = _current(condition_id=500, description="light rain")
     api["forecast"] = _forecast(500, 500, 800, 800, start_hour=16)
-    out = actions._fetch_weather("Gainesville")
+    out = actions.fetch_weather("Gainesville")
     assert out["precip"] == "easing off around 10 PM"
 
 
 def test_raining_throughout_says_so(api):
     api["current"] = _current(condition_id=502, description="heavy rain")
     api["forecast"] = _forecast(500, 500, 500, 500)
-    out = actions._fetch_weather("Gainesville")
+    out = actions.fetch_weather("Gainesville")
     assert out["precip"] == "continuing through the next several hours"
 
 
@@ -153,7 +153,7 @@ def test_precipitation_boundary(api, cid, is_precip):
     """741 fog is not rain. The boundary sits at 700 and getting it wrong makes
     Nova announce rain on a foggy morning."""
     api["forecast"] = _forecast(800, cid, 800, 800)
-    out = actions._fetch_weather("Gainesville")
+    out = actions.fetch_weather("Gainesville")
     assert (out["precip"] is not None) is is_precip
 
 
@@ -167,7 +167,7 @@ def test_forecast_failure_does_not_fail_the_lookup(api, monkeypatch):
         return real_get(url, params=params, **kwargs)
 
     monkeypatch.setattr(actions.requests, "get", flaky)
-    out = actions._fetch_weather("Gainesville")
+    out = actions.fetch_weather("Gainesville")
     assert out["temp"] == 91
     assert out["precip"] is None
 
@@ -175,14 +175,14 @@ def test_forecast_failure_does_not_fail_the_lookup(api, monkeypatch):
 # ── geocode cache ──
 
 def test_geocode_is_cached_across_calls(api):
-    actions._fetch_weather("Gainesville")
-    actions._fetch_weather("Gainesville")
+    actions.fetch_weather("Gainesville")
+    actions.fetch_weather("Gainesville")
     geo_calls = [u for u in api["urls"] if "geo/1.0/direct" in u]
     assert len(geo_calls) == 1
 
 
 def test_different_locations_are_cached_separately(api):
-    actions._fetch_weather("Gainesville")
-    actions._fetch_weather("Orlando")
+    actions.fetch_weather("Gainesville")
+    actions.fetch_weather("Orlando")
     geo_calls = [u for u in api["urls"] if "geo/1.0/direct" in u]
     assert len(geo_calls) == 2
