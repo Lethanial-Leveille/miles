@@ -56,11 +56,12 @@ try:
 except OSError:
     pass
 
-from resemblyzer import VoiceEncoder, preprocess_wav
+import speaker_encoder
 
 from config import (
     RATE, CHANNELS, CHUNK, SPEAKER_NAME_HINT,
-    VOICEPRINT_PATH, ENROLLMENT_DATA_PATH,
+    VOICEPRINT_PATH, ENROLLMENT_DATA_PATH, ENROLLMENT_AUDIO_DIR,
+    SPEAKER_ENCODER,
     MIN_VOICED_SECONDS, ENROLL_RECORD_SECONDS,
 )
 
@@ -157,15 +158,55 @@ def find_mic(audio):
 
 
 def record_sample(stream, audio, seconds):
+    """Record one sample, write it for playback, and hand back the raw frames.
+
+    The frames are returned rather than only written because TEMP_ENROLL is a
+    single file that every sample overwrites. Keeping the accepted ones in
+    memory is what allows all twelve to be written at the end, together with
+    the embeddings computed from them."""
     frames = []
     for _ in range(int(RATE / CHUNK * seconds)):
         frames.append(stream.read(CHUNK, exception_on_overflow=False))
 
+    audio_bytes = b''.join(frames)
     with wave.open(TEMP_ENROLL, 'wb') as wf:
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(audio.get_sample_size(FORMAT))
         wf.setframerate(RATE)
-        wf.writeframes(b''.join(frames))
+        wf.writeframes(audio_bytes)
+    return audio_bytes
+
+
+def save_enrollment_audio(samples, sample_width, directory=ENROLLMENT_AUDIO_DIR):
+    """Write every accepted recording, and return the filenames in order.
+
+    Written here at the end rather than incrementally as each sample is
+    accepted, and that is the whole correctness argument. The directory has to
+    correspond exactly to the arrays in the npz, and an incremental write leaves
+    files from a previous run sitting beside the new ones: an old sample_07 next
+    to a fresh sample_00 through sample_05 is silently wrong, and nothing about
+    it looks wrong. Clearing and writing in one step, from the same list the
+    embeddings came from, makes the correspondence structural rather than a
+    thing the caller has to remember.
+
+    Emptied rather than removed and recreated, so a half written run cannot
+    leave the previous enrollment's audio looking current."""
+    os.makedirs(directory, exist_ok=True)
+    for stale in os.listdir(directory):
+        if stale.endswith(".wav"):
+            os.remove(os.path.join(directory, stale))
+
+    names = []
+    for index, (audio_bytes, condition) in enumerate(samples):
+        slug = re.sub(r'[^a-z0-9]+', '_', condition.lower()).strip('_')
+        name = f"sample_{index:02d}_{slug}.wav"
+        with wave.open(os.path.join(directory, name), 'wb') as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(sample_width)
+            wf.setframerate(RATE)
+            wf.writeframes(audio_bytes)
+        names.append(name)
+    return names
 
 
 def playback(device):
@@ -244,7 +285,7 @@ def main():
                         input=True, input_device_index=mic_index,
                         frames_per_buffer=CHUNK)
 
-    encoder = VoiceEncoder()
+    encoder = speaker_encoder.get_encoder(SPEAKER_ENCODER)
 
     print("\n=== M.I.L.E.S. Voice Enrollment ===\n")
     print(f"{len(SAMPLES)} samples, {ENROLL_RECORD_SECONDS}s of recording each.")
@@ -262,6 +303,7 @@ def main():
     embeddings = []
     labels     = []
     durations  = []
+    raw_audio  = []
 
     i = 0
     while i < len(SAMPLES):
@@ -281,9 +323,9 @@ def main():
             continue
 
         print(f"  Recording {ENROLL_RECORD_SECONDS}s...", flush=True)
-        record_sample(stream, audio, ENROLL_RECORD_SECONDS)
+        audio_bytes = record_sample(stream, audio, ENROLL_RECORD_SECONDS)
 
-        wav = preprocess_wav(TEMP_ENROLL)
+        wav = speaker_encoder.trim(TEMP_ENROLL)
         voiced = len(wav) / RATE
 
         # The guard that would have caught "Lock in". Rejected before it can
@@ -307,9 +349,12 @@ def main():
             if choice == 'n':
                 print("  Redoing.\n")
                 break
-            embeddings.append(encoder.embed_utterance(wav))
+            embeddings.append(encoder(wav))
             labels.append(condition)
             durations.append(voiced)
+            # Appended in the same branch as the embedding, so the two lists
+            # cannot drift apart. A skip or a redo touches neither.
+            raw_audio.append((audio_bytes, condition))
             print(f"  Sample {i + 1} accepted.\n")
             i += 1
             break
@@ -325,22 +370,37 @@ def main():
     report_pairwise(embeddings, labels)
 
     centroid = np.mean(embeddings, axis=0)
-    np.save(VOICEPRINT_PATH, centroid)
+    # Saved with the name of the encoder that produced it. That label is the
+    # only thing preventing a future run under a different encoder from scoring
+    # against this centroid and producing confident nonsense.
+    speaker_encoder.save_voiceprint(centroid, SPEAKER_ENCODER, VOICEPRINT_PATH)
 
     # Individual embeddings are kept so the centroid can be recomputed, a bad
     # sample dropped, or per condition analysis run later without re recording
     # anything. Not having these is why the previous voiceprint could only be
     # diagnosed indirectly through its norm.
+    # The audio is what survives an encoder change; the embeddings do not.
+    # Resemblyzer is 256 dimensions and ECAPA is 192, with no conversion
+    # between them, so without this a swap means re recording all twelve.
+    audio_files = save_enrollment_audio(raw_audio, audio.get_sample_size(FORMAT))
+
     np.savez(
         ENROLLMENT_DATA_PATH,
         centroid=centroid,
         embeddings=np.array(embeddings),
         conditions=np.array(labels),
         voiced_seconds=np.array(durations),
+        # Stored so the mapping from embedding to recording is explicit in the
+        # file rather than implied by sort order, and so an npz written by a
+        # different encoder can never be mistaken for this one.
+        audio_files=np.array(audio_files),
+        encoder=np.array(SPEAKER_ENCODER),
     )
 
     print(f"\nCentroid saved to {VOICEPRINT_PATH}")
     print(f"Full enrollment data saved to {ENROLLMENT_DATA_PATH}")
+    print(f"{len(audio_files)} recordings kept in {ENROLLMENT_AUDIO_DIR}")
+    print("Those are what a future encoder re embeds. Do not delete them.")
     print(f"({len(embeddings)} samples, centroid norm {np.linalg.norm(centroid):.3f})")
     print("\nA centroid norm near 1.0 means the samples agree closely.")
     print("The previous poisoned voiceprint had a norm of 0.862.")
