@@ -372,11 +372,49 @@ TEMP_WAV        = os.path.expanduser("~/miles/build/command.wav")
 CAPTURE_WAKE_MISSES = True
 WAKE_MISS_DIR       = os.path.expanduser("~/miles/data/wake_misses")
 
-# Lower than WAKE_LOG_FLOOR on purpose. The failures that matter most may be the
-# ones scoring near zero, and those are exactly what the log floor hides. An
-# empty room sits around 0.01, so this still stays quiet when nothing happens.
-WAKE_MISS_FLOOR     = 0.05
+# Was 0.05, on the theory that the failures that matter most may be the ones
+# scoring near zero. The data disconfirmed the need rather than the theory.
+#
+# Measured Sep 6 2026 with the buffer at its 400 file cap:
+#
+#   <0.10       283      (71%)
+#   0.10-0.20    88
+#   0.20-0.30    19
+#   >=0.30       10
+#
+# Seventy one percent of the buffer was empty room, and because pruning keeps
+# the newest 400 by modification time, that noise was evicting the band that
+# actually sits near the 0.4 threshold. A capture floor low enough to record
+# everything is a capture floor that keeps the least interesting thing.
+#
+# 283 clips is already far more of the near zero case than anyone will listen
+# to, so the original question is answerable from what is on disk.
+WAKE_MISS_FLOOR     = 0.15
 WAKE_MISS_MAX_FILES = 400
+
+# ── Wake hit capture ──
+# The audio behind a wake that DID fire.
+#
+# wake_misses answers "why did she not hear me". It cannot answer "why did she
+# answer when I said nothing", because it only records scores below the
+# threshold and a false wake is by definition above it. That case had no audio
+# kept anywhere: archive_recording holds the command that followed, not the
+# sound that triggered the wake.
+#
+# Observed Sep 6 2026 in the new apartment, every wake still in the journal:
+# 0.75 "Oh shoot, this is weird.", 0.64 "(beep)", 0.50 "over here", 0.46
+# "We'll see you later.", and one genuine conversation at 0.43. CLAUDE.md
+# records the old room as separating cleanly, with an empty band from 0.365 to
+# 0.520. It does not separate here, and it now overlaps in both directions, so
+# no threshold value fixes it and the model itself is the thing to look at.
+# hey_nova.onnx is dated Apr 8 2026, predating both the gain tuning and this
+# room.
+#
+# The rolling window voice_main already keeps for near misses holds this audio
+# too. Nothing read it on the firing path.
+CAPTURE_WAKE_HITS   = True
+WAKE_HIT_DIR        = os.path.expanduser("~/miles/data/wake_hits")
+WAKE_HIT_MAX_FILES  = 300
 
 # Audio retained before the score, so the clip contains the phrase rather than
 # what followed it. The wake model reads 80ms frames, so this is 31 of them.

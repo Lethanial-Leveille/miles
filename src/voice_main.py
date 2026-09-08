@@ -227,6 +227,14 @@ try:
 
             print(f"Wake word detected! ({score:.2f})", flush=True)
 
+            # Saved before anything else touches the stream. _wake_window holds
+            # the audio that produced this score, and it is the only record of
+            # what actually triggered a wake: the recording archive starts
+            # after this point and so contains the command, not the trigger.
+            # Without it a false wake is a number with nothing behind it, which
+            # is exactly the hole wake_log had on the other side.
+            audio.save_wake_hit(list(_wake_window), float(score))
+
             # Flush the buffer so the command starts clean after the wake word
             for _ in range(int(audio.RATE / CHUNK * 0.5)):
                 audio.stream.read(CHUNK, exception_on_overflow=False)

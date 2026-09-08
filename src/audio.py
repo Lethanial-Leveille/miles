@@ -83,6 +83,7 @@ from config import (
     SPECULATIVE_TRANSCRIBE, SPECULATIVE_SILENCE_MS, SPECULATIVE_THREADS,
     SPECULATIVE_WAV,
     CAPTURE_WAKE_MISSES, WAKE_MISS_DIR, WAKE_MISS_MAX_FILES,
+    CAPTURE_WAKE_HITS, WAKE_HIT_DIR, WAKE_HIT_MAX_FILES,
 )
 from database import keep_voiceprint_sample, log_verification
 import timing
@@ -344,30 +345,55 @@ def listen_for_followup(timeout=10):
     return TEMP_WAV
 
 
-def save_wake_miss(frames, score):
-    """Keep the audio behind a near miss, named by score so the worst sort first.
+def _save_wake_clip(frames, score, directory, max_files, label):
+    """Keep the audio behind a wake decision, named by score so it sorts.
 
-    Never fatal. This is a diagnostic, and losing a clip is not a reason to lose
-    the wake loop."""
-    if not CAPTURE_WAKE_MISSES:
-        return None
+    Shared by both directions because they are the same operation and only the
+    question differs. wake_misses asks why she did not hear him; wake_hits asks
+    why she answered when he said nothing. Neither is answerable from a score
+    alone, which is the whole reason wake_log was insufficient.
+
+    Never fatal. These are diagnostics, and losing a clip is not a reason to
+    lose the wake loop."""
     try:
-        os.makedirs(WAKE_MISS_DIR, exist_ok=True)
+        os.makedirs(directory, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%dT%H%M%S_%f")[:-3]
-        dest  = os.path.join(WAKE_MISS_DIR, f"{score:.3f}_{stamp}.wav")
+        dest  = os.path.join(directory, f"{score:.3f}_{stamp}.wav")
         _write_wav(frames, dest)
 
         # Pruned by modification time rather than by name, because the name
         # leads with the score so it can be sorted by severity.
         existing = sorted(
-            (os.path.join(WAKE_MISS_DIR, f) for f in os.listdir(WAKE_MISS_DIR)
+            (os.path.join(directory, f) for f in os.listdir(directory)
              if f.endswith(".wav")), key=os.path.getmtime)
-        for stale in existing[:max(0, len(existing) - WAKE_MISS_MAX_FILES)]:
+        for stale in existing[:max(0, len(existing) - max_files)]:
             os.remove(stale)
         return dest
     except OSError as exc:
-        print(f"Could not save wake miss: {exc}", flush=True)
+        print(f"Could not save wake {label}: {exc}", flush=True)
         return None
+
+
+def save_wake_miss(frames, score):
+    """Audio behind a score that did NOT reach the threshold."""
+    if not CAPTURE_WAKE_MISSES:
+        return None
+    return _save_wake_clip(frames, score, WAKE_MISS_DIR, WAKE_MISS_MAX_FILES,
+                           "miss")
+
+
+def save_wake_hit(frames, score):
+    """Audio behind a score that DID reach the threshold.
+
+    The false wake case had no record at all. archive_recording keeps the
+    command spoken after the wake, which is a different sound: it cannot tell
+    you whether "hey nova" was ever said. Sep 6 2026 produced four wakes in a
+    row whose commands read as television and overheard conversation, and there
+    was no way to check what triggered any of them."""
+    if not CAPTURE_WAKE_HITS:
+        return None
+    return _save_wake_clip(frames, score, WAKE_HIT_DIR, WAKE_HIT_MAX_FILES,
+                           "hit")
 
 
 def archive_recording(wav_path, turn_type):

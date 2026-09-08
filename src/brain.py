@@ -13,7 +13,7 @@ from database import (save_message, get_seed_memories, get_episodic_memories,
                       get_shareable_memories, effective_tier)
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
-from tools import registry
+from tools import registry, Permission
 from database import log_tool_call
 import alerts
 
@@ -495,13 +495,30 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # second of latency rephrasing "Timer set."
             final_text = " ".join(spoken_parts).strip()
 
+            # A control tool is a state transition, not work, so there is
+            # nothing to confirm and nothing to say.
+            #
+            # This is the exception the fallback below needs, and leaving it
+            # out was a real defect. NOT_ADDRESSED_TO_YOU tells Nova to say
+            # nothing at all when speech was not aimed at her, so behaving
+            # correctly produces an empty spoken_parts, which then hit the
+            # fallback and spoke "Done." into a room she had just decided not
+            # to join. Observed Sep 6 2026: a false wake at 0.50 transcribed as
+            # "over here", the model called ignore, voice_main logged "Not
+            # addressed to Nova, staying quiet", and the word had already been
+            # said. The better she behaved, the more certain she was to speak.
+            only_control = all(
+                registry.get(r["block"].name).permission is Permission.CONTROL
+                for r in results
+            )
+
             # The model does not always say anything alongside a fire and
             # forget call. When it does not, this turn used to be completely
             # silent: the fallback was assigned to the returned string but
             # never spoken, so the database recorded a confirmation that was
             # never heard. Timers, reminders and cancellations all landed this
             # way, which read as the tool having failed when it had worked.
-            if not final_text:
+            if not final_text and not only_control:
                 final_text = "Done."
                 await loop.run_in_executor(None, speak, final_text)
 
@@ -513,7 +530,13 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         await tts_task
         final_text = accumulated
 
-    save_message("assistant", final_text, device=device)
+    # An empty response is a turn Nova deliberately stayed silent through, and
+    # writing it down puts a blank assistant message into the history that the
+    # next twenty turns read back as context. save_message is skipped rather
+    # than storing "", because get_recent_messages does not filter and the API
+    # rejects an empty content block.
+    if final_text:
+        save_message("assistant", final_text, device=device)
     return TurnResult(text=final_text, dismissed=dismissed, ignored=ignored)
 
 
