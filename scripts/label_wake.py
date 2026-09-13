@@ -41,9 +41,14 @@ Anything left unclear stays out of the evaluation rather than being guessed.
 
 import argparse
 import csv
+import math
 import os
 import subprocess
 import sys
+import tempfile
+import wave
+
+import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "src"))
@@ -52,6 +57,21 @@ from config import (WAKE_MISS_DIR, WAKE_HIT_DIR, WAKE_THRESHOLD,  # noqa: E402
                     SPEAKER_NAME_HINT)
 
 SETS = {"hits": WAKE_HIT_DIR, "misses": WAKE_MISS_DIR}
+
+# Playback peak to normalize to. These clips are not listenable raw: the loudest
+# near miss in the archive peaks at -40 dBFS against -10 for real close speech,
+# which is thirty dB down, and through desk speakers it is silence. Judging a
+# clip you cannot hear is not labelling, it is guessing.
+#
+# This changes what the ear receives and never what the model scored. The score
+# was computed from the original samples and is printed beside the gain applied,
+# so a boosted clip can never be mistaken for a loud one.
+PLAYBACK_TARGET_DBFS = -3.0
+
+# Ceiling on the boost, so a clip containing nothing does not arrive as a wall
+# of amplified noise floor. An empty room sits near -70 dBFS peak, which would
+# otherwise be lifted by 67 dB.
+PLAYBACK_MAX_GAIN_DB = 36.0
 LABELS = {"y": "wake_phrase", "n": "not_wake_phrase", "u": "unclear"}
 FIELDS = ["file", "score", "label"]
 
@@ -99,6 +119,62 @@ def _clips(directory, minimum):
             continue
     scored.sort(reverse=True)
     return [(s, n) for s, n in scored if s >= minimum]
+
+
+def _levels(path):
+    """Peak and RMS in dBFS, so a clip can be described before it is played."""
+    with wave.open(path, 'rb') as wf:
+        raw = wf.readframes(wf.getnframes())
+        params = wf.getparams()
+    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float64) / 32768.0
+    if not samples.size:
+        return None, None, params, samples
+    peak = float(np.abs(samples).max())
+    rms = float(np.sqrt((samples ** 2).mean()))
+    to_db = lambda v: 20 * math.log10(v) if v > 0 else None      # noqa: E731
+    return to_db(peak), to_db(rms), params, samples
+
+
+def _normalized_copy(path, target_dbfs=PLAYBACK_TARGET_DBFS):
+    """A boosted copy for listening, plus the gain applied in dB.
+
+    Returns (path_to_play, gain_db, peak_dbfs). The copy goes to a temp file
+    rather than touching the capture directory, which is a ring buffer holding
+    the only record of what the model actually heard."""
+    peak_db, _, params, samples = _levels(path)
+    if peak_db is None:
+        return path, 0.0, None
+
+    gain_db = min(target_dbfs - peak_db, PLAYBACK_MAX_GAIN_DB)
+    if gain_db <= 0.5:
+        return path, 0.0, peak_db
+
+    boosted = np.clip(samples * (10 ** (gain_db / 20.0)), -1.0, 1.0)
+    handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    handle.close()
+    with wave.open(handle.name, 'wb') as wf:
+        wf.setnchannels(params.nchannels)
+        wf.setsampwidth(params.sampwidth)
+        wf.setframerate(params.framerate)
+        wf.writeframes((boosted * 32767).astype(np.int16).tobytes())
+    return handle.name, gain_db, peak_db
+
+
+def _play(path, device):
+    """Play one clip, and say so when it fails.
+
+    stderr is surfaced rather than captured. A swallowed aplay error looks
+    exactly like a clip that is simply too quiet to hear, and those need
+    opposite responses. That confusion is what made this tool unusable on its
+    first run."""
+    done = subprocess.run(["aplay", "-D", device, path],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        message = (done.stderr or "").strip().splitlines()
+        print(f"  aplay failed on {device}: "
+              f"{message[-1] if message else done.returncode}")
+        return False
+    return True
 
 
 def _speaker_device():
@@ -167,12 +243,25 @@ def cmd_label(which, minimum, relabel):
         print(f"  [{index}/{len(todo)}]  score {score:.3f}   {name}")
         print(f"  {question}")
 
-        while True:
-            subprocess.run(["aplay", "-D", device, path], capture_output=True)
-            answer = input("  > ").strip().lower()
-            if answer == "r":
-                continue
-            break
+        play_path, gain_db, peak_db = _normalized_copy(path)
+        if peak_db is not None:
+            detail = f"  level: peak {peak_db:.1f} dBFS"
+            if gain_db:
+                detail += f", boosted {gain_db:.0f} dB for playback"
+            if peak_db < -35:
+                detail += "   (far below close speech, which peaks near -10)"
+            print(detail)
+
+        try:
+            while True:
+                _play(play_path, device)
+                answer = input("  > ").strip().lower()
+                if answer == "r":
+                    continue
+                break
+        finally:
+            if play_path != path:
+                os.unlink(play_path)
 
         if answer == "q":
             break

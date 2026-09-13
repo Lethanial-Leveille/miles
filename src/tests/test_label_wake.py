@@ -9,7 +9,11 @@ label_speakers.py warns about one level up.
 
 import csv
 import importlib.util
+import math
 import os
+import wave
+
+import numpy as np
 
 import pytest
 
@@ -96,3 +100,103 @@ def test_the_three_verdicts_are_distinct():
     """unclear must not collapse into either answer. A guessed label is worse
     than a missing one, because it corrupts the evaluation silently."""
     assert len(set(lw.LABELS.values())) == 3
+
+
+# ── playback normalization ──
+# The tool was unusable on its first run for a reason nothing here would have
+# caught: the clips are 30 to 38 dB below normal speech, so aplay played them
+# perfectly and the room heard nothing. Judging a clip you cannot hear is not
+# labelling, it is guessing.
+
+
+def _wav(tmp_path, name, peak, seconds=0.5, rate=16000):
+    """A tone at a chosen peak amplitude, so gain is checkable in dB."""
+    path = str(tmp_path / name)
+    t = np.linspace(0, seconds, int(rate * seconds), endpoint=False)
+    samples = (np.sin(2 * np.pi * 440 * t) * peak * 32767).astype(np.int16)
+    with wave.open(path, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(samples.tobytes())
+    return path
+
+
+def test_a_quiet_clip_is_boosted_to_the_target(tmp_path):
+    """A real near miss peaks near -40 dBFS against -10 for close speech."""
+    path = _wav(tmp_path, "quiet.wav", 10 ** (-30 / 20.0))
+    out, gain_db, peak_db = lw._normalized_copy(path)
+
+    assert peak_db == pytest.approx(-30, abs=0.5)
+    assert gain_db == pytest.approx(27, abs=0.5)
+    assert lw._levels(out)[0] == pytest.approx(lw.PLAYBACK_TARGET_DBFS, abs=0.5)
+    os.unlink(out)
+
+
+def test_the_boost_is_capped(tmp_path):
+    """An empty room sits near -70 dBFS. Without a ceiling it would arrive as a
+    wall of amplified noise floor, which is worse than silence because it is
+    loud and still carries nothing."""
+    path = _wav(tmp_path, "silent.wav", 10 ** (-70 / 20.0))
+    out, gain_db, _ = lw._normalized_copy(path)
+
+    assert gain_db == pytest.approx(lw.PLAYBACK_MAX_GAIN_DB)
+    os.unlink(out)
+
+
+def test_a_loud_clip_is_played_untouched(tmp_path):
+    """No temp file, no copy, and the caller must not try to delete the
+    original. The return value is the original path itself."""
+    path = _wav(tmp_path, "loud.wav", 0.9)
+    out, gain_db, _ = lw._normalized_copy(path)
+
+    assert out == path
+    assert gain_db == 0.0
+
+
+def test_the_original_clip_is_never_modified(tmp_path):
+    """The capture directories are ring buffers holding the only record of what
+    the model actually heard. Boosting is for the ear, and writing the boost
+    back would destroy the evidence the score was computed from."""
+    path = _wav(tmp_path, "quiet.wav", 10 ** (-30 / 20.0))
+    before = open(path, 'rb').read()
+
+    out, _, _ = lw._normalized_copy(path)
+    assert open(path, 'rb').read() == before
+    os.unlink(out)
+
+
+def test_boosting_does_not_clip_into_distortion(tmp_path):
+    path = _wav(tmp_path, "quiet.wav", 10 ** (-30 / 20.0))
+    out, _, _ = lw._normalized_copy(path)
+
+    with wave.open(out, 'rb') as wf:
+        samples = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+    assert np.abs(samples).max() < 32767
+    os.unlink(out)
+
+
+def test_an_empty_clip_does_not_raise(tmp_path):
+    """A truncated write leaves a header and no frames. A diagnostic tool that
+    crashes on its own corrupt input is worse than one that skips it."""
+    path = str(tmp_path / "empty.wav")
+    with wave.open(path, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+    out, gain_db, peak_db = lw._normalized_copy(path)
+    assert out == path and gain_db == 0.0 and peak_db is None
+
+
+def test_a_failed_play_is_reported_not_swallowed(tmp_path, capsys, monkeypatch):
+    """The defect that made the first run undiagnosable.
+
+    capture_output hid aplay's stderr, so a genuine device failure looked
+    exactly like a clip too quiet to hear. Those need opposite responses."""
+    class _Fail:
+        returncode = 1
+        stderr = "aplay: main:831: audio open error: No such file or directory"
+
+    monkeypatch.setattr(lw.subprocess, "run", lambda *a, **k: _Fail())
+    assert lw._play("x.wav", "plughw:9,9") is False
+    assert "audio open error" in capsys.readouterr().out
