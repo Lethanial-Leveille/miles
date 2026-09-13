@@ -39,6 +39,29 @@ class Permission(Enum):
     CONTROL = "control"
 
 
+from database import TIERS
+
+PERMISSION_TIERS = {
+    Permission.READ: "genin",
+    Permission.CONTROL: "genin",
+    Permission.WRITE: "chunin",
+    Permission.EXTERNAL_WRITE: "hokage",
+}
+
+
+def permits(spec: 'ToolSpec', tier: str) -> bool:
+    """Pure function to decide if a tier is allowed to use a tool.
+
+    No globals, no database reads, no clock. Policy is data, mechanism is here.
+    """
+    try:
+        required = spec.min_tier if spec.min_tier is not None else PERMISSION_TIERS[spec.permission]
+        return TIERS.index(tier) >= TIERS.index(required)
+    except (KeyError, ValueError):
+        # A missing permission mapping or an unknown tier defaults to deny.
+        return False
+
+
 # Lowercase and underscores only. The API permits hyphens and uppercase; this
 # is deliberately narrower, partly to match the no hyphens rule and partly
 # because one tool named get_weather and another named get-weather would be a
@@ -62,6 +85,7 @@ class ToolSpec:
     # the field that replaces the hardcoded needs_data whitelist in brain.py.
     returns_to_model: bool
     func: Callable[..., Any]
+    min_tier: str | None = None
 
     @property
     def summary(self) -> str:
@@ -107,6 +131,7 @@ class ToolRegistry:
         input_schema: dict,
         permission: Permission,
         returns_to_model: bool,
+        min_tier: str | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Decorator. Registers a function as a tool and returns it unchanged.
 
@@ -124,6 +149,7 @@ class ToolRegistry:
                 permission=permission,
                 returns_to_model=returns_to_model,
                 func=func,
+                min_tier=min_tier,
             )
             return func
 

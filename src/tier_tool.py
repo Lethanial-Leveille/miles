@@ -46,14 +46,11 @@ from tools import Permission, tool
         },
         "required": ["tier"],
     },
-    permission=Permission.WRITE,
+    permission=Permission.EXTERNAL_WRITE,
     returns_to_model=True,
+    min_tier="hokage",
 )
 def lower_access(tier, person=None):
-    if effective_tier() != "hokage":
-        return ("Refused. Only Lethanial at full access can change clearance, "
-                "and that is not who is speaking.")
-
     if not person:
         result = set_tier_override(tier)
         if result is None:
