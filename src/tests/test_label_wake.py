@@ -200,3 +200,81 @@ def test_a_failed_play_is_reported_not_swallowed(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(lw.subprocess, "run", lambda *a, **k: _Fail())
     assert lw._play("x.wav", "plughw:9,9") is False
     assert "audio open error" in capsys.readouterr().out
+
+
+# ── the tool must not corrupt the dataset it is labelling ──
+# Measured Sep 13 2026 on the first real session: replaying six near miss clips
+# produced three new wake_hits at 0.474, 0.586 and 0.687 plus three new
+# wake_misses, every one of them the microphone hearing our own speakers. Those
+# rows sit in the capture directories indistinguishable from room audio.
+
+
+def test_the_voice_service_is_stopped_while_clips_play(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            returncode = 0
+            stdout = "active" if cmd[:2] == ["systemctl", "is-active"] else ""
+        return R()
+
+    monkeypatch.setattr(lw.subprocess, "run", fake_run)
+    with lw._voice_service_paused() as stopped:
+        assert stopped is True
+        assert ["sudo", "systemctl", "stop", "miles-voice"] in calls
+
+
+def test_the_service_is_restarted_even_when_labelling_raises(monkeypatch):
+    """The restart is in a finally for this reason. Ctrl+C is the normal way to
+    end a labelling session, and leaving the room deaf afterwards would be a
+    worse bug than the one being fixed."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            returncode = 0
+            stdout = "active" if cmd[:2] == ["systemctl", "is-active"] else ""
+        return R()
+
+    monkeypatch.setattr(lw.subprocess, "run", fake_run)
+    with pytest.raises(KeyboardInterrupt):
+        with lw._voice_service_paused():
+            raise KeyboardInterrupt
+    assert ["sudo", "systemctl", "start", "miles-voice"] in calls
+
+
+def test_a_service_already_stopped_is_not_restarted(monkeypatch):
+    """Putting the room back the way it was found, not the way it is assumed to
+    have been. Starting a service the user had deliberately stopped is a
+    surprise, and this tool is run precisely when things are being poked at."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            returncode = 0
+            stdout = "inactive" if cmd[:2] == ["systemctl", "is-active"] else ""
+        return R()
+
+    monkeypatch.setattr(lw.subprocess, "run", fake_run)
+    with lw._voice_service_paused() as stopped:
+        assert stopped is False
+    assert not [c for c in calls if "start" in c]
+
+
+def test_a_failed_stop_does_not_abort_labelling(monkeypatch, capsys):
+    """Warn and continue rather than refuse. Someone labelling on a machine
+    without passwordless sudo still needs the tool to work; they just need to
+    know the capture directories will pick up the playback."""
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode = 0 if cmd[:2] == ["systemctl", "is-active"] else 1
+            stdout = "active" if cmd[:2] == ["systemctl", "is-active"] else ""
+        return R()
+
+    monkeypatch.setattr(lw.subprocess, "run", fake_run)
+    with lw._voice_service_paused() as stopped:
+        assert stopped is False
+    assert "Could not stop" in capsys.readouterr().out

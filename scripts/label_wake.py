@@ -40,6 +40,7 @@ Anything left unclear stays out of the evaluation rather than being guessed.
 """
 
 import argparse
+import contextlib
 import csv
 import math
 import os
@@ -177,6 +178,49 @@ def _play(path, device):
     return True
 
 
+def _service_active(unit="miles-voice"):
+    done = subprocess.run(["systemctl", "is-active", unit],
+                          capture_output=True, text=True)
+    return done.stdout.strip() == "active"
+
+
+@contextlib.contextmanager
+def _voice_service_paused(unit="miles-voice"):
+    """Stop the voice loop while clips are playing, and always restart it.
+
+    Without this the tool corrupts the dataset it is being used to label.
+    Measured Sep 13 2026 on the first real session: replaying six near miss
+    clips through the speakers produced three new wake_hits at 0.474, 0.586 and
+    0.687 plus three new wake_misses, all of them the microphone hearing our own
+    playback. Those rows then sit in the capture directories indistinguishable
+    from room audio, and the next person to retrain against them is training on
+    a feedback loop.
+
+    The second reason is worse than the first. A clip that transcribes as a
+    command gets executed. Nothing about these recordings is chosen to be safe
+    to say aloud near an assistant that sets timers and stores memories.
+
+    Restart is in a finally, so Ctrl+C, an exception and a normal exit all put
+    the room back the way they found it."""
+    if not _service_active(unit):
+        yield False
+        return
+
+    print(f"Stopping {unit} so playback cannot be heard as a wake word.")
+    stopped = subprocess.run(["sudo", "systemctl", "stop", unit],
+                             capture_output=True, text=True).returncode == 0
+    if not stopped:
+        print(f"  Could not stop {unit}. Stop it yourself before labelling, or "
+              f"every clip you play may be captured as a fresh sample.")
+    try:
+        yield stopped
+    finally:
+        if stopped:
+            print(f"\nRestarting {unit}.")
+            subprocess.run(["sudo", "systemctl", "start", unit],
+                           capture_output=True)
+
+
 def _speaker_device():
     """Resolved by name, since ALSA card numbers shift between boots.
 
@@ -237,6 +281,13 @@ def cmd_label(which, minimum, relabel):
     print("  y = yes, I said it    n = no    u = unclear    r = replay")
     print("  s = skip              q = quit\n")
 
+    with _voice_service_paused():
+        _label_loop(todo, directory, rows, device, question)
+
+    print(f"\nLabels in {_manifest_path(directory)}")
+
+
+def _label_loop(todo, directory, rows, device, question):
     for index, (score, name) in enumerate(todo, 1):
         path = os.path.join(directory, name)
         print("=" * 68)
@@ -273,8 +324,6 @@ def cmd_label(which, minimum, relabel):
                       "label": LABELS[answer]}
         _save(directory, rows)
         print(f"  -> {LABELS[answer]}\n")
-
-    print(f"\nLabels in {_manifest_path(directory)}")
 
 
 def main():
