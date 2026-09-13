@@ -497,14 +497,55 @@ the right unit of work if either is wanted.
    history sit after the breakpoint and are re prefilled every turn. Four
    breakpoints are available and one is used. Note that trimming assistant
    turns to thirty words already cut this cost, so measure before adding more.
-3. **Ask for a short opening sentence — 200 to 300ms, free.** The 608ms
-   sentence assembly stage is the model generating the first sentence before
-   anything can be spoken. A shorter opener starts audio sooner and serves the
+3. **Ask for a short opening sentence — 200 to 300ms, free.** **The 608ms
+   below is stale and disputed; see the `first_sentence_ms` entry after this
+   list before acting on this idea.** The sentence assembly stage is the model
+   generating the first sentence before anything can be spoken. A shorter opener starts audio sooner and serves the
    brevity goal at the same time. Test it the way the length instruction was
    tested, with repeated sampling.
 4. **Run verification concurrently with transcription — 275ms.** They are
    independent and both operate on the same wav. Needs care so the transcript
    still reaches the verification log, which is why it was not done inline.
+
+### `first_sentence_ms` is unmeasured, and carries two numbers (Sep 13 2026)
+
+Deferred out of the documentation reorganization rather than fixed, because
+fixing it needs a collection run and this was a docs only session.
+
+**The explanation attached to this stage was wrong.** Both `docs/LATENCY.md` and
+idea 3 above describe it as the model generating a first sentence while
+`StreamRouter` buffers `LOOKAHEAD_CHARS = 50` before anything can flush. Native
+tool use removed the lookahead entirely. `stream_router.py` has no lookahead
+buffer, no `ACTION_PREFIX`, and `LOOKAHEAD_CHARS` does not exist anywhere in the
+codebase. A short first sentence now flushes as soon as it is complete.
+
+So the 50 character wait, which was the *mechanical* part of this stage and the
+part that looked cheap to remove, is already gone. What remains is the model
+actually generating the sentence, which is not removable the same way.
+
+**Worse, the stage has two live figures and they disagree:**
+
+| Source | Figure |
+|---|---|
+| The turn budget, Aug 12 2026 | `first_sentence` **288ms** |
+| Idea 3 above | "the **608ms** sentence assembly stage" |
+
+One repo, one stage, two numbers, and this file already says that two latency
+figures means nobody trusts either. Neither was taken after the lookahead was
+removed, so both describe a pipeline that no longer runs.
+
+**What to do, in order:**
+
+1. Run `python3 scripts/analyze_timing.py` over a day of real use, split by
+   `turn_type`, and read `first_sentence_ms` fresh.
+2. Replace both figures with the one result. Do not add a third.
+3. Only then judge idea 3. If the remaining time is mostly generation, "ask for
+   a short opening sentence" is still the right lever. If it is small now, that
+   idea has already been half paid by the lookahead removal and should be
+   reranked or dropped.
+
+**Do not estimate this one.** It was wrong in mechanism for weeks precisely
+because nobody reread it against `stream_router.py`.
 
 ## Not blocked, and worth doing anytime
 
