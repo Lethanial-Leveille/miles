@@ -92,13 +92,16 @@ warnings it cost before Sep 6 2026, is in
 │   ├── memory_tool.py         # remember tool, with supersede and expiry
 │   ├── system_state.py        # get_system_state tool: uptime, temp, latency, commit
 │   ├── tier_tool.py           # lower_access tool: demotion by voice, never escalation
+│   ├── calendar_tools.py      # Google Calendar reads, freebusy, confirmed create/edit/delete
+│   ├── oura_tools.py          # Oura readiness, sleep, heart rate, activity
+│   ├── pending_action.py      # confirm_pending_action: outside writes wait a turn
 │   ├── timing.py              # Per turn latency instrumentation
 │   ├── brain.py               # ask_nova orchestrator
 │   ├── auth.py                # JWT + bcrypt password hashing
 │   ├── server.py              # FastAPI REST + WebSocket
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (500 passing, 6 skipped, Sep 13 2026)
+│   └── tests/                 # pytest suite (596 passing, 6 skipped, Sep 13 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -121,6 +124,9 @@ warnings it cost before Sep 6 2026, is in
 │   ├── label_speakers.py      # label who is speaking in the eval clips, by ear
 │   ├── label_wake.py          # label wake hits and misses by ear, worst first
 │   ├── healthcheck.py         # what broke, on a timer, not by trying to use it
+│   ├── google_auth.py         # one time Google OAuth, writes data/token.json
+│   ├── oura_auth.py           # one time Oura OAuth, writes data/oura_token.json
+│   ├── list_calendars.py      # every calendar the Google token sees, and if selected
 │   ├── analyze_timing.py      # latency analysis over timing_log
 │   ├── analyze_verification.py # speaker verification analysis
 │   ├── compare_whisper.py     # whisper model comparison harness
@@ -232,6 +238,13 @@ of the value itself.
   `use_speaker_boost=True`, `speed=1.00`. **Changing stability means re
   rendering the whole phrase bank.**
 
+### Tools and permissions — why: [BRAIN.md](docs/BRAIN.md#tools-and-the-permission-gate)
+- `PERMISSION_TIERS` (in `tools.py`): READ `genin`, CONTROL `genin`, WRITE
+  `chunin`, EXTERNAL_WRITE `hokage`. A tool's `min_tier` can only raise its floor.
+- Raised by `min_tier`: `remember` to `jonin`; `lower_access`, every calendar
+  tool and every Oura tool to `hokage`.
+- `CONFIRM_WINDOW_S = 120` (in `pending_action.py`, not `config.py`)
+
 ### Storage and other
 - `DB_PATH = ~/miles/data/miles.db`
 - `ARCHIVE_RECORDINGS = True`, `ARCHIVE_DIR = ~/miles/data/recordings`,
@@ -253,6 +266,8 @@ TTS: ElevenLabs (Victoria, eleven_flash_v2), pcm_22050 piped to aplay.
 Voice auth: Resemblyzer (256 dim cosine similarity).
 Memory: SQLite WAL mode, schema migrations to version 21.
 Weather: OpenWeatherMap.
+Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
+Health: Oura API v2, OAuth.
 Backend: FastAPI + uvicorn + python-jose + passlib (bcrypt) + python-dotenv.
 Tunnel: cloudflared (dashboard managed).
 Process management: systemd.
@@ -283,6 +298,11 @@ Landed since v0.7.1, unreleased:
   `netcheck` cause diagnosis, spoken wake acks
 - Local intent for `set_timer`, `time_of_day`, `cancel_reminder`, `dismiss`
 - Speculative transcription during the endpoint wait
+- Native tool use: the registry in `tools.py` and the tool loop in `brain.py`,
+  replacing bracket action tags
+- Permission gate enforced in the executor, one tier per turn
+- Google Calendar and Oura tools; calendar create, edit and delete confirmed
+  on the next turn
 
 ## What Is Next
 
@@ -324,5 +344,6 @@ Before ending any session, work the end of session checklist in
 
 API keys (.env, ~/.bashrc), voiceprint (.npy), enrollment data (.npz), database
 (.db), recording archive, Whisper weights (.bin), wake word model (.onnx),
-compiled Whisper binaries, /build temp files, ~/.cloudflared/*.json. All
-gitignored. Always run `git status` and confirm before `git add .`.
+compiled Whisper binaries, /build temp files, ~/.cloudflared/*.json, OAuth
+tokens (data/token.json, data/oura_token.json) and the Google client
+(credentials.json). All gitignored. Always run `git status` and confirm before `git add .`.

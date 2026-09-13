@@ -13,7 +13,6 @@ from database import (save_message, get_seed_memories, get_episodic_memories,
                       get_shareable_memories, effective_tier)
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
-from tools import registry, Permission
 from tools import registry, Permission, permits
 from database import log_tool_call
 import alerts
@@ -26,6 +25,9 @@ import actions        # noqa: F401
 import memory_tool    # noqa: F401
 import system_state   # noqa: F401
 import tier_tool      # noqa: F401
+import calendar_tools # noqa: F401
+import oura_tools     # noqa: F401
+import pending_action # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
                     HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN)
@@ -242,23 +244,31 @@ def _with_alerts(messages: list, pending: list) -> list:
     }]
 
 
-def _run_tools(tool_uses, model):
+def _run_tools(tool_uses, model, tier):
     """Execute every tool the model called, in order, logging each one.
 
     Runs on an executor thread from the caller, because the tool functions are
     synchronous: weather blocks on HTTP, and the timer and reminder handlers
     spawn threads. A failure returns its message as the result with is_error
     set rather than raising, so one broken tool cannot take down the turn and
-    the model still gets told what happened."""
+    the model still gets told what happened.
+
+    tier is the one this turn was assembled under, passed in rather than read
+    from the database here. ask_nova_async already gates the prompt on it, and
+    reading effective_tier() a second time gave the gate its own source of
+    truth: once voice verification passes a guest's tier through, the prompt
+    would treat them as a guest while the gate still saw hokage.
+
+    A refusal is a result, not an exception. Raising would end the turn in
+    silence; returning it lets Nova say out loud that she is not allowed."""
     results = []
-    current_tier = effective_tier()
-    
     for block in tool_uses:
         started = time.monotonic()
         try:
             spec = registry.get(block.name)
-            if not permits(spec, current_tier):
-                output = f"Refused: clearance level {current_tier} is too low to use {block.name}."
+            if not permits(spec, tier):
+                output = (f"Refused: {block.name} needs more clearance than "
+                          f"{tier}. Say you are not allowed to do that.")
                 is_error = True
             else:
                 output = registry.call(block.name, dict(block.input))
@@ -287,6 +297,9 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     """
     model = _select_model()
     timing.note_model(model)
+    # Every Claude turn advances the confirmation clock, so an event proposed
+    # on this turn can only be approved on the next one.
+    pending_action.begin_turn()
 
     save_message("user", user_text, device=device)
     # Everything personal is gated on tier here rather than asked for in the
@@ -406,7 +419,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # stopwatch, so tool_ms reported whichever finished last. A weather call
         # that took 580ms logged 6006ms, because what it was really measuring
         # was the bridge sentence playing through the speaker.
-        tool_future = loop.run_in_executor(None, _run_tools, tool_uses, model)
+        tool_future = loop.run_in_executor(None, _run_tools, tool_uses, model, tier)
         tool_start  = time.monotonic()
         results     = await tool_future
         timing.note_tool((time.monotonic() - tool_start) * 1000.0)
@@ -480,14 +493,16 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
                     followup_message = await stream2.get_final_message()
 
-                final_text += round_text
+                # Joined with a space. Concatenated bare, a sentence ending one
+                # round ran into the next in history: "Monday.LeetCode".
+                final_text = f"{final_text} {round_text}".strip()
                 more_tools = [b for b in followup_message.content
                               if b.type == "tool_use"]
                 if not more_tools:
                     break
 
                 more_results = await loop.run_in_executor(
-                    None, _run_tools, more_tools, model)
+                    None, _run_tools, more_tools, model, tier)
                 followup_messages = followup_messages + [
                     {"role": "assistant", "content": followup_message.content},
                     {"role": "user", "content": _tool_result_blocks(more_results)},

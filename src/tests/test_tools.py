@@ -1,6 +1,5 @@
 import pytest
 
-from tools import Permission, ToolError, ToolRegistry
 from tools import Permission, ToolError, ToolRegistry, permits
 
 
@@ -245,3 +244,23 @@ def test_permits_min_tier_override(reg):
     assert not permits(spec, "chunin")
     assert permits(spec, "jonin")
     assert permits(spec, "hokage")
+
+
+def test_min_tier_cannot_lower_the_floor(reg):
+    """Asking for less than the category requires still gets the category's
+    floor. Otherwise one keyword opens an external write to a guest."""
+    _add(reg, name="t_ext", permission=Permission.EXTERNAL_WRITE, min_tier="genin")
+    spec = reg.get("t_ext")
+    assert not permits(spec, "jonin")
+    assert permits(spec, "hokage")
+
+
+def test_misspelled_min_tier_fails_at_registration(reg):
+    with pytest.raises(ToolError):
+        _add(reg, name="t_typo", permission=Permission.READ, min_tier="hokge")
+
+
+@pytest.mark.parametrize("tier", ["genin", "chunin", "jonin", "hokage"])
+def test_control_is_never_gated(reg, tier):
+    _add(reg, name="t_control", permission=Permission.CONTROL)
+    assert permits(reg.get("t_control"), tier)

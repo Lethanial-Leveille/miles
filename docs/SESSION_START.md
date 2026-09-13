@@ -85,9 +85,8 @@ new drift is caught.
 | Claim | How to check | Last verified |
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
-| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Aug 11 2026 (7) |
-| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Aug 11 2026 (9) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Aug 11 2026 (279) |
+| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 13 2026 (19) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (596) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -750,3 +749,59 @@ Commands in all docs are now written to run **from the repo root**
 (`python3 scripts/check_gain.py`), which is what the existing `scripts/` entries
 already assumed. The `../build/` and `../whisper.cpp/` paths in the moved
 docstrings were relative to `src/` and are now repo root relative.
+
+### Permission gate enforced, and outside writes wait a turn (Sep 13 2026) (DONE)
+
+`Permission` was recorded on every tool from the migration onward and read by
+nothing; `tools.py` said "defined now, enforced later". `permits()` in the
+executor enforces it now. The mechanism and its rules are in
+[BRAIN.md](BRAIN.md#tools-and-the-permission-gate). This entry is why the choices
+went the way they did.
+
+**Confirmation is enforced by turn order, not by instruction.** Rejected: a
+prompt rule to always ask first, which is a suggestion and the first thing a long
+conversation erodes; and a confirm tool that takes the event details, which would
+let the model confirm a different event than the one read back. Chosen: the
+proposal is held in code, confirm takes only yes or no, and it is accepted only
+on the next turn inside `CONFIRM_WINDOW_S`.
+
+**Only EXTERNAL_WRITE is confirmed.** Timers, reminders and memories live on
+this Pi and are undone by voice. A calendar write lands on a system other people
+read. Confirming everything would make "yes" the word said without listening.
+
+**Private reads are hokage through `min_tier`, not a fifth `Permission`.**
+Sensitivity is per tool, and a new category would have to be threaded through
+every place that switches on the four. `min_tier` can only raise, so it cannot be
+used to weaken the table.
+
+**`lower_access` is WRITE again.** It had been moved to EXTERNAL_WRITE to reach
+hokage, which mislabelled a local database write and broke
+`test_registered_tools`. `min_tier` gives it the floor without the wrong label.
+
+**Oura and calendar results are shaped for the model, not passed through.**
+Units in every field name, local times already formatted, busy blocks merged,
+free gaps computed. Each came from a wrong answer, recorded in
+[INCIDENTS.md](INCIDENTS.md#calendar-and-sleep-tools-answered-confidently-and-wrong-sep-13-2026).
+
+### Calendar edit and delete look events up by title and day (Sep 13 2026) (DONE)
+
+**Not by event id.** Conversation history stores what Nova said, not tool
+results, so an id from a listing does not survive to the turn where he says
+"delete it". Rejected: returning ids and trusting the model to carry them, which
+fails silently the moment it has to guess one. Chosen: the tool takes title words
+and a day, code requires exactly one match on the MILES calendar, and anything
+else is answered with what is actually there.
+
+**MILES calendar only, for now.** Shared calendars make a delete reach other
+people. Widen it only after the confirmation flow has earned trust in real use.
+
+**Single occurrences only.** The instance id is all the lookup ever holds, so a
+repeating event cannot be deleted as a series by accident, and the read back says
+so.
+
+### The Oura client secret is not rotated (Sep 13 2026) (DECIDED)
+
+It sat as a fallback default in the untracked `scripts/oura_auth.py`, was never
+committed (every commit in history checked), and was moved into `.env`.
+Lethanial chose not to rotate it. Recorded so a later session does not reopen it;
+revisit only if the file or `.env` is ever exposed.

@@ -1048,3 +1048,40 @@ encoders, which is the decision in front of us. Not enough for a precise error
 rate, and the genuine set is *presumed* his rather than labelled, so the false
 acceptance figures are optimistic. Do not quote the EER as a property of the
 system.
+
+
+## Tools: calendar and Oura follow ups (Sep 13 2026)
+
+Left over from landing the permission gate, the calendar and Oura tools, and
+next turn confirmation. The design is in `docs/BRAIN.md`; this is what waited,
+and why.
+
+### Calendar listing costs one request per selected calendar
+
+Measured Sep 13 2026 by hand, not through `timing_log`: "tomorrow" across nine
+selected calendars took 2.4s, on the voice path, plus the `calendarList` call in
+front of it. A batch request or a small thread pool would collapse it. Not done
+yet because correctness came first, and a speed change here should be measured in
+`timing_log` before and after rather than quoted from one run.
+
+### A "yes" that sounds like a goodbye never reaches Claude
+
+`_DISMISS_WORD` in `local_intent.py` matches "that's it", "all set" and "i'm
+good". "Yeah, that's it" as the answer to a read back is classified as dismiss,
+so the proposal expires and nothing is written. That fails safe. The fix, if it
+is ever observed, is to skip the dismiss gate while `pending_action` holds a
+proposal from the previous turn. Not done because it couples local intent to
+confirmation state for a case nobody has hit yet.
+
+### Google OAuth publishing status is unverified
+
+It cannot be read from the Pi. If the Google Cloud app is still in Testing,
+refresh tokens expire seven days after consent. The token was created Sep 13
+2026, so every calendar tool would start failing around Sep 20. Check the
+console.
+
+### Pending confirmations do not survive a restart
+
+They live in memory, per process. A restart between the question and the answer
+loses the proposal, and the "yes" gets "nothing is waiting". Accepted, because
+the confirmation window is two minutes and restarts are rare.

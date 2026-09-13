@@ -7,6 +7,7 @@
 !.env.example
 credentials.json
 data/token.json
+data/oura_token.json
 
 # ── Personal data ──
 # data/ holds the database, the seed corpus, and the recording archive. The
