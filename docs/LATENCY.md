@@ -73,8 +73,12 @@ for a sentence boundary before anything can reach TTS.
 > **That mechanism no longer exists.** Native tool use removed the lookahead
 > entirely, and `stream_router.py` now flushes a sentence as soon as it is
 > complete. The 288ms figure predates that change, so the stage is unmeasured
-> at present rather than known to be optimizable. See
-> [BRAIN.md](BRAIN.md#streaming).
+> at present rather than known to be optimizable. It also carries a
+> second, disagreeing figure of **608ms** in
+> [BACKEND_TODO.md](BACKEND_TODO.md), and neither number was taken after
+> the lookahead was removed. See [BRAIN.md](BRAIN.md#streaming) for the
+> mechanism and BACKEND_TODO for what to measure, in what order, before
+> acting on either figure.
 
 ## History
 
