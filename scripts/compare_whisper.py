@@ -12,9 +12,9 @@ changes, and on which recordings, so differences are printed in full next to
 the SNR of the audio that produced them.
 
 Usage:
-  python3 compare_whisper.py --model ../whisper.cpp/models/ggml-tiny.en.bin
-  python3 compare_whisper.py --audio-ctx 750
-  python3 compare_whisper.py --model <path> --limit 40 --worst-snr
+  python3 scripts/compare_whisper.py --model whisper.cpp/models/ggml-tiny.en.bin
+  python3 scripts/compare_whisper.py --audio-ctx 750
+  python3 scripts/compare_whisper.py --model <path> --limit 40 --worst-snr
 
 Nothing is changed. This only reads and reports.
 """
@@ -24,9 +24,13 @@ import os
 import sqlite3
 import statistics
 import subprocess
+import sys
 import time
 
-from config import DB_PATH, WHISPER_CLI, WHISPER_MODEL, WHISPER_AUDIO_CTX
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "src"))
+
+from config import DB_PATH, WHISPER_CLI, WHISPER_MODEL, WHISPER_AUDIO_CTX  # noqa: E402
 
 
 def fetch_recordings(limit, worst_snr):

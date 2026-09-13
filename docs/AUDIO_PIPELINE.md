@@ -80,7 +80,7 @@ so the two dials cannot be tuned independently.
 
 ## Whisper
 
-Measured on 40 archived recordings, Aug 12 2026, with `compare_whisper.py`:
+Measured on 40 archived recordings, Aug 12 2026, with `scripts/compare_whisper.py`:
 
 | Candidate | Median | Saving | Transcripts identical |
 |---|---|---|---|

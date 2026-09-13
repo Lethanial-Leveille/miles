@@ -188,7 +188,7 @@ miles/
 │   ├── voice_main.py        Main voice pipeline entry point
 │   ├── config.py            Environment config and constants
 │   ├── brain.py             Claude API integration and streaming
-│   ├── stream_router.py     50-char lookahead TTS buffer router
+│   ├── stream_router.py     Sentence buffering for the TTS queue
 │   ├── audio.py             Mic capture, playback, VAD
 │   ├── server.py            FastAPI app, all endpoints
 │   ├── auth.py              JWT issue and verification

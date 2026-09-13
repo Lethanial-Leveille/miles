@@ -23,13 +23,13 @@ _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def _secret() -> str:
     secret = os.getenv("MILES_JWT_SECRET")
     if not secret:
-        raise RuntimeError("MILES_JWT_SECRET not set. Run setup_auth.py first.")
+        raise RuntimeError("MILES_JWT_SECRET not set. Run scripts/setup_auth.py first.")
     return secret
 
 def get_password_hash() -> str:
     h = os.getenv("MILES_PASSWORD_HASH")
     if not h:
-        raise RuntimeError("MILES_PASSWORD_HASH not set. Run setup_auth.py first.")
+        raise RuntimeError("MILES_PASSWORD_HASH not set. Run scripts/setup_auth.py first.")
     return h
 
 
