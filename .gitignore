@@ -11,7 +11,6 @@
 # recordings are of a real person in a real room and the corpus names people
 # who never agreed to be published, so this directory never goes to a remote.
 data/
-CLAUDE.md
 
 # Belt and braces on the recordings. data/ already covers the archive, but a
 # stray capture written anywhere else is the same audio of the same room.

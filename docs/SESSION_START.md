@@ -615,3 +615,29 @@ data.** A second, subtler instance was in the same block: the example sentence
 "his exam moved to Thursday" reads exactly like a memory. Both are now abstract,
 and two tests pin it: every id appearing anywhere in the prompt must be backed by
 a real row, and the instructions must contain no id shaped text at all.
+
+### CLAUDE.md is version controlled now (Sep 13 2026) (DONE)
+
+It was gitignored, listed under the **Personal data** block beside `data/`, from
+the v0.7 module split (`1d38fb2`) until today. That block's comment justifies
+`data/` and says nothing about CLAUDE.md, so the exclusion carried no recorded
+reason and nobody could tell whether it was deliberate or a line appended in a
+hurry.
+
+Untracked was the wrong state for it. **Rule zero makes CLAUDE.md a document
+that must be corrected in the same session as the code it describes**, and an
+untracked file has no diff, so a correction leaves no trace, carries no commit
+message, and cannot be reviewed. The end of session checklist below asks for
+corrections in the commit message; for this one file that was impossible.
+
+Checked before tracking it: 12 assignments in `.env` and `~/.bashrc` scanned
+against the file, **no secret value appears in it**. It names environment
+variables, never their contents. The only identifier it carries, the Victoria
+voice id, is already in tracked `src/config.py`.
+
+The learning constraint lost "pause and ask if I have questions" and "quiz me on
+important concepts" in the same commit. Both predate the current working
+rhythm and neither earned the interruption. The remaining six stand.
+
+Because the file joins history as a new file, that trim is not visible as a
+diff. It is recorded here instead, which is the point of this log.
