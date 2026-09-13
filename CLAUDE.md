@@ -97,14 +97,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── auth.py                # JWT + bcrypt password hashing
 │   ├── server.py              # FastAPI REST + WebSocket
 │   ├── voice_main.py          # Audio loop entry point
-│   ├── enroll.py              # Voice enrollment
-│   ├── setup_auth.py          # One time password and JWT secret setup
-│   ├── seed_memories.py       # Seed corpus loader
-│   ├── analyze_timing.py      # Latency analysis over timing_log
-│   ├── analyze_verification.py # Speaker verification analysis
-│   ├── check_gain.py          # Mic gain verification
-│   ├── compare_whisper.py     # Whisper model comparison harness
-│   ├── profile_turn.py        # Times the turn stages no stopwatch covers
+│   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
 │   └── tests/                 # pytest suite (500 passing, 6 skipped, Sep 13 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
@@ -115,7 +108,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── LATENCY.md             # The turn budget and every timing measurement
 │   ├── INFRASTRUCTURE.md      # Services, tunnel, API, env vars, reminders
 │   └── INCIDENTS.md           # What broke, dated, with the evidence
-├── scripts/                      # Operator tools. Nothing in src/ imports these
+├── scripts/                      # Operator tools, run by hand from the repo root.
+│                              # Nothing in src/ imports any of these
 │   ├── memory.py              # list/fix/chain/temporary on stored memories
 │   ├── retrieval.py           # review and label what retrieval returned
 │   ├── people.py              # people, tiers, birthdays
@@ -126,7 +120,14 @@ warnings it cost before Sep 6 2026, is in
 │   ├── label_transcripts.py   # hand labelled truth + word error rate per STT
 │   ├── label_speakers.py      # label who is speaking in the eval clips, by ear
 │   ├── label_wake.py          # label wake hits and misses by ear, worst first
-│   └── healthcheck.py         # what broke, on a timer, not by trying to use it
+│   ├── healthcheck.py         # what broke, on a timer, not by trying to use it
+│   ├── analyze_timing.py      # latency analysis over timing_log
+│   ├── analyze_verification.py # speaker verification analysis
+│   ├── compare_whisper.py     # whisper model comparison harness
+│   ├── check_gain.py          # mic gain verification
+│   ├── profile_turn.py        # times the turn stages no stopwatch covers
+│   ├── seed_memories.py       # seed corpus loader
+│   └── setup_auth.py          # one time password and JWT secret setup
 ├── assets/                    # wake_chime.wav
 ├── systemd/                   # miles-health units, versioned (the other three are not)
 ├── models/                    # Wake word + voiceprint + enrollment (gitignored contents)

@@ -9,20 +9,25 @@ ordered to make the largest contributor obvious rather than to match the
 pipeline order.
 
 Usage:
-  python3 analyze_timing.py
-  python3 analyze_timing.py --after 2026-08-11T09:00 --before 2026-08-11T10:00
-  python3 analyze_timing.py --turn-type initial --label "morning block"
-  python3 analyze_timing.py --include-actions
+  python3 scripts/analyze_timing.py
+  python3 scripts/analyze_timing.py --after 2026-08-11T09:00 --before 2026-08-11T10:00
+  python3 scripts/analyze_timing.py --turn-type initial --label "morning block"
+  python3 scripts/analyze_timing.py --include-actions
 
 Action turns make a second Claude call and are excluded by default, since
 they are structurally slower and smear the distribution of everything else.
 """
 
 import argparse
+import os
 import sqlite3
 import statistics
+import sys
 
-from config import DB_PATH
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "src"))
+
+from config import DB_PATH  # noqa: E402
 
 MIN_ROWS_FOR_STATS = 10
 

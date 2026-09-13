@@ -10,10 +10,10 @@ because a mean over four rows reads exactly like a mean over four hundred
 once it is printed.
 
 Usage:
-  python3 analyze_verification.py
-  python3 analyze_verification.py --after 2026-08-10T14:00 --before 2026-08-10T14:20
-  python3 analyze_verification.py --after 2026-08-10T14:00 --label "far, projecting"
-  python3 analyze_verification.py --include-degenerate
+  python3 scripts/analyze_verification.py
+  python3 scripts/analyze_verification.py --after 2026-08-10T14:00 --before 2026-08-10T14:20
+  python3 scripts/analyze_verification.py --after 2026-08-10T14:00 --label "far, projecting"
+  python3 scripts/analyze_verification.py --include-degenerate
 
 Timestamps are ISO 8601 and compared as strings, which sorts correctly for
 this format. A date alone works as a prefix: --after 2026-08-10 covers the
@@ -22,10 +22,15 @@ whole day.
 
 import argparse
 import math
+import os
 import sqlite3
 import statistics
+import sys
 
-from config import DB_PATH, VERIFY_THRESHOLD
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "src"))
+
+from config import DB_PATH, VERIFY_THRESHOLD  # noqa: E402
 
 # Below this many rows a summary statistic is noise dressed up as a number,
 # so it gets printed with a warning rather than on its own.

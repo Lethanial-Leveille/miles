@@ -16,8 +16,8 @@ have no instrumentation at all:
 This times them directly against an archived recording rather than waiting for
 live turns, so it costs no API calls and needs no service restart.
 
-    python3 src/profile_turn.py
-    python3 src/profile_turn.py --runs 5
+    python3 scripts/profile_turn.py
+    python3 scripts/profile_turn.py --runs 5
 """
 
 import argparse
@@ -27,9 +27,10 @@ import sys
 import time
 import wave
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "src"))
 
-from config import ARCHIVE_DIR, TEMP_WAV
+from config import ARCHIVE_DIR, TEMP_WAV  # noqa: E402
 
 
 def _write_wav_equivalent(frames, rate):

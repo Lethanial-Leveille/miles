@@ -13,8 +13,8 @@ payload keeps this file reviewable without publishing the people in it.
 `main()` says so rather than failing on a missing file.
 
 Run manually, from src/:
-    python3 seed_memories.py --dry-run   # preview only, writes nothing
-    python3 seed_memories.py             # actually inserts
+    python3 scripts/seed_memories.py --dry-run   # preview only, writes nothing
+    python3 scripts/seed_memories.py             # actually inserts
 
 Idempotent: relies on save_memory's own dedup check (skips inserting a
 memory whose content already matches an existing active row), so
@@ -29,10 +29,15 @@ what `scripts/memory.py fix` is for.
 
 import argparse
 import json
+import os
 import sqlite3
+import sys
 
-from config import DB_PATH, SEED_PATH
-from database import save_memory
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "src"))
+
+from config import DB_PATH, SEED_PATH  # noqa: E402
+from database import save_memory  # noqa: E402
 
 
 REQUIRED_FIELDS = ("content", "category", "volatile", "confidence",

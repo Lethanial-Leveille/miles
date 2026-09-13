@@ -8,13 +8,13 @@ gain is not an aesthetic setting here, it directly determines whether the
 VAD fires.
 
 Usage:
-  python3 check_gain.py                      # record 5s from the mic
-  python3 check_gain.py --seconds 8
-  python3 check_gain.py --file ../build/command.wav
+  python3 scripts/check_gain.py                      # record 5s from the mic
+  python3 scripts/check_gain.py --seconds 8
+  python3 scripts/check_gain.py --file build/command.wav
 
 Tuning loop:
   amixer -c 0 sset Mic <value>
-  python3 check_gain.py --seconds 5          # while speaking worst case:
+  python3 scripts/check_gain.py --seconds 5          # while speaking worst case:
                                              # close range, projecting
 Raise until peak lands in the target band. Peak matters more than RMS,
 because clipping is unrecoverable and destroys embeddings far worse than
@@ -181,10 +181,10 @@ def main():
         sys.exit(
             "miles-voice.service is running and holds the mic.\n"
             "  sudo systemctl stop miles-voice\n"
-            "  python3 check_gain.py --seconds 5\n"
+            "  python3 scripts/check_gain.py --seconds 5\n"
             "  sudo systemctl start miles-voice\n"
             "Or analyze an existing recording: "
-            "python3 check_gain.py --file ../build/command.wav"
+            "python3 scripts/check_gain.py --file build/command.wav"
         )
 
     report(record(args.seconds))

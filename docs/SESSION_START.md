@@ -710,3 +710,42 @@ Drifted claims were **not** deleted. Where the original still carries a lesson
 it is kept verbatim with a dated `> **Correction**` blockquote beneath it, so
 the mistake and the fix are both legible. A silently corrected doc teaches
 nothing, which is rule zero applied to itself.
+
+### Dev tools moved out of `src/` (Sep 13 2026) (DONE)
+
+`src/` mixed the modules the three services import with one off analysis and
+setup tools that nothing imports. Seven moved to `scripts/`: `analyze_timing`,
+`analyze_verification`, `compare_whisper`, `check_gain`, `profile_turn`,
+`seed_memories`, `setup_auth`.
+
+**`src/` was deliberately not packaged into subfolders.** No `src/audio/`, no
+`src/core/`. The runtime modules stay flat where they are, because restructuring
+them breaks every import, every systemd `ExecStart`, and the test suite, for no
+functional gain. The line worth drawing is runtime against operator tool, and
+that line is now the directory.
+
+**`enroll.py` stays in `src/`.** `tests/test_enrollment_audio.py` imports it as a
+module, which makes it the one candidate with real runtime coupling. It is also
+the counterpart to `speaker_encoder.py` and has to move in the same session as
+the ECAPA swap, not before it.
+
+**This was not a pure rename, and could not be.** Four of the seven did a bare
+`from config import ...` that worked only because Python puts a script's own
+directory on `sys.path`, and their directory was `src/`. Each needed the
+`sys.path.insert` shim every other script in `scripts/` already carries. The
+`os.path.abspath` form was chosen over the `os.path.join(..., "..")` form because
+it is what seven of the eleven existing scripts use, including the newest.
+
+**The hazard worth recording is `setup_auth.py`.** It computes
+`ENV_PATH = Path(__file__).resolve().parent.parent / ".env"`, so a move to the
+wrong depth would have pointed it somewhere else and the fix would have been to
+**overwrite the real `.env`**, destroying the password hash and JWT secret.
+`src/` and `scripts/` are both one level below the repo root, so it resolves
+identically and needed no change. That was checked before the file was moved, not
+after. **Check `__file__` relative paths before moving any script, especially one
+that writes.**
+
+Commands in all docs are now written to run **from the repo root**
+(`python3 scripts/check_gain.py`), which is what the existing `scripts/` entries
+already assumed. The `../build/` and `../whisper.cpp/` paths in the moved
+docstrings were relative to `src/` and are now repo root relative.

@@ -178,9 +178,9 @@ All live in production as of Aug 10 2026. All mic independent unless noted.
   below for why this matters more once mic and speaker share a housing.
 - Mic gain checked and logged at every service start, with a loud warning and
   the restore command if it drifts.
-- `analyze_verification.py`, with `--after` / `--before` / `--label` /
+- `scripts/analyze_verification.py`, with `--after` / `--before` / `--label` /
   `--include-degenerate`.
-- `check_gain.py`, records or analyzes a clip and reports level against
+- `scripts/check_gain.py`, records or analyzes a clip and reports level against
   targets. **Mic dependent**: `MIC_MIXER_CARD` and `MIC_MIXER_CONTROL` in
   `config.py` will need updating for a new capsule.
 - `enroll.py` rewritten (see below). **Not yet run.**
@@ -207,7 +207,7 @@ response, self noise, and directivity.
 
 Sequence, in order:
 1. Final mic mounted in final enclosure, in the final room
-2. Gain tuned with `check_gain.py` to peak -12 to -6 dBFS on worst case
+2. Gain tuned with `scripts/check_gain.py` to peak -12 to -6 dBFS on worst case
    (close range, projected), persisted with `alsactl store`, and
    `EXPECTED_MIC_GAIN` updated in `config.py`
 3. VAD mode rechecked (item 3 below)
@@ -292,8 +292,8 @@ transfers to hardware selection.
 
 ```bash
 sudo systemctl stop miles-voice
-python3 check_gain.py --seconds 5    # mic pointed at the noise source, no speech
-python3 check_gain.py --seconds 5    # mic null pointed at it, no speech
+python3 scripts/check_gain.py --seconds 5    # mic pointed at the noise source, no speech
+python3 scripts/check_gain.py --seconds 5    # mic null pointed at it, no speech
 sudo systemctl start miles-voice
 ```
 
@@ -442,7 +442,7 @@ building, not after.
 Perceived latency (speech end to first audio) went from **8070ms measured** to
 roughly **5000ms estimated**, without touching the capture path in any way that
 required rebuilding it. Estimated rather than measured because the last two
-changes landed after the collection window; rerun `analyze_timing.py` after a
+changes landed after the collection window; rerun `scripts/analyze_timing.py` after a
 day of use to confirm.
 
 What actually moved it, all measured rather than predicted:
@@ -490,7 +490,7 @@ the right unit of work if either is wanted.
    that number alone**: the accuracy check behind it is four clips from one
    enrollment recording plus a reference sample, and the cases that matter are
    low SNR far field turns, which already transcribe badly. Use
-   `compare_whisper.py --model ../whisper.cpp/models/ggml-tiny.en.bin
+   `scripts/compare_whisper.py --model whisper.cpp/models/ggml-tiny.en.bin
    --worst-snr` once the recording archive has a few dozen real commands.
 2. **A second prompt cache breakpoint on conversation history — 200 to 400ms,
    untested.** Only the system prompt is cached today; the twenty messages of
@@ -663,7 +663,7 @@ Four things gate it, in rough order of difficulty:
    dependency and should not be started before it.
 3. **Telephony audio is band limited** to roughly 300 to 3400 Hz. `base.en`
    will do measurably worse than it does on the Seiren V3. Expect the
-   `compare_whisper.py` accuracy question to reopen on a different distribution.
+   `scripts/compare_whisper.py` accuracy question to reopen on a different distribution.
 4. **The audio layer assumes one session.** A global `speak_lock` and a single
    aplay process is one speaker and one mic. A call is a second concurrent
    audio session, which is an architecture change rather than a feature.
@@ -795,18 +795,18 @@ right answer if this is built. Mic activity alone is not presence.
 
 ```bash
 # Analyze verification data
-python3 analyze_verification.py
-python3 analyze_verification.py --after 2026-09-01 --label "dorm, new mic"
+python3 scripts/analyze_verification.py
+python3 scripts/analyze_verification.py --after 2026-09-01 --label "dorm, new mic"
 
 # Check capture level (voice service holds the mic, so stop it first)
 sudo systemctl stop miles-voice
-python3 check_gain.py --seconds 5
+python3 scripts/check_gain.py --seconds 5
 sudo systemctl start miles-voice
-python3 check_gain.py --file ../build/command.wav   # no service stop needed
+python3 scripts/check_gain.py --file build/command.wav   # no service stop needed
 
 # Enrollment (only after mic, room, and gain are final)
 sudo systemctl stop miles-voice
-python3 enroll.py
+python3 src/enroll.py
 sudo systemctl start miles-voice
 ```
 
