@@ -234,6 +234,111 @@ never having with her, and the difference is whether she says anything at all.
 In the follow up loop it breaks the conversation rather than reopening the
 window, so an exchange nearby cannot hold her attention turn after turn.
 
+## Tools and the permission gate
+
+**The model proposes, the executor decides.** A tool call is a request. Between
+the request and the function, `_run_tools` in `brain.py` asks `permits()` in
+`tools.py` whether the tier this turn was built for may run it. A refusal goes
+back to the model as an `is_error` result, so Nova says no out loud rather than
+going silent. The check lives in code rather than the prompt because a prompt
+instruction is a suggestion to a probabilistic system and a conditional is a
+guarantee.
+
+Three rules the gate keeps, each pinned by a test:
+
+- **One tier per turn.** The gate uses the tier `ask_nova_async` built the
+  prompt with. It used to read `effective_tier()` itself, a second source of
+  truth that would have disagreed the first time voice verification passed a
+  guest's tier through: prompt gated as a guest, tools gated as hokage.
+- **`min_tier` only raises.** Calendar and health data are READ in kind and
+  private in content, so those tools carry one. If it could lower the floor,
+  one keyword would open an external write to a guest.
+- **CONTROL is never gated.** A demoted speaker still has to be able to end the
+  conversation.
+
+`tier_tool.py` used to check for hokage inside its own body. That check is gone:
+the gate does it for every tool, including the ones nobody remembers to guard.
+
+### Writes that leave the Pi wait for the next turn
+
+Over voice there is no button. `create_calendar_event` does not create anything.
+It stages the event in `pending_action.py` and returns it with the time already
+resolved, which Nova reads back as a question. Only `confirm_pending_action`,
+called on the **very next** Claude turn and inside `CONFIRM_WINDOW_S`, performs
+the write.
+
+- Confirming on the same turn as the proposal is refused, so the model cannot
+  ask and answer itself. A human turn has to happen in between.
+- `confirm_pending_action` takes only yes or no. It runs exactly what was read
+  back, so the model cannot confirm something other than what he heard.
+- Anything unrelated said in between drops the proposal. A correction ("make it
+  eleven") is a new proposal and is read back again.
+- Whether "yeah, do it" means yes is judgment and stays with the model. The code
+  guarantees order and freshness, not interpretation.
+
+State is per process, so a proposal made by voice is confirmed by voice.
+
+**Known gap, fails safe:** a reply that local intent classifies as a dismissal,
+like "yeah, that's it", never reaches Claude. The proposal expires and nothing
+is written.
+
+### Nova asks, she does not read back
+
+A proposal returns one question built in code, like "Move LeetCode session
+tomorrow from 10 AM to 4 PM?", and the model is told to ask exactly that. Left to
+the model, the first real move was announced before the call and then read back in
+full, both versions with their dates, which heard aloud sounded like two answers
+glued together. The prompt also tells her to say nothing before calling a
+proposal tool, because anything said then is spoken before the result exists.
+
+### Live data is fetched every time
+
+The prompt tells Nova to call the tool again whenever he asks about sleep,
+readiness, activity, heart rate, the calendar, the weather or her own state, and
+never to repeat a figure from earlier in the conversation. Without that rule she
+answered "how did I sleep" from history that still held the wrong figure, and the
+fixed tool was never called.
+
+### Calendar times are resolved in code
+
+The model passes phrases, and `calendar_tools.parse_when` resolves them against
+the Pi's clock with dateparser. Day names prefer the future, a bare day means the
+whole day, and a new event with no time of day is refused rather than invented.
+Freebusy merges overlapping blocks across calendars and computes the free gaps,
+because that is arithmetic. Public holiday calendars are left out of freebusy:
+Google cannot report busy time for them, and a holiday is not busy time. The
+failures behind these rules are in
+[INCIDENTS.md](INCIDENTS.md#calendar-and-sleep-tools-answered-confidently-and-wrong-sep-13-2026).
+
+### Edit and delete find the event in code
+
+`update_calendar_event` and `delete_calendar_event` go through the same next turn
+confirmation as create. Each asks one short question built in code, naming only
+what changes.
+
+**They take a title and a day, not an event id.** Only what Nova says reaches the
+conversation history, so the ids in a listing are gone by the turn where he says
+"delete it". A tool that took an id would be asking the model to invent one.
+Code searches the MILES calendar for exactly one match. None, and Nova hears what
+is on that day instead; two, and she hears both with their times and asks which.
+
+**Only the MILES calendar can be changed.** His other calendars include shared
+ones where a delete reaches other people or fails outright. Edit and delete never
+create the MILES calendar either: with none, there is nothing of Nova's to change.
+
+A moved time is read relative to the event's own day, so "4pm" stays on that day,
+unless the phrase names today or tomorrow; a new day alone keeps the event's
+time; moving keeps its length. A repeating event changes only the one occurrence,
+and the read back says so. Edits use `patch`, so fields the tool never touches
+are left as they were.
+
+### Oura values carry their units
+
+Every Oura field names what it is, like `sleep_score_out_of_100`, and durations
+arrive as words. A bare number is a number the model assigns a unit to, which is
+how a contributor score became an hour and forty minutes of sleep. Heart rate is
+summarized in code rather than handed over as raw samples.
+
 ## Failure boundaries
 
 **A failed turn no longer kills the process.** It used to. Nothing caught the

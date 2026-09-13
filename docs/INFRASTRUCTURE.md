@@ -61,20 +61,42 @@ Auth: JWT, HS256, Authorization Bearer header. Access tokens 7 day expiry.
 
 ## Environment variables
 
-`~/.bashrc`:
-- ANTHROPIC_API_KEY
-- WEATHER_API_KEY
-- FISH_API_KEY (retained for rollback only)
+The services read `~/miles/.env` (gitignored, mode 600) through systemd
+`EnvironmentFile`, and `config.py` loads the same file for anything run by hand.
+`~/.bashrc` also exports ANTHROPIC_API_KEY, WEATHER_API_KEY and FISH_API_KEY, but
+only interactive shells see it; no service does.
 
-`~/miles/.env` (gitignored):
+`~/miles/.env`:
 - MILES_PASSWORD_HASH
 - MILES_JWT_SECRET
+- ANTHROPIC_API_KEY
+- WEATHER_API_KEY
 - ELEVENLABS_API_KEY
+- FISH_API_KEY (retained for rollback only)
+- OURA_CLIENT_ID, OURA_CLIENT_SECRET
 
 The voice id used to live here. It moved to config.py: a voice id is neither
 secret nor deployment specific, and keeping it in a gitignored file meant voice
 changes carried no history. `ELEVENLABS_VOICE_ID` is now unused and can be
 deleted from .env.
+
+### OAuth tokens
+
+Two outside services hold a standing grant, each stored as a token file in
+`data/`, gitignored and mode 600. Never give a credential a fallback value in
+source: `oura_auth.py` briefly carried the real client secret as a default.
+
+- `data/token.json`: Google Calendar. Created by `python3 scripts/google_auth.py`
+  from `credentials.json`, the OAuth client, also gitignored and 600. Refreshed
+  in memory on use and not written back.
+- `data/oura_token.json`: Oura. Created by `python3 scripts/oura_auth.py`.
+  Refreshed under a file lock and saved by write then rename, because voice and
+  server are separate processes sharing one token.
+
+**If the Google Cloud OAuth app is still in Testing, Google expires its refresh
+tokens after seven days**, and every calendar tool starts failing with an auth
+error. Moving the app to In production removes the limit; for a personal app the
+unverified warning screen can be clicked through.
 
 ## Reminders are fired by a poller, not by a thread
 

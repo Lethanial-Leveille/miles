@@ -33,6 +33,7 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 13 2026 | New calendar and Oura tools answered confidently and wrong | [below](#calendar-and-sleep-tools-answered-confidently-and-wrong-sep-13-2026) |
 | Sep 13 2026 | Near misses and false wakes turned out to be one population: the neighbours, sorted by level | [below](#the-near-misses-are-the-neighbours-sep-13-2026) |
 | Sep 8 2026 | Nova spoke "Done." on turns where staying silent was correct | [below](#nova-said-done-out-loud-when-she-correctly-stayed-silent-sep-8-2026) |
 | Sep 8 2026 | No threshold separates true from false wakes in the new room | [below](#no-threshold-separates-true-from-false-wakes-any-more-sep-8-2026) |
@@ -43,6 +44,75 @@ session real work.
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
 
 ---
+
+## Calendar and sleep tools answered confidently and wrong (Sep 13 2026)
+
+The first day of the calendar and Oura tools produced three wrong answers that
+each looked like a right one. None raised an error. The first was caught by ear;
+the other two were found reading the code, then confirmed in `tool_call_log` and
+by running the parser against real phrases.
+
+### An hour and forty minutes of sleep, on a night of ten forty three
+
+Asked how he slept, Nova said about an hour and forty minutes. The ring showed
+10h 43m. `tool_call_log` row 58, 15:45:20, holds what she was given:
+
+```
+get_oura_sleep -> {'sleep_score': 89, 'total_sleep': 100, 'deep_sleep': 98,
+                   'rem_sleep': 82, 'efficiency': 93}
+```
+
+Those are Oura's **contributor scores** from `daily_sleep`, each out of a
+hundred, under names that read as durations. `total_sleep: 100` became a hundred
+minutes. The tool now reads the `sleep` periods, and every field carries its
+unit: `sleep_score_out_of_100`, and durations as words. A regression test feeds
+it the exact contributor block.
+
+### "Tomorrow" started at the current time, tomorrow
+
+`tool_call_log` row 55, 14:46, asked for `time_min: "tomorrow"`. dateparser fills
+a missing time of day with the current one, so the listing began at 14:46 on
+Sep 14. Row 54, eleven minutes earlier and unwindowed, shows a **12:00 PM event
+on Sep 14** that row 55 does not contain. It was dropped, and the day was
+reported as if complete.
+
+Found beside it by running phrases on a Sunday afternoon: `"monday"` resolved to
+the Monday **before** in listings and freebusy, and to the Monday after in event
+creation, the only path that set future preference. "Am I free Monday" checked
+last week while "book Monday" wrote to next week.
+
+### Every failure would have read as an empty calendar
+
+Each per calendar fetch sat inside `except Exception: pass`, and the calendar
+list fell back to primary on any error. An expired token would have failed every
+fetch silently and produced "No upcoming events found on any calendar". Not
+observed in production; closed before it could be. Failures now raise, a single
+unreadable calendar is named in the answer, and only all of them failing is an
+error.
+
+### The fixed tool was never called (18:09)
+
+After the sleep fix and a restart, "How did I sleep?" still got "one hour and
+forty minutes". `tool_call_log` has no `get_oura_sleep` row for that turn. Nova
+answered from `conversation_history` rows 949 to 953, where she had given the
+wrong figure, he had repeated it back, and she had said "That's correct." To the
+model that read as an established fact about him. **Fixing a tool does not fix
+what the model already said about it.** The prompt now requires live data to be
+fetched again every time it is asked for.
+
+### A confirmation that said everything twice (18:10)
+
+History row 959, as spoken: "LeetCode session is Monday at ten a.m. Moving it to
+four p.m. on Monday.LeetCode session is currently Monday at ten a.m. to eleven
+thirty a.m. I'll move it to four p.m. to five thirty p.m. that same day. Does that
+work?" Nova announced the move before the tool ran, then followed the tool's
+instruction to read back both versions in full. The missing space came from
+`brain.py` joining tool rounds without one. The question is now built in code and
+asked as given, and the rounds are joined with a space.
+
+**The shared lesson:** each was a tool handing the model something shaped like
+an answer. Every fix moves the same direction, toward code that states exactly
+what a value is, or refuses.
 
 ## The wake word stopped separating in the new room (Sep 8 2026)
 

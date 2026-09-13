@@ -20,11 +20,14 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
 
+from database import TIERS
+
 
 class Permission(Enum):
     """What a tool is allowed to touch.
 
-    Defined now, enforced later. Recording the tier at registration is cheap;
+    Enforced by permits(), which the executor in brain.py consults before
+    every call. Recording the tier at registration is cheap;
     retrofitting it across a dozen tools after the fact is not, and a tool
     added without one would be the tool that needed it most.
 
@@ -39,8 +42,10 @@ class Permission(Enum):
     CONTROL = "control"
 
 
-from database import TIERS
-
+# The floor each kind of tool needs, before any per tool min_tier raises it.
+# CONTROL sits at the bottom deliberately: dismiss and ignore have to work for
+# whoever is speaking, or demoting yourself to test the guest boundary leaves
+# no way to tell Nova to stop talking.
 PERMISSION_TIERS = {
     Permission.READ: "genin",
     Permission.CONTROL: "genin",
@@ -50,16 +55,23 @@ PERMISSION_TIERS = {
 
 
 def permits(spec: 'ToolSpec', tier: str) -> bool:
-    """Pure function to decide if a tier is allowed to use a tool.
+    """Whether a speaker at `tier` may run `spec`.
 
-    No globals, no database reads, no clock. Policy is data, mechanism is here.
-    """
-    try:
-        required = spec.min_tier if spec.min_tier is not None else PERMISSION_TIERS[spec.permission]
-        return TIERS.index(tier) >= TIERS.index(required)
-    except (KeyError, ValueError):
-        # A missing permission mapping or an unknown tier defaults to deny.
+    Pure: no database, no clock, nothing read but the policy table, so the whole
+    policy is a truth table the tests can walk.
+
+    min_tier can only raise the floor. If it replaced the category default, a
+    tool marked EXTERNAL_WRITE with min_tier genin would be open to a guest, and
+    the table above would stop being the policy."""
+    if tier not in TIERS or spec.permission not in PERMISSION_TIERS:
+        # Unknown is denied, never guessed at.
         return False
+    if spec.min_tier is not None and spec.min_tier not in TIERS:
+        return False
+    required = TIERS.index(PERMISSION_TIERS[spec.permission])
+    if spec.min_tier is not None:
+        required = max(required, TIERS.index(spec.min_tier))
+    return TIERS.index(tier) >= required
 
 
 # Lowercase and underscores only. The API permits hyphens and uppercase; this
@@ -85,6 +97,9 @@ class ToolSpec:
     # the field that replaces the hardcoded needs_data whitelist in brain.py.
     returns_to_model: bool
     func: Callable[..., Any]
+    # Raises, never lowers, the floor PERMISSION_TIERS sets for this
+    # permission. For reads that are READ in kind but private in content,
+    # like the calendar and health data.
     min_tier: str | None = None
 
     @property
@@ -139,7 +154,8 @@ class ToolRegistry:
         tool stays an ordinary function that can be called and tested directly,
         and registration can never alter behavior at runtime.
         """
-        self._validate(name, description, input_schema, permission, returns_to_model)
+        self._validate(name, description, input_schema, permission,
+                       returns_to_model, min_tier)
 
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             self._tools[name] = ToolSpec(
@@ -155,7 +171,8 @@ class ToolRegistry:
 
         return decorator
 
-    def _validate(self, name, description, input_schema, permission, returns_to_model) -> None:
+    def _validate(self, name, description, input_schema, permission,
+                  returns_to_model, min_tier=None) -> None:
         """Fail at import time rather than mid conversation.
 
         Every check here is something that would otherwise surface as a live
@@ -173,6 +190,11 @@ class ToolRegistry:
             raise ToolError(f"tool {name!r} needs a Permission, got {permission!r}")
         if not isinstance(returns_to_model, bool):
             raise ToolError(f"tool {name!r} needs returns_to_model as a bool")
+        # A misspelled tier would otherwise deny the tool to everyone forever,
+        # which looks exactly like a tool that is broken.
+        if min_tier is not None and min_tier not in TIERS:
+            raise ToolError(
+                f"tool {name!r} min_tier {min_tier!r} is not one of {TIERS}")
 
         if not isinstance(input_schema, dict):
             raise ToolError(f"tool {name!r} input_schema must be a dict")

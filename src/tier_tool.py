@@ -46,7 +46,7 @@ from tools import Permission, tool
         },
         "required": ["tier"],
     },
-    permission=Permission.EXTERNAL_WRITE,
+    permission=Permission.WRITE,
     returns_to_model=True,
     min_tier="hokage",
 )

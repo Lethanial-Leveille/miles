@@ -12,7 +12,10 @@ import actions        # noqa: F401  registers the action tools
 import memory_tool    # noqa: F401  registers remember
 import system_state   # noqa: F401  registers get_system_state
 import tier_tool      # noqa: F401  registers lower_access
-from tools import Permission, registry
+import calendar_tools # noqa: F401  registers the calendar tools
+import oura_tools     # noqa: F401  registers the Oura tools
+import pending_action # noqa: F401  registers confirm_pending_action
+from tools import Permission, permits, registry
 
 EXPECTED = {
     "get_weather":      (Permission.READ,    True),
@@ -24,6 +27,25 @@ EXPECTED = {
     "dismiss":          (Permission.CONTROL, False),
     "ignore":           (Permission.CONTROL, False),
     "lower_access":     (Permission.WRITE,   True),
+    "get_upcoming_events":     (Permission.READ,           True),
+    "check_calendar_freebusy": (Permission.READ,           True),
+    "create_calendar_event":   (Permission.EXTERNAL_WRITE, True),
+    "confirm_pending_action":  (Permission.EXTERNAL_WRITE, True),
+    "update_calendar_event":   (Permission.EXTERNAL_WRITE, True),
+    "delete_calendar_event":   (Permission.EXTERNAL_WRITE, True),
+    "get_oura_readiness":      (Permission.READ,           True),
+    "get_oura_sleep":          (Permission.READ,           True),
+    "get_oura_heartrate":      (Permission.READ,           True),
+    "get_oura_activity":       (Permission.READ,           True),
+}
+
+# READ in kind, private in content, or writes beyond this Pi. None of these
+# may reach anyone below hokage, whatever their category default says.
+HOKAGE_ONLY = {
+    "lower_access", "get_upcoming_events", "check_calendar_freebusy",
+    "create_calendar_event", "confirm_pending_action", "get_oura_readiness",
+    "get_oura_sleep", "get_oura_heartrate", "get_oura_activity",
+    "update_calendar_event", "delete_calendar_event",
 }
 
 # WRITE tools that legitimately cost a second round trip, with the reason.
@@ -35,6 +57,15 @@ ROUND_TRIP_WRITES = {
     # silently is worse than one that costs a second, and Nova cannot announce
     # the outcome before the call because she does not know it yet.
     "lower_access",
+    # A proposal, not a write. Nova has to read the resolved time back and
+    # ask, and she cannot before the call because the code resolves the time.
+    "create_calendar_event",
+    # Proposals too, for the same reason: the read back is the point.
+    "update_calendar_event",
+    "delete_calendar_event",
+    # The write itself can fail at Google, and a confirmation nobody hears
+    # sounds exactly like one that did not happen.
+    "confirm_pending_action",
 }
 
 
@@ -162,3 +193,10 @@ def test_one_minute_timer_reads_correctly(monkeypatch):
         "T", (), {"start": lambda self: None})())
     assert actions.set_timer("1 minutes") == "Timer set for 1 minute (60 seconds)."
     assert actions.set_timer("5 minutes") == "Timer set for 5 minutes (300 seconds)."
+
+
+@pytest.mark.parametrize("name", sorted(HOKAGE_ONLY))
+def test_private_tools_are_hokage_only(name):
+    spec = registry.get(name)
+    assert not permits(spec, "jonin")
+    assert permits(spec, "hokage")
