@@ -114,18 +114,41 @@ schedule.
 Do this before closing the tmux session. It is the other half of the preflight.
 
 1. **Did any config constant change?** Update the Key Config Values table in
-   `CLAUDE.md`. That table is the single most load bearing part of the file.
-2. **Did any claim in `CLAUDE.md` become false?** Fix it now, not next session.
-   Include the correction in the commit message.
-3. **Did a decision get made that a future session would otherwise reopen?**
+   `CLAUDE.md`. That table is the single most load bearing part of the file, and
+   since Sep 13 2026 it is the **only** place a live value is declared. The topic
+   docs explain values and must never carry a second copy of one.
+2. **Did any claim become false?** Fix it now, not next session, and include the
+   correction in the commit message. Check the doc that owns the subject, not
+   just `CLAUDE.md`:
+
+   | You touched | Update |
+   |---|---|
+   | mic, gain, wake word, VAD, Whisper, verification | `docs/AUDIO_PIPELINE.md` |
+   | prompt, model, streaming, tools, channels, local intent | `docs/BRAIN.md` |
+   | TTS, voice settings, phrase bank, pronunciation | `docs/VOICE_OUTPUT.md` |
+   | anything measured in `timing_log` | `docs/LATENCY.md` |
+   | systemd, tunnel, API, env vars, reminders | `docs/INFRASTRUCTURE.md` |
+   | something that broke in production | `docs/INCIDENTS.md`, dated |
+
+   **A measurement never moves to a new doc, it gets replaced in the one that
+   owns it.** Two copies of a number is how the repo ends up unable to say which
+   is current.
+3. **Did something break and get fixed?** It goes in `docs/INCIDENTS.md` with
+   its date and the evidence, not in the decision log. The decision log is for
+   choices made deliberately. If an incident forced a decision, write the
+   incident there and the decision here, and link them.
+4. **Did a decision get made that a future session would otherwise reopen?**
    Add it to the decision log below, with the reason. Reason matters more than
    the decision, because without it the next session relitigates it.
-4. **Did production diverge from the plan?** Mark it `DIVERGENCE` in the log.
-5. **Did work get deferred?** Add it to `docs/BACKEND_TODO.md` with why it was
+5. **Did production diverge from the plan?** Mark it `DIVERGENCE` in the log.
+6. **Did work get deferred?** Add it to `docs/BACKEND_TODO.md` with why it was
    deferred, not just that it was.
-6. **New measurement taken?** Replace the old number rather than adding a second
+7. **New measurement taken?** Replace the old number rather than adding a second
    one. Two latency figures in one repo means nobody trusts either.
-7. **Run the test suite one more time** and record the count if it changed.
+8. **Run the test suite one more time** and record the count in the repo tree
+   in `CLAUDE.md` if it changed. It sat at 367 in that tree for a month while the
+   real count was 500, which meant the preflight's "test suite green, and how
+   many tests?" check had nothing true to compare against.
 
 ---
 
@@ -204,7 +227,8 @@ status. Status markers: `(DONE)`, `(NEXT)`, `(IN PROGRESS)`, `(DEFERRED)`,
   utterances that would have ended a session by accident.
 - Replaced with `[ACTION: dismiss]`, judged on intent.
 
-### Clock injected into the last user turn, not the system prompt (Aug 11 2026) (DONE)
+### Clock injected into the last user turn, not the system prompt (Aug 11
+2026) (DONE)
 
 - Nova had no clock and, rather than saying so, copied the date out of the
   reminder example in her own prompt. Every reminder was dated months in the
@@ -641,3 +665,48 @@ rhythm and neither earned the interruption. The remaining six stand.
 
 Because the file joins history as a new file, that trim is not visible as a
 diff. It is recorded here instead, which is the point of this log.
+
+### CLAUDE.md split into topic docs (Sep 13 2026) (DONE)
+
+CLAUDE.md had reached 1230 lines and was loaded in full at the start of every
+session. Most of it was measurement history and root cause writeups that matter
+only when someone touches that specific subsystem. It is now **320 lines** and
+holds only what is true on every session: status, layout, live config values,
+production commands, and the rules of the road. Six topic docs carry the rest,
+indexed from CLAUDE.md and linking back.
+
+**The split rule, so this does not get relitigated.** CLAUDE.md declares; the
+topic docs explain. A live config value appears in the CLAUDE.md table and
+nowhere else, because two copies of a number is how a repo stops being able to
+say which is current. A number *inside* a measurement stays in the measurement
+verbatim, because it is a record of what was true on a date, not a declaration
+of what is true now. Those two rules look like they conflict and do not.
+
+Everything moved byte for byte by line range rather than being retyped, and a
+coverage check confirmed no substantive line was dropped. The measurements are
+the most valuable content in the repo and several of them exist precisely
+because a stale claim cost an earlier session real work. **Do not summarize
+them.**
+
+**The split found six drifted claims, which is the argument for having done
+it.** They had been sitting in a file too long to reread:
+
+| Claim | Source said |
+|---|---|
+| `WAKE_MISS_FLOOR = 0.05`, "below `WAKE_LOG_FLOOR`, deliberately" | Both are `0.15`. Equal, not below |
+| `ACK_SPOKEN_CHANCE = 0.5` | `0.75`, changed Aug 12 and never propagated |
+| `LOOKAHEAD_CHARS = 50` and `ACTION_PREFIX` listed as live config | Neither exists anywhere in the codebase |
+| StreamRouter buffers lookahead and strips `[ACTION:...]` tags | Native tool use removed all of it; text is only ever text |
+| Second call gated by `any(r["type"] == "weather" ...)` | Gated by the registry's `returns_to_model` |
+| `TTS_PHONEME_TAGS` written as something to turn on later | Already `True` |
+| Repo tree: "367 tests" | 500 passing, 6 skipped |
+
+Two of those were **load bearing**. The lookahead is cited in `docs/LATENCY.md`
+as the reason `first_sentence_ms` is 288ms of optimizable time, and that stage
+is now unmeasured rather than known. The weather whitelist was written up as a
+limitation worth fixing and had already been fixed.
+
+Drifted claims were **not** deleted. Where the original still carries a lesson
+it is kept verbatim with a dated `> **Correction**` blockquote beneath it, so
+the mistake and the fix are both legible. A silently corrected doc teaches
+nothing, which is rule zero applied to itself.
