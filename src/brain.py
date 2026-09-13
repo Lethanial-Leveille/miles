@@ -14,6 +14,7 @@ from database import (save_message, get_seed_memories, get_episodic_memories,
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
 from tools import registry, Permission
+from tools import registry, Permission, permits
 from database import log_tool_call
 import alerts
 
@@ -250,11 +251,18 @@ def _run_tools(tool_uses, model):
     set rather than raising, so one broken tool cannot take down the turn and
     the model still gets told what happened."""
     results = []
+    current_tier = effective_tier()
+    
     for block in tool_uses:
         started = time.monotonic()
         try:
-            output = registry.call(block.name, dict(block.input))
-            is_error = False
+            spec = registry.get(block.name)
+            if not permits(spec, current_tier):
+                output = f"Refused: clearance level {current_tier} is too low to use {block.name}."
+                is_error = True
+            else:
+                output = registry.call(block.name, dict(block.input))
+                is_error = False
         except Exception as exc:
             output = f"{block.name} failed: {exc}"
             is_error = True

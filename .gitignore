@@ -5,6 +5,8 @@
 .env
 .env.*
 !.env.example
+credentials.json
+data/token.json
 
 # ── Personal data ──
 # data/ holds the database, the seed corpus, and the recording archive. The

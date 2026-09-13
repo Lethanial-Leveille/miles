@@ -286,8 +286,6 @@ Landed since v0.7.1, unreleased:
 
 ## What Is Next
 
-- Native tool use migration, replacing bracket action tags. See
-  `docs/SESSION_START.md` decision log for scope and the cache margin gate.
 - SSH via Cloudflare Tunnel: ssh.lethanial.com + Cloudflare Access policy
 - v0.8+: Morning briefings (Fall 2026), Mac control, HealthKit, EventKit,
   MusicKit, WeatherKit migration, barge in detection, parallel processing

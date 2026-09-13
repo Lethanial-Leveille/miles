@@ -90,6 +90,7 @@ from tools import Permission, tool
     # and a second round trip to announce a save would make every remembered
     # fact cost a full extra turn of latency.
     returns_to_model=False,
+    min_tier="jonin",
 )
 def remember(content, supersedes=None, certainty="inferred",
              temporary=False, until=None):

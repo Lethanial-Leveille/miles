@@ -1,6 +1,7 @@
 import pytest
 
 from tools import Permission, ToolError, ToolRegistry
+from tools import Permission, ToolError, ToolRegistry, permits
 
 
 def _schema(properties=None, required=None):
@@ -20,13 +21,14 @@ def reg():
 
 
 def _add(reg, name="get_weather", description="Current outdoor conditions. Extra detail here.",
-         schema=None, permission=Permission.READ, returns_to_model=True):
+         schema=None, permission=Permission.READ, returns_to_model=True, min_tier=None):
     @reg.register(
         name=name,
         description=description,
         input_schema=schema if schema is not None else _schema(),
         permission=permission,
         returns_to_model=returns_to_model,
+        min_tier=min_tier,
     )
     def handler(**kwargs):
         return {"called": name, "args": kwargs}
@@ -208,3 +210,38 @@ def test_production_registry_is_importable_and_separate():
     # `is` cannot work here: registry.register is a bound method, so every
     # attribute access builds a new object. What matters is what it is bound to.
     assert tools.tool.__self__ is tools.registry
+
+# ── permits ──
+
+def test_permits_allows_equal_or_higher_tier(reg):
+    _add(reg, name="t_write", permission=Permission.WRITE)
+    spec = reg.get("t_write")
+    # WRITE is chunin
+    assert not permits(spec, "genin")
+    assert permits(spec, "chunin")
+    assert permits(spec, "jonin")
+    assert permits(spec, "hokage")
+
+def test_permits_control_and_read_allowed_for_genin(reg):
+    _add(reg, name="t_read", permission=Permission.READ)
+    _add(reg, name="t_control", permission=Permission.CONTROL)
+    assert permits(reg.get("t_read"), "genin")
+    assert permits(reg.get("t_control"), "genin")
+
+def test_permits_external_write_requires_hokage(reg):
+    _add(reg, name="t_ext", permission=Permission.EXTERNAL_WRITE)
+    spec = reg.get("t_ext")
+    assert not permits(spec, "jonin")
+    assert permits(spec, "hokage")
+
+def test_permits_unknown_tier_denied(reg):
+    _add(reg, name="t_read", permission=Permission.READ)
+    assert not permits(reg.get("t_read"), "tourist")
+
+def test_permits_min_tier_override(reg):
+    _add(reg, name="t_override", permission=Permission.WRITE, min_tier="jonin")
+    spec = reg.get("t_override")
+    # WRITE defaults to chunin, but override requires jonin
+    assert not permits(spec, "chunin")
+    assert permits(spec, "jonin")
+    assert permits(spec, "hokage")
