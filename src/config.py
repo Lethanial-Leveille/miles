@@ -183,19 +183,22 @@ SILENCE_LIMIT = 1.2
 
 # Hard ceiling on one recording.
 #
-# 60 since Sep 13 2026. At 18 it sat just under Whisper's twenty second window,
-# because audio past that window was never transcribed. Scheduling seven
-# tutoring lessons by voice hit that cap twice in one conversation, and the
-# third turn was cut off mid thought. Long recordings now get Whisper's full
-# window and are split past WHISPER_SEGMENT_SECONDS, so this no longer has to
-# sit under the window at all. It still bounds a recording held open by noise.
+# 30 since the night of Sep 13 2026. It was 18, just under Whisper's twenty
+# second window, which cut a real scheduling request off mid thought; it went to
+# 60 once long clips got the full window and splitting. That same night guests
+# came over and 60 was wrong: a false wake from the room recorded 53 seconds of
+# their conversation and a follow up hit the full 60, each time holding the mic
+# while he said the wake word into the recording. Neither was him.
 #
-# Normal commands never come close: since Sep 5 2026, half of 83 recordings
-# were under 2.9s and nine in ten under 8.2s. Only 3 ever reached 18.
+# 30 covers him. His longest real request was 42 words in 18 seconds, and 30 is
+# about 75 words at a normal pace. It also fits one Whisper pass almost always.
+# Since Sep 5 2026, half of 83 recordings were under 2.9s and nine in ten under
+# 8.2s. The wake word now interrupts a recording too, so the room cannot hold
+# the mic even for 30.
 #
 # SILENCE_LIMIT still ends a recording on a pause, so a long explanation with a
 # long thinking pause ends at the pause, not here.
-MAX_RECORD = 60.0
+MAX_RECORD = 30.0
 
 # Discarded from the mic after Nova finishes speaking, on top of draining
 # whatever accumulated during playback.

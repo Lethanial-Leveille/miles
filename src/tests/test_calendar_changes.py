@@ -69,6 +69,15 @@ class FakeService:
 
 
 @pytest.fixture(autouse=True)
+def fresh_calendar_list():
+    """The calendar list is remembered for minutes, so each test's fake service
+    has to start from an empty memory."""
+    cal._calendar_cache.clear()
+    yield
+    cal._calendar_cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def fresh_pending():
     pa._pending, pa._turn = None, 0
     yield
@@ -325,3 +334,44 @@ def test_no_conflicts_says_so(monkeypatch):
         {"id": "primary", "summary": "me", "primary": True, "accessRole": "owner"}])
     monkeypatch.setattr(cal, "_service", lambda: service)
     assert cal.find_schedule_conflicts(now=NOW) == "No overlaps in that range."
+
+
+
+# ── speed ──
+
+def test_calendars_are_fetched_at_the_same_time(monkeypatch):
+    """Nine calendars one after another took 1621ms. Every calendar's request
+    has to be in flight before any of them returns."""
+    import threading
+    calendars = [{"id": f"c{i}", "summary": f"Calendar {i}", "selected": True, "accessRole": "reader"}
+                 for i in range(4)]
+    service = FakeService({}, calendars=calendars)
+    all_started = threading.Barrier(4, timeout=2)
+    original_events = service.events
+
+    def events():
+        real = original_events()
+
+        class Waiting:
+            def list(self, **query):
+                all_started.wait()   # raises if the requests ran one at a time
+                return real.list(**query)
+        return Waiting()
+
+    monkeypatch.setattr(service, "events", events)
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    reply = cal.get_upcoming_events(now=NOW)
+    assert "Could not read" not in reply
+    assert {q["calendarId"] for q in service.listed} == {"c0", "c1", "c2", "c3"}
+
+
+def test_the_calendar_list_is_remembered_between_questions(monkeypatch):
+    service = FakeService({"primary": []}, calendars=[
+        {"id": "primary", "summary": "me", "primary": True, "accessRole": "owner"}])
+    lookups = []
+    original = service.calendarList
+    monkeypatch.setattr(service, "calendarList", lambda: (lookups.append(1), original())[1])
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    cal.get_upcoming_events(now=NOW)
+    cal.find_schedule_conflicts(now=NOW)
+    assert len(lookups) == 1

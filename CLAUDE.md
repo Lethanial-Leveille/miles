@@ -82,6 +82,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── alerts.py              # Pending alert queue and fold into the next turn
 │   ├── audio.py               # Mic, wake word, VAD, Whisper, Resemblyzer
 │   ├── audio_segments.py      # Whisper window by clip length; cutting long recordings
+│   ├── wake_listener.py       # hears the wake word during a recording
 │   ├── speaker_encoder.py     # Encoder abstraction behind verify_voice
 │   ├── embeddings.py          # Sentence embeddings for retrieval and intent
 │   ├── tts.py                 # ElevenLabs synthesis, speaker resolution, aplay
@@ -102,7 +103,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST + WebSocket
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (643 passing, 6 skipped, Sep 13 2026)
+│   └── tests/                 # pytest suite (652 passing, 6 skipped, Sep 13 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -183,7 +184,7 @@ of the value itself.
 - `VAD_MODE = 2` (webrtcvad)
 - `VAD_PREROLL_MS = 300`, `VAD_ONSET_FRAMES = 2`
 - `SILENCE_LIMIT = 1.2`
-- `MAX_RECORD = 60.0`
+- `MAX_RECORD = 30.0`
 - `TTS_FLUSH_MARGIN_MS = 250`
 - `EXPECTED_MIC_GAIN = 23`
 - `MIC_NAME_HINT = "Seiren"`. `MIC_MIXER_CARD` is **derived** from it at import

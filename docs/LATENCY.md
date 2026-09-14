@@ -111,3 +111,27 @@ Do not quote a latency figure in this file that was not read out of `timing_log`
 - The local intent path, which is the fastest class of turn and was invisible in these medians until Aug 13 2026: [BRAIN.md](BRAIN.md#local-intent)
 - Time to first token and the model A/B: [BRAIN.md](BRAIN.md#model)
 - Remaining latency ideas ranked by payoff: [BACKEND_TODO.md](BACKEND_TODO.md)
+
+## Calendar tools, Sep 13 2026
+
+Calendar questions were the slowest turns of the night: 7.8s and 8.4s perceived,
+with the tool alone at 2.6s and 2.9s. Timed live, read only, on his real
+calendars:
+
+| Stage | Before |
+|---|---|
+| listing his calendars | 497ms, on every call |
+| nine calendars, one after another | 1621ms, the slowest single one 279ms |
+
+Changed: every calendar is fetched at the same time, each on its own client, and
+the calendar list is remembered for five minutes.
+
+| Tool, same machine, same calendars | After |
+|---|---|
+| upcoming events, list not yet remembered | 907ms |
+| upcoming events, list remembered | 482ms |
+| schedule conflicts | 446ms |
+
+The same night, turn by turn, the rest of the budget: eleven_v3 costs about
+350ms more to first audio than flash_v2 did, and the pauses between sentences
+measured a median 0ms after synthesis began running ahead of playback.

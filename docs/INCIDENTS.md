@@ -33,6 +33,7 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 13 2026 | A busy room held the microphone for up to a minute while he said the wake word | [below](#a-busy-room-held-the-microphone-sep-13-2026) |
 | Sep 13 2026 | Confirming one tutoring lesson created a different one, and a failed cancel was reported as done | [below](#confirming-one-lesson-created-another-sep-13-2026) |
 | Sep 13 2026 | Nova read the calendar like a printout: past events, "all day", club events as plans | [below](#nova-read-the-calendar-like-a-printout-sep-13-2026) |
 | Sep 13 2026 | New calendar and Oura tools answered confidently and wrong | [below](#calendar-and-sleep-tools-answered-confidently-and-wrong-sep-13-2026) |
@@ -44,6 +45,45 @@ session real work.
 | Sep 6 2026 | One capsule recorded itself as three microphones; enrollment threw away its audio | [below](#two-guards-that-could-not-do-their-jobs-sep-6-2026) |
 | Aug 13 2026 | Nova confabulated a security tool call that never happened | [BRAIN.md](BRAIN.md#nova-knows-the-transcript-is-not-his-words) |
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
+
+---
+
+## A busy room held the microphone (Sep 13 2026)
+
+Guests came over that evening and it became very hard to get Nova to respond to
+"hey nova". The journal shows she was not failing to hear it. She was stuck
+recording the room.
+
+```
+21:32:57  Wake word detected! (0.54)        a false wake from the conversation
+21:33:52  Recorded 53.3s                    their conversation, to the cap's edge
+21:34:07  Wake word detected! (0.41)
+21:34:18  You: No way. Hey Nova. Hey Nova.  judged not addressed to her, ignored
+21:34:21  Wake word detected! (0.71)
+21:34:40  sudo systemctl restart miles-voice   (him, mid recording)
+21:36:09  NOTE: hit the 60s recording cap
+21:37:07  sudo systemctl restart miles-voice   (him, again)
+```
+
+Three causes, the first introduced hours earlier:
+
+- **`MAX_RECORD` had just been raised to 60.** webrtcvad counts anyone talking as
+  speech, so in a busy room the silence that ends a recording never comes and the
+  cap is the only end. At 18 the room held the mic for 18 seconds; at 60, a minute.
+- **Nothing listened for the wake word during a recording.** His "hey nova" landed
+  inside the clip being recorded.
+- **The transcript check for the wake phrase only looked at the start.** A
+  transcript that opened on the room and ended on "Hey Nova. Hey Nova." went to
+  Claude, which correctly decided it was not addressed to her.
+
+Nothing crashed: both restarts were his, and `NRestarts` stayed 0. Fixed by a 30
+second cap, a second wake model listening during recordings, and the wake phrase
+being found anywhere in a transcript; see
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#the-cap-came-down-to-30-and-the-wake-word-interrupts-a-recording).
+
+**The lesson:** the long recording fix was tested against his own long request
+and not against the room. Every change to how a recording ends needs checking in
+the noisiest place it will be used, not only the quietest.
 
 ---
 
