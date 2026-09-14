@@ -101,7 +101,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST + WebSocket
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (596 passing, 6 skipped, Sep 13 2026)
+│   └── tests/                 # pytest suite (604 passing, 6 skipped, Sep 13 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -226,7 +226,7 @@ of the value itself.
 ### TTS and phrase bank — why: [VOICE_OUTPUT.md](docs/VOICE_OUTPUT.md)
 - `TTS_VOICE_ID` = Victoria (`qSeXEcewz7tA0Q0qk9fH`). The single place a voice
   is named; no call site references one.
-- `DEFAULT_TTS_MODEL = "eleven_flash_v2"`
+- `DEFAULT_TTS_MODEL = "eleven_v3"` (chosen by ear, Sep 13 2026)
 - `EXPRESSIVE_TTS_MODEL = "eleven_v3"` (HTTP only, no WebSocket)
 - `TTS_OUTPUT_FORMAT = "pcm_22050"` (raw S16_LE mono, piped to aplay)
 - `TTS_PHONEME_TAGS = True`
@@ -234,9 +234,9 @@ of the value itself.
 - `PHRASE_DIR = ~/miles/data/phrases`, gitignored. `PHRASES` in `phrasebank.py`
   is the versioned source of truth; the WAVs are derived from it.
 - `ACK_SPOKEN_CHANCE = 0.75`
-- Voice settings: `stability=0.90`, `similarity_boost=0.75`, `style=0.00`,
-  `use_speaker_boost=True`, `speed=1.00`. **Changing stability means re
-  rendering the whole phrase bank.**
+- Voice settings: `stability=1.0`, `similarity_boost=0.75`, `style=0.00`,
+  `speed=1.00` (v3 ignores it), `use_speaker_boost` unset. **Changing any of
+  these means re rendering the whole phrase bank.**
 
 ### Tools and permissions — why: [BRAIN.md](docs/BRAIN.md#tools-and-the-permission-gate)
 - `PERMISSION_TIERS` (in `tools.py`): READ `genin`, CONTROL `genin`, WRITE
@@ -262,7 +262,7 @@ VAD: webrtcvad, mode 2.
 STT: whisper.cpp (base.en, greedy decoding, NEON ARM optimizations, capped
 audio context).
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
-TTS: ElevenLabs (Victoria, eleven_flash_v2), pcm_22050 piped to aplay.
+TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: Resemblyzer (256 dim cosine similarity).
 Memory: SQLite WAL mode, schema migrations to version 21.
 Weather: OpenWeatherMap.

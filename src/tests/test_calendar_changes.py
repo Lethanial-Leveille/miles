@@ -218,3 +218,57 @@ def test_the_spoken_question_stays_short(google):
     reply = cal.update_calendar_event("leetcode", "monday", new_start_time="4pm", now=NOW)
     question = reply.split("before or after: ")[1].split("?")[0]
     assert len(question.split()) <= 12
+
+
+
+# ── listing: now onward, his events first ──
+
+def _listing_service():
+    at = lambda h, m=0, day=13: datetime.datetime(2026, 9, day, h, m).astimezone().isoformat()
+    return FakeService(
+        {
+            "primary": [
+                {"id": "b1", "summary": "David's birthday",
+                 "start": {"date": "2026-09-14"}, "end": {"date": "2026-09-15"}},
+                _timed("p2", "PBP", at(12, day=14), at(13, day=14)),
+            ],
+            "ieee": [_timed("c1", "Renesas Tech Workshop", at(18, 30, day=14), at(20, day=14))],
+        },
+        calendars=[
+            {"id": "primary", "summary": "leveillelethanial@gmail.com", "primary": True, "accessRole": "owner"},
+            {"id": "ieee", "summary": "UF IEEE Calendar", "selected": True, "accessRole": "reader"},
+        ],
+    )
+
+
+def test_upcoming_never_starts_before_now(monkeypatch):
+    """Sep 13 2026, 7:34 PM: "today" resolved to midnight and she read him
+    sessions he had already been to."""
+    service = _listing_service()
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    cal.get_upcoming_events("today", "sunday september 20", now=NOW)
+    started = {datetime.datetime.fromisoformat(q["timeMin"].replace("Z", "+00:00")) for q in service.listed}
+    assert started == {NOW.astimezone().astimezone(datetime.timezone.utc)}
+
+
+def test_a_range_entirely_in_the_past_says_so(monkeypatch):
+    monkeypatch.setattr(cal, "_service", lambda: pytest.fail("should not reach Google"))
+    assert cal.get_upcoming_events("today at 8am", "today at 9am", now=NOW) == "That whole range has already passed."
+
+
+def test_his_events_come_first_and_followed_calendars_are_marked(monkeypatch):
+    service = _listing_service()
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    reply = cal.get_upcoming_events(now=NOW)
+    mine, followed = reply.split("not commitments")
+    assert "PBP" in mine and "Renesas" not in mine
+    assert "Renesas Tech Workshop (UF IEEE Calendar)" in followed
+
+
+def test_an_all_day_event_is_a_day_not_a_duration(monkeypatch):
+    service = _listing_service()
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    reply = cal.get_upcoming_events(now=NOW)
+    assert "Monday September 14: David's birthday" in reply
+    assert "all day" not in reply
+    assert "gmail.com" not in reply, "his own calendar's name is his email address"

@@ -26,14 +26,39 @@ ElevenLabs synthesis, the pre rendered phrase bank, and the wake chime.
 
 ## Voice settings
 
-```python
-TTS_VOICE_ID = "qSeXEcewz7tA0Q0qk9fH"        # Victoria
+The live model and settings are declared in CLAUDE.md. This section is why.
 
-TTS_VOICE_SETTINGS = VoiceSettings(
-    stability=0.90, similarity_boost=0.75, style=0.00,
-    use_speaker_boost=True, speed=1.00,
-)
-```
+### Moved to eleven_v3, Sep 13 2026
+
+On flash_v2 every reply sounded like a narrator stringing words together, "reading
+and not speaking". Each suspect was rendered side by side on the same real reply
+at a fixed seed and judged by ear:
+
+| Changed | Heard a difference? |
+|---|---|
+| Sentences sent separately against the whole reply at once | No |
+| Each sentence told its neighbours (`previous_text`, `next_text`) | No |
+| Conversational wording against Nova's clipped sentences | Slightly |
+| Speed 1.00 against 0.92 | No |
+| Four other voices built for conversation | Victoria preferred |
+| flash_v2 stability 0.90, 0.75, 0.60 | No |
+| **eleven_v3** | **Yes, clearly** |
+
+Measured on that reply: splitting it into sentences put about 300ms between each,
+over 200ms of it waiting on ElevenLabs, and conversational wording cut the silence
+inside the audio from 1.28s to 0.19s. Real, and not what he was hearing.
+
+On v3, stability 0.5 sounded natural but a little exaggerated and slow. 1.0 kept
+the delivery with less of both and ran shorter, 12.56s against 13.44s. v3
+**ignored speed**: 1.0 and 1.1 rendered to identical lengths at both stabilities.
+First audio was roughly 470 to 620ms against 380ms on flash, from single renders;
+re measure in `timing_log` before quoting it.
+
+Victoria herself is listed by ElevenLabs as `narrative_story`: "VO for explainer
+videos, viral social media and modern brand ads. Warm, upbeat". He kept her
+anyway, and the upbeat edge is partly the voice.
+
+### The flash_v2 tuning, kept as history
 
 `VOICE_WITTY` and `VOICE_SERIOUS` are also defined and currently inert:
 `speak()` falls back to `TTS_VOICE_SETTINGS` unless a caller passes an override,
@@ -56,7 +81,7 @@ variation, and that same variation is what makes delivery sound alive, so 0.75
 read better but occasionally missed the name and 0.90 held the name but read
 flatter. Change it only after listening.
 
-`use_speaker_boost` is NOT supported on eleven_v3. Drop it when targeting v3.
+`use_speaker_boost` was believed unsupported on eleven_v3. **Corrected Sep 13 2026:** the API accepted it, and stability 0.9, on v3. Neither is a hard limit; whether v3 does anything with them is unmeasured.
 
 ## Phrase bank
 
@@ -140,6 +165,12 @@ first byte over five runs was 349ms on v2 against 347ms on v2.5.
 > live, not merely usable, and the flash v2 requirement it describes is load
 > bearing rather than hypothetical: moving off `eleven_flash_v2` would drop
 > tagged words entirely.
+>
+> **Corrected again, Sep 13 2026.** That held for flash v2.5, not every model. On
+> eleven_v3 the tag is kept: "Morning, Lethanial." ran 1.04s with it against
+> 0.72s for "Morning." alone, and deliberately wrong phonemes ran longer at
+> 1.28s. Durations suggest v3 honors the tag; by ear, plain and tagged sound
+> about the same, and whether either is right is still open.
 
 ### Changing a pronunciation
 
@@ -162,7 +193,8 @@ ElevenLabs specific:
 - aplay's ALSA buffer holds ~185ms of audio after writing stops (relevant for
   future barge in support)
 - v3 stability above 0.7 makes it ignore audio tags
-- v3 has no WebSocket support and no `use_speaker_boost`
+- v3 has no WebSocket support. It accepts `use_speaker_boost` and any stability; whether it honors them is unmeasured (checked Sep 13 2026)
+- v3 ignores `speed`: 1.0 and 1.1 rendered to identical lengths
 - `optimize_streaming_latency` is deprecated in 2026, do not use
 
 ## Related

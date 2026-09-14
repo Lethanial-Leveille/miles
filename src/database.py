@@ -238,11 +238,11 @@ def _migration_012_pronunciations(conn):
     ElevenLabs reads "Lethanial" as spelled, which is not how it sounds. The
     alias is a respelling fed to the synthesizer in place of the real word.
 
-    ipa and arpabet are stored but unused: ElevenLabs only supports phoneme tags
-    on the turbo and flash v2 English models, and this runs on flash v2.5.
-    Recording them now means the data is already there if a future model can
-    take them, and it documents the intended pronunciation for a human reading
-    the table.
+    ipa and arpabet were stored but unused when this was written, because phoneme
+    tags only worked on some models. arpabet is live now: TTS_PHONEME_TAGS in
+    config.py sends it, first on flash v2 and since Sep 13 2026 on eleven_v3,
+    which keeps the tag. Recording them up front is what made that possible
+    without a second migration.
 
     verified marks aliases actually listened to. An unverified alias is a guess,
     and a wrong guess sounds worse than the original spelling."""

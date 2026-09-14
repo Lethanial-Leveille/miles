@@ -224,7 +224,6 @@ def cmd_stability(grapheme, number, steps=None):
     candidate sounds right at 0.85 and inconsistent at 0.60, the fix is the
     setting rather than the phonemes, and no amount of further phoneme hunting
     will help."""
-    from elevenlabs import VoiceSettings
     kind, value, note = SWEEP[number - 1]
     spoken = value if kind == "alias" else (
         f'<phoneme alphabet="cmu-arpabet" ph="{value}">{grapheme}</phoneme>')
@@ -233,12 +232,11 @@ def cmd_stability(grapheme, number, steps=None):
           f"{config.TTS_VOICE_SETTINGS.stability}\n")
     for stability in (steps or STABILITY_STEPS):
         print(f"  stability {stability:.2f}")
-        settings = VoiceSettings(
-            stability=stability,
-            similarity_boost=config.TTS_VOICE_SETTINGS.similarity_boost,
-            style=config.TTS_VOICE_SETTINGS.style,
-            use_speaker_boost=True, speed=1.00,
-        )
+        # Copied from the live settings with only stability changed, so a sweep
+        # hears the voice production actually uses. Rebuilt by hand, this had
+        # drifted: it sent use_speaker_boost and speed that config.py no longer
+        # declares, so a sweep was not judging the live settings.
+        settings = config.TTS_VOICE_SETTINGS.model_copy(update={"stability": stability})
         # Two renditions per value: the point is consistency, and one sample
         # cannot show it.
         for seed in (1000, 2000):
@@ -259,7 +257,6 @@ def cmd_demo(stability=None, count=6):
     Pulls actual assistant turns out of conversation_history rather than
     invented lines, so what is judged is what Nova really says."""
     import sqlite3
-    from elevenlabs import VoiceSettings
 
     conn = sqlite3.connect(config.DB_PATH)
     rows = conn.execute(
@@ -275,12 +272,7 @@ def cmd_demo(stability=None, count=6):
 
     settings = None
     if stability is not None:
-        settings = VoiceSettings(
-            stability=stability,
-            similarity_boost=config.TTS_VOICE_SETTINGS.similarity_boost,
-            style=config.TTS_VOICE_SETTINGS.style,
-            use_speaker_boost=True, speed=1.00,
-        )
+        settings = config.TTS_VOICE_SETTINGS.model_copy(update={"stability": stability})
 
     shown = stability if stability is not None else config.TTS_VOICE_SETTINGS.stability
     print(f"{len(rows)} real responses at stability {shown}")

@@ -291,6 +291,11 @@ full, both versions with their dates, which heard aloud sounded like two answers
 glued together. The prompt also tells her to say nothing before calling a
 proposal tool, because anything said then is spoken before the result exists.
 
+It also forbids asking before the call. On Sep 13 2026 Nova asked "Want me to add
+one at ten a.m.?", heard yes, then called the tool and asked the tool's question,
+so he had to agree twice. The tool's question is the confirmation; there is no
+second one.
+
 ### Live data is fetched every time
 
 The prompt tells Nova to call the tool again whenever he asks about sleep,
@@ -338,6 +343,49 @@ Every Oura field names what it is, like `sleep_score_out_of_100`, and durations
 arrive as words. A bare number is a number the model assigns a unit to, which is
 how a contributor score became an hour and forty minutes of sleep. Heart rate is
 summarized in code rather than handed over as raw samples.
+
+## Nova speaks, she does not recite
+
+Rewritten Sep 13 2026, after he described her as reading rather than speaking.
+Two things in the prompt produced that, and neither was the voice.
+
+**Nothing told her what to do with a tool result, so she read it.** Asked how he
+slept, she gave every field in order and one line of meaning at the end.
+`TALKING_ABOUT_RESULTS` tells her to lead with what the result means for him,
+back it with one or two numbers, and connect it to his day. It sits in the
+middle block, so it reaches every tier, because every tier can call a READ tool.
+
+**The persona asked for performed composure.** "Articulate, poised... clean, well
+structured sentences", "warm but never overly familiar", and humor about her own
+capability. It now asks for the professional who genuinely cares about the
+person in front of her: clear rather than formal, honest and kind, dry humor on
+his side, the feeling answered before anything practical.
+
+Tested before landing, on his real Oura results with the real tool result in the
+conversation. Readiness and sleep answers moved from readouts to meaning first
+in every sample; the calendar answer did not change, correctly, since a schedule
+is information he wants read. The test also showed the costs, and each has a
+guard in the prompt:
+
+- **Interpretation can outrun the data.** One answer said he "stayed asleep the
+  whole time" from 89 percent efficiency. Hence "only say what the numbers
+  actually show."
+- **Stock sympathy.** "That lands" came up twice in three answers. Hence "say it
+  your own way each time."
+
+Rejected on evidence first: rewriting only sentence mechanics, meaning shorter
+full stops joined with commas. Over three samples it changed neither length
+nor pauses.
+
+### The calendar is read like a person, not a printout
+
+`get_upcoming_events` starts from now, never earlier, because a bare date for
+today resolves to midnight. All day events are a day, not a duration: "Monday
+September 14: David's birthday". His own calendars and the ones he follows are
+separated by Google's `accessRole`, owner against reader, and followed
+events come with an instruction to mention them only when he asks what is going
+on. He keeps club calendars as options, not as a schedule. The evidence is in
+[INCIDENTS.md](INCIDENTS.md#nova-read-the-calendar-like-a-printout-sep-13-2026).
 
 ## Failure boundaries
 
