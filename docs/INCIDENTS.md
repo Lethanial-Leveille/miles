@@ -33,6 +33,7 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 13 2026 | Nova read the calendar like a printout: past events, "all day", club events as plans | [below](#nova-read-the-calendar-like-a-printout-sep-13-2026) |
 | Sep 13 2026 | New calendar and Oura tools answered confidently and wrong | [below](#calendar-and-sleep-tools-answered-confidently-and-wrong-sep-13-2026) |
 | Sep 13 2026 | Near misses and false wakes turned out to be one population: the neighbours, sorted by level | [below](#the-near-misses-are-the-neighbours-sep-13-2026) |
 | Sep 8 2026 | Nova spoke "Done." on turns where staying silent was correct | [below](#nova-said-done-out-loud-when-she-correctly-stayed-silent-sep-8-2026) |
@@ -42,6 +43,34 @@ session real work.
 | Sep 6 2026 | One capsule recorded itself as three microphones; enrollment threw away its audio | [below](#two-guards-that-could-not-do-their-jobs-sep-6-2026) |
 | Aug 13 2026 | Nova confabulated a security tool call that never happened | [BRAIN.md](BRAIN.md#nova-knows-the-transcript-is-not-his-words) |
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
+
+---
+
+## Nova read the calendar like a printout (Sep 13 2026)
+
+At 19:34 he asked "Do you know what my week is looking like?" `tool_call_log` row 69
+shows Nova asked for `time_min: "Sunday, September 13, 2026"`. She answered:
+
+> "You've got test prep sessions today at three and four thirty, then Monday gets
+> busy. You have LeetCode at ten a.m., PBP at noon, three IEEE events across the
+> afternoon and evening, and David's birthday is all day."
+
+Three separate defects, all in what the tool handed her:
+
+- **Past events as upcoming.** A bare date resolves to midnight, so a listing
+  asked for at 7:34 PM included the 3 PM and 4:30 PM sessions he had already
+  attended. The listing now starts from now, never earlier.
+- **"All day" read out as if it were a time.** The tool wrote
+  `Monday September 14, all day: David Farina's birthday`, and the label was
+  spoken. All day events are now written as a day and a title.
+- **Club events read as plans.** Three UF IEEE events sat alongside his own
+  sessions, from calendars he keeps so he has options, not commitments. Google
+  already marks the difference: his calendars are `owner`, followed ones are
+  `reader`. Followed events now come in their own section with an instruction to
+  mention them only when he asks what is going on.
+
+The same answer shows her reading his own email address as a calendar name was
+headed the same way; that label is dropped for his own calendars.
 
 ---
 

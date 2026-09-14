@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 13 2026 (19) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (596) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (604) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -805,3 +805,61 @@ It sat as a fallback default in the untracked `scripts/oura_auth.py`, was never
 committed (every commit in history checked), and was moved into `.env`.
 Lethanial chose not to rotate it. Recorded so a later session does not reopen it;
 revisit only if the file or `.env` is ever exposed.
+
+### Voice moved to eleven_v3 at stability 1.0 (Sep 13 2026) (DONE)
+
+He described Nova as reading rather than speaking. Every suspect was tested by
+rendering the same real reply side by side and listening; the table is in
+[VOICE_OUTPUT.md](VOICE_OUTPUT.md#moved-to-eleven_v3-sep-13-2026). Only the model
+made a clear difference. Kept Victoria over four conversational voices by his
+choice.
+
+**Rejected on evidence, not preference:** rewriting sentence mechanics in the
+prompt (measured: no change in length or pauses over three samples) and changing
+how replies are split for synthesis (measured about 300ms per gap, inaudible to
+him).
+
+**Costs accepted:** slower first audio, to be measured live; the 48 hand picked ack
+auditions no longer apply, so every clip was re rendered on v3 after backing the
+flash bank up to `data/phrases_flash_v2_backup_2026-09-13`.
+
+**Corrections made in the same change.** VOICE_OUTPUT.md said v3 rejects
+`use_speaker_boost`; the API accepts it. It said leaving flash_v2 drops his name;
+that was flash v2.5, and v3 keeps the tag. Both were inherited claims that had
+never been tested on v3.
+
+**Still open:** his name on v3, which he says needs correcting, and a personality
+rewrite drafted and tested but not applied, deliberately held back so the voice
+change could be heard on its own.
+
+### Nova's personality rewritten to speak, not recite (Sep 13 2026) (DONE)
+
+He described her as reading, not speaking, and wanted a professional who is a
+little sarcastic but real, talking to him like someone she cares about. Tested
+three ways on real questions before choosing; the mechanism is in
+[BRAIN.md](BRAIN.md#nova-speaks-she-does-not-recite).
+
+**Rejected:** rewriting sentence mechanics. Measured over three samples per
+question with tools passed, length and pauses did not move.
+
+**Chosen:** a persona that asks for care instead of composure, and a block that
+makes her interpret results. Held back until the v3 voice change had been heard
+on its own, so each change could be judged separately.
+
+**Accepted risk, guarded:** interpretation can overreach the data, and warmth
+can harden into stock phrases. Both showed up in testing and both have an
+explicit line in the prompt. Watch for them in real use; they are the two ways
+this change fails.
+
+**Left alone:** `ABOUT_YOURSELF` still has her call herself "the most capable
+presence in whatever room I'm in", which is the old persona. Out of scope for
+this change and worth raising with him.
+
+### Calendars split by Google's accessRole, not by a list of names (Sep 13 2026) (DONE)
+
+He does not want club events read as plans. A list of calendar names to ignore
+would need editing every time he subscribes to something. Google's own
+`accessRole` already draws the right line: what he owns he committed to, what he
+reads he follows. So a new club calendar lands on the right side untouched.
+Followed events are kept, in their own section, because he subscribes to them
+precisely so there is something to go to when he wants it.

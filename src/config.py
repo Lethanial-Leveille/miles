@@ -501,23 +501,26 @@ ELEVENLABS_API_KEY   = os.environ.get("ELEVENLABS_API_KEY")
 EXPRESSIVE_TTS_MODEL = "eleven_v3"   # HTTP only, no WebSocket, no speaker boost
 TTS_OUTPUT_FORMAT    = "pcm_22050"   # raw S16_LE mono, piped straight to aplay
 
-# flash_v2 rather than flash_v2_5, measured Aug 11 2026.
+# eleven_v3 since Sep 13 2026, chosen by ear.
 #
-# v2_5 does not merely ignore <phoneme> tags, it drops the word they wrap.
-# Synthesizing "Lethanial" plain gave 0.79s of audio; wrapped in a phoneme tag
-# it gave 0.23s, and deliberately absurd phonemes gave the same 0.23s. Identical
-# output for different phoneme strings means the content is discarded.
+# On flash_v2 every reply sounded like a narrator stringing words together.
+# Heard side by side on the same real reply at a fixed seed, v3 was the one
+# change that made an audible difference. Stability on flash, speed, and
+# splitting a reply into sentences did not.
 #
-# v2 honors them: correct phonemes matched the plain duration at 0.74s, and
-# absurd phonemes stretched to 1.21s.
+# The cost is time to first audio: roughly 470 to 620ms on v3 against 380ms on
+# flash_v2, from single renders that day. Re measure in timing_log before
+# quoting either number.
 #
-# The switch is free. Median time to first byte over five runs was 349ms on v2
-# against 347ms on v2_5, which is noise. v2 is English only, and Nova speaks
-# English.
-DEFAULT_TTS_MODEL = "eleven_flash_v2"
+# Why never flash_v2_5, measured Aug 11 2026: it drops any word wrapped in a
+# phoneme tag, which would delete his name. v3 keeps it. "Morning, Lethanial."
+# with the tag ran 1.04s against 0.72s for "Morning." alone, and deliberately
+# wrong phonemes ran longer at 1.28s, so the tag's content is used rather than
+# thrown away.
+DEFAULT_TTS_MODEL = "eleven_v3"
 
 # Use the arpabet column instead of the alias respelling. Requires a model that
-# honors phoneme tags; on v2_5 this would delete the word.
+# honors phoneme tags: flash_v2 and v3 do, v2_5 deletes the word.
 #
 # Aliases are guesses tuned by ear. Phonemes are exact.
 #
@@ -531,35 +534,27 @@ DEFAULT_TTS_MODEL = "eleven_flash_v2"
 # phoneme. See scripts/pronounce.py.
 TTS_PHONEME_TAGS = True
 
-# ElevenLabs accepts 0.7 to 1.2. Set explicitly rather than left to the API
-# default, because an unset speed is an invisible dependency on whatever the
-# API decides, and this lands directly on how long a turn occupies the room.
-# stability 0.90, chosen by ear across a sweep at a fixed seed, Aug 11 2026:
-#   0.45 no      0.60 eh      0.75 pretty good      0.90 good      1.00 good
+# Tuned for eleven_v3 by ear, Sep 13 2026, on one real reply at a fixed seed.
 #
-# 0.60 was production while the name sounded butchered, and it rates "eh" on its
-# own. Most of that hunt was chasing phonemes when the setting was the dominant
-# term: stability governs how much one rendition varies from the next, and at
-# 0.60 the same phoneme string came out right once and wrong the next time.
+# stability 1.0 over 0.5. At 0.5 v3 sounded natural but a little exaggerated
+# and slow; 1.0 kept the natural delivery with less of both, and ran shorter,
+# 12.56s against 13.44s for the same reply.
 #
-# 0.90 rather than 1.00 because the gain stopped there. 0.75 to 0.90 was audible,
-# 0.90 to 1.00 was not, and 1.00 spends the last of the expressiveness that the
-# persona's dry wit depends on for nothing measurable.
+# speed is declared but v3 ignored it: 1.0 and 1.1 rendered to exactly the same
+# length at both stabilities. It stays explicit so an unset value is never an
+# invisible API default, and a model that does honor it behaves as written.
 #
-# Then 0.75 turned out to read noticeably better on ordinary sentences while
-# occasionally missing the name, and 0.90 the reverse. Those are the two ends of
-# one trade: stability buys consistency by reducing variation, and the same
-# variation is what makes delivery sound alive. 0.80 sits in the band because
-# this is a continuous value, not a choice between the five points that happened
-# to get sampled.
+# use_speaker_boost is unset because the renders he chose did not send it. The
+# API accepts it on v3, so this matches what was heard; it is not a limit of
+# the model.
 #
-# Settled at 0.80 after listening to the band between them. Change it only
-# after listening, not by reasoning: every step of this was decided by ear and
-# the two failures it trades between are audible, not measurable.
-#   python3 scripts/pronounce.py stability Lethanial 15 .78 .80 .82 .85
+# The flash_v2 tuning history, 0.60 through 0.90, is in docs/VOICE_OUTPUT.md.
+# Those values were found on a different model and do not carry over.
+#
+# Changing any of this means re rendering the phrase bank, or cached clips and
+# live speech drift apart: python3 scripts/render_phrases.py render --force
 TTS_VOICE_SETTINGS = VoiceSettings(
-    stability=0.90, similarity_boost=0.75, style=0.00,
-    use_speaker_boost=True, speed=1.00,
+    stability=1.0, similarity_boost=0.75, style=0.00, speed=1.00,
 )
 
 # Kept for the response classification work that selects a profile per turn.

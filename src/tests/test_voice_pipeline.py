@@ -89,25 +89,19 @@ def test_no_module_reads_the_voice_id_from_the_environment():
 
 
 def test_settings_carry_the_values_that_were_chosen():
-    """Pinned so a change is deliberate rather than incidental. stability in
-    particular was chosen by ear across a sweep, 0.45 no through 0.90 good, and
-    0.60 is the value that was live while the voice sounded inconsistent.
+    """Pinned so a change to the voice is deliberate and shows up in review.
 
-    0.80 was settled by ear from the band between 0.75, which read better on
-    ordinary sentences but missed the name, and 0.90, which held the name but
-    read flatter. Those are one dial: stability buys consistency by reducing
-    variation, and that variation is what makes delivery sound alive.
-
-    Raised to 0.90 on Aug 12 2026: he found 0.80 too expressive in live use, and
-    separately that it was mispronouncing his name, which is the exact pair of
-    symptoms the note above says 0.90 addresses.
+    Moved to eleven_v3 at stability 1.0 on Sep 13 2026, by ear. On flash_v2 at
+    0.90 every reply sounded like a narrator assembling words; v3 at 0.5 sounded
+    natural but a little exaggerated. The flash history is in VOICE_OUTPUT.md.
 
     The phrase bank is rendered at whatever this is, so changing it means
-    re-rendering all of data/phrases or the cached clips and live speech drift
+    re rendering all of data/phrases or the cached clips and live speech drift
     apart. `render_phrases.py render --force` is the other half of this change."""
     s = config.TTS_VOICE_SETTINGS
-    assert (s.stability, s.similarity_boost, s.style) == (0.90, 0.75, 0.00)
-    assert s.use_speaker_boost is True
+    assert config.DEFAULT_TTS_MODEL == "eleven_v3"
+    assert (s.stability, s.similarity_boost, s.style) == (1.0, 0.75, 0.00)
+    assert s.use_speaker_boost is None, "the renders he chose did not send it"
     assert s.speed == 1.00, "an unset speed is an invisible API default"
 
 

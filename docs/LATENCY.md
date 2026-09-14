@@ -38,6 +38,11 @@ scattered through prose.
 | genuinely unaccounted | 32ms |
 | **perceived** | **4325ms** |
 
+**The tts_ttfb row above is flash_v2.** Nova moved to eleven_v3 on Sep 13 2026. Over the
+first 12 live turns on v3 the median time to first byte was 647ms, nearly double. The
+rest of this table predates the switch; re measure the whole budget before quoting a
+new perceived total.
+
 Re-read on the Aug 12 window, after `SILENCE_LIMIT` went to 1.2 (n=44, Haiku,
 non action): endpoint 1200, transcribe 1089, verify 190, claude_ttft 1350,
 first_sentence 230, tts 382, perceived p50 4324. **The sum of the stage medians

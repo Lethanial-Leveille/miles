@@ -1,4 +1,8 @@
 import re
+
+import pytest
+
+import prompts
 from prompts import build_enhanced_prompt
 
 
@@ -139,3 +143,22 @@ def test_transcript_warning_precedes_the_instruction_to_answer_confidently():
     knowledge = prompt.index("GENERAL KNOWLEDGE:")
     reaches = prompt.index("WHAT REACHES YOU:")
     assert 0 < reaches - knowledge < 1200, "the two blocks have drifted apart"
+
+
+
+@pytest.mark.parametrize("tier", ["hokage", "jonin", "genin"])
+def test_results_are_interpreted_not_recited_at_every_tier(tier):
+    """Sep 13 2026: asked how he slept, Nova read every field of the tool result
+    in order. The instruction that stops it has to reach every speaker, because
+    every tier can call a READ tool."""
+    prompt = prompts.build_enhanced_prompt([], [], "voice", [], tier=tier)
+    assert "TALKING ABOUT WHAT A TOOL GIVES YOU" in prompt
+    assert "Only say what the numbers actually show" in prompt
+
+
+def test_personality_no_longer_asks_for_distance():
+    """"Warm but never overly familiar" and "clean, well structured sentences"
+    were the performed composure he heard as reading, not speaking."""
+    assert "never overly familiar" not in prompts.SYSTEM_PROMPT_HEADER
+    assert "well structured sentences" not in prompts.SYSTEM_PROMPT_HEADER
+    assert "answer the feeling first" in prompts.SYSTEM_PROMPT_HEADER

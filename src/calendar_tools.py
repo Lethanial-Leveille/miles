@@ -159,12 +159,19 @@ def _event_start(event):
     return datetime.datetime.fromisoformat(raw).astimezone()
 
 
-def _event_line(event, calendar_name):
+def _event_line(event, calendar_name=None):
+    """One event as the model sees it.
+
+    An all day event gets its day and nothing else. Labelled "all day", Nova
+    read the label out: "David's birthday is all day". A birthday is not a block
+    of time, it is a thing true of that day. The calendar name is only kept for
+    calendars he follows, where "UF IEEE" is useful context; on his own calendar
+    it was his email address, read aloud as noise."""
     title = event.get("summary", "Untitled")
+    source = f" ({calendar_name})" if calendar_name else ""
     if "date" in event["start"]:
-        day = _event_start(event).strftime("%A %B %-d")
-        return f"{day}, all day: {title} ({calendar_name})"
-    return f"{_spoken(_event_start(event))}: {title} ({calendar_name})"
+        return f"{_event_start(event).strftime('%A %B %-d')}: {title}{source}"
+    return f"{_spoken(_event_start(event))}: {title}{source}"
 
 
 def merge_busy(blocks):
@@ -202,24 +209,31 @@ def _service():
 
 
 def _calendars(service):
-    """Every calendar on his list, paged, as {id: (name, selected)}."""
+    """Every calendar on his list, paged, as {id: (name, selected, owned)}.
+
+    owned is Google's own accessRole, not a list of names kept here. His primary
+    calendar and MILES are "owner"; club and event calendars he subscribed to
+    are "reader". That line is exactly the one between things he has committed
+    to and things he could go to, so a new club calendar lands on the right side
+    without anyone editing this file."""
     found, page = {}, None
     while True:
         result = service.calendarList().list(pageToken=page).execute()
         for item in result.get("items", []):
             selected = item.get("selected", False) or item.get("primary", False)
-            found[item["id"]] = (item.get("summary", "Unknown calendar"), selected)
+            owned = item.get("accessRole") == "owner"
+            found[item["id"]] = (item.get("summary", "Unknown calendar"), selected, owned)
         page = result.get("nextPageToken")
         if not page:
             return found
 
 
 def _selected(service):
-    return {cid: name for cid, (name, selected) in _calendars(service).items() if selected}
+    return {cid: name for cid, (name, selected, _) in _calendars(service).items() if selected}
 
 
 def _miles_calendar_id(service):
-    for cid, (name, _) in _calendars(service).items():
+    for cid, (name, _, _) in _calendars(service).items():
         if name == _WRITE_CALENDAR:
             return cid
     return None
@@ -323,10 +337,11 @@ _WINDOW_HELP = (
 @tool(
     name="get_upcoming_events",
     description=(
-        "Lethanial's upcoming events across every calendar he has selected, "
-        "soonest first, up to ten, with local times already worked out. Call "
-        "this when he asks what is on his calendar, what he has today or "
-        "tomorrow, or when something is. " + _WINDOW_HELP
+        "Lethanial's upcoming events from now on, soonest first, with local "
+        "times already worked out. His own events come first; events from club "
+        "and event calendars he follows come separately and are not "
+        "commitments. Call this when he asks what is on his calendar, what he "
+        "has today or this week, or when something is. " + _WINDOW_HELP
     ),
     input_schema={
         "type": "object",
@@ -340,13 +355,23 @@ _WINDOW_HELP = (
     returns_to_model=True,
     min_tier="hokage",
 )
-def get_upcoming_events(time_min=None, time_max=None):
-    start, end = resolve_window(time_min, time_max)
+def get_upcoming_events(time_min=None, time_max=None, now=None):
+    now = now or datetime.datetime.now()
+    start, end = resolve_window(time_min, time_max, now)
+    # Upcoming means from now. Asked about his week at 7:34 PM, Nova passed the
+    # bare date for today, which resolves to midnight, and read him the 3 PM and
+    # 4:30 PM sessions he had already been to as if they were still ahead.
+    # Google still returns an all day event that is under way, so today's
+    # birthday survives the clamp.
+    start = max(start, now)
+    if end is not None and end <= start:
+        return "That whole range has already passed."
     service = _service()
 
-    events, unreadable = [], []
-    calendars = _selected(service)
-    for cid, name in calendars.items():
+    mine, followed, unreadable = [], [], []
+    calendars = {cid: (name, owned) for cid, (name, selected, owned)
+                 in _calendars(service).items() if selected}
+    for cid, (name, owned) in calendars.items():
         query = {"calendarId": cid, "timeMin": _utc(start), "maxResults": _MAX_EVENTS,
                  "singleEvents": True, "orderBy": "startTime"}
         if end is not None:
@@ -354,17 +379,29 @@ def get_upcoming_events(time_min=None, time_max=None):
         try:
             items = service.events().list(**query).execute().get("items", [])
         except Exception:
-            # One broken shared calendar should not hide the other eight, but it
-            # is named in the answer rather than dropped.
+            # One broken shared calendar should not hide the others, but it is
+            # named in the answer rather than dropped.
             unreadable.append(name)
             continue
-        events += [(_event_start(e), _event_line(e, name)) for e in items]
+        for event in items:
+            if owned:
+                mine.append((_event_start(event), _event_line(event)))
+            else:
+                followed.append((_event_start(event), _event_line(event, name)))
 
     if calendars and len(unreadable) == len(calendars):
         raise RuntimeError("could not read any calendar")
 
-    events.sort(key=lambda pair: pair[0])
-    lines = [line for _, line in events[:_MAX_EVENTS]] or ["No events in that range."]
+    mine.sort(key=lambda pair: pair[0])
+    followed.sort(key=lambda pair: pair[0])
+    lines = ["His events:"]
+    lines += [line for _, line in mine[:_MAX_EVENTS]] or ["Nothing on his own calendar."]
+    if followed:
+        # Separated rather than dropped. He keeps club calendars so there is
+        # something to go to when he wants it, not as a schedule to be read.
+        lines += ["", "On calendars he follows, not commitments. Mention these only "
+                      "if he asks what is going on or what he could do:"]
+        lines += [line for _, line in followed[:_MAX_EVENTS]]
     if unreadable:
         lines.append(f"Could not read: {', '.join(unreadable)}.")
     return "\n".join(lines)
