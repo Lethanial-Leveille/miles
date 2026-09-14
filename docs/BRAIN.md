@@ -273,6 +273,10 @@ the write.
   back, so the model cannot confirm something other than what he heard.
 - Anything unrelated said in between drops the proposal. A correction ("make it
   eleven") is a new proposal and is read back again.
+- Several proposals on the **same** turn join one batch, asked as one question
+  and confirmed or cancelled together. Until Sep 13 2026 each replaced the last,
+  and his yes to the first of seven lessons created the seventh. In a batch, one
+  failure is reported beside what worked rather than hiding it.
 - Whether "yeah, do it" means yes is judgment and stays with the model. The code
   guarantees order and freshness, not interpretation.
 

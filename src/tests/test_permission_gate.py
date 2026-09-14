@@ -49,3 +49,14 @@ def test_hokage_runs_private_reads(ran):
     [result] = brain._run_tools([_block("get_oura_sleep")], "model", "hokage")
     assert not result["is_error"]
     assert ran == ["get_oura_sleep"]
+
+
+
+def test_a_failed_tool_always_goes_back_to_nova():
+    """Even one declared fire and forget. Otherwise the fallback says "Done."
+    over something that did not happen."""
+    quiet_failure = {"block": _block("cancel_reminder"), "output": "nothing matched", "is_error": True}
+    quiet_success = {"block": _block("cancel_reminder"), "output": "Removed 1", "is_error": False}
+    assert brain._needs_second_call([quiet_failure])
+    assert not brain._needs_second_call([quiet_success])
+    assert brain._needs_second_call([{"block": _block("get_weather"), "output": "{}", "is_error": False}])

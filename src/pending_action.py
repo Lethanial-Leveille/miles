@@ -35,8 +35,7 @@ CONFIRM_WINDOW_S = 120
 
 @dataclass
 class _Pending:
-    description: str
-    run: Callable[[], Any]
+    changes: list          # [(description, run)], confirmed or cancelled together
     turn: int
     created: float
 
@@ -54,13 +53,33 @@ def begin_turn():
         _turn += 1
 
 
+def _question(changes):
+    """One question covering every staged change, in the order they were made."""
+    parts = [description for description, _ in changes]
+    if len(parts) == 1:
+        return parts[0] + "?"
+    rest = [p[0].lower() + p[1:] for p in parts[1:]]
+    return ", ".join([parts[0]] + rest[:-1]) + ", and " + rest[-1] + "?"
+
+
 def propose(description, run, now=None):
-    """Stage an action. A new proposal replaces an old one, so "actually make it
-    eleven" reads the corrected event back instead of confirming the first."""
+    """Stage a change and return the question that now covers everything staged.
+
+    Several proposals on the same turn join one batch, confirmed or cancelled
+    together. They used to replace each other: on Sep 13 2026 Nova staged seven
+    tutoring lessons in one turn, asked about the first, and his yes created the
+    seventh, a lesson he had never agreed to.
+
+    A proposal on a later turn still replaces the old one, so "actually make it
+    eleven" is asked again instead of confirming the first version."""
     global _pending
+    now = time.monotonic() if now is None else now
     with _lock:
-        _pending = _Pending(description, run, _turn,
-                            time.monotonic() if now is None else now)
+        if _pending is not None and _pending.turn == _turn:
+            _pending.changes.append((description, run))
+        else:
+            _pending = _Pending([(description, run)], _turn, now)
+        return _question(_pending.changes)
 
 
 def resolve(approved, now=None):
@@ -83,10 +102,21 @@ def resolve(approved, now=None):
         return ("That request expired before he confirmed it, so nothing was "
                 "done. If he still wants it, propose it again.")
     if not approved:
-        return f"Cancelled. Nothing was done: {pending.description}."
-    # Outside the lock: this is a network call, and holding the lock through it
-    # would stall the next turn's begin_turn behind Google.
-    return pending.run()
+        return f"Cancelled. Nothing was done: {_question(pending.changes).rstrip('?')}."
+    # Outside the lock: these are network calls, and holding the lock through
+    # them would stall the next turn's begin_turn behind Google.
+    if len(pending.changes) == 1:
+        return pending.changes[0][1]()
+    # In a batch one failure must not hide the rest, in either direction: what
+    # was done and what was not are both reported, so Nova never says "Done"
+    # over a half finished batch.
+    results = []
+    for description, run in pending.changes:
+        try:
+            results.append(str(run()))
+        except Exception as exc:
+            results.append(f"Failed, not done: {description} ({exc}).")
+    return " ".join(results)
 
 
 @tool(

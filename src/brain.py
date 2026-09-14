@@ -6,7 +6,7 @@ from typing import NamedTuple
 
 import anthropic
 import timing
-from tts import speak
+from tts import play, speak, start_synthesis
 from prompts import build_enhanced_prompt
 from database import (save_message, get_seed_memories, get_episodic_memories,
                       get_recent_messages, search_memories, memory_manifest,
@@ -68,18 +68,32 @@ def _select_model():
     return model
 
 
-def _speak_with_barge_in(sentence, leaks_seen=None):
-    """Speak one sentence, listening for the wake word while it plays.
+# The sentence playing and the one after it. Enough that the next sentence is
+# ready the moment the current one ends; few enough that a long reply never
+# opens more ElevenLabs requests at once than the smallest plan allows. His API
+# key cannot read the plan's real limit, so this assumes the floor.
+_SYNTHESIS_AHEAD = 2
+
+
+def _play_with_barge_in(synthesis):
+    """Play one synthesized sentence, listening for the wake word while it plays.
+
+    Returns (interrupted, waited_ms).
 
     The watcher owns the microphone for exactly the span aplay is draining,
     which is the only window where the main loop is not reading it. Two readers
     on one stream do not raise, they interleave frames, so the exclusivity here
     is load bearing rather than tidy.
 
-    Falls back to a plain speak when barge in is off, which is the default."""
+    interrupted is read before the watcher is released, not after. The watcher
+    signals a heard wake word by setting the same event this function sets to
+    stop it, so reading it afterwards returned True for every sentence: the day
+    barge in was switched on, every reply would have stopped after its first
+    sentence.
+
+    Falls back to plain playback when barge in is off, which is the default."""
     if not BARGE_IN:
-        speak(sentence)
-        return False
+        return False, play(synthesis)
 
     import audio
     interrupt = threading.Event()
@@ -87,37 +101,76 @@ def _speak_with_barge_in(sentence, leaks_seen=None):
                                args=(interrupt,), daemon=True)
     watcher.start()
     try:
-        speak(sentence, interrupt=interrupt)
+        waited_ms = play(synthesis, interrupt=interrupt)
+        interrupted = interrupt.is_set()
     finally:
         interrupt.set()          # release the watcher whether or not it fired
         watcher.join(timeout=1.0)
-    return interrupt.is_set()
+    return interrupted, waited_ms
 
 
 async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set) -> None:
-    """Pull sentences off the queue and speak them sequentially."""
-    loop = asyncio.get_running_loop()
-    while True:
-        sentence = await queue.get()
-        if sentence is None:
-            break
-        sentence = strip_leading_bracket_cue(sentence, leaks_seen)
-        text_parts.append(sentence)
-        # speak() blocks (holds speak_lock + waits for aplay), so run in a thread
-        interrupted = await loop.run_in_executor(
-            None, _speak_with_barge_in, sentence, leaks_seen)
-        if interrupted:
-            # He said the wake word over her. Drop the rest of the queued
-            # sentences rather than finishing the thought he interrupted,
-            # which is the entire point of being able to interrupt.
-            while not queue.empty():
-                try:
-                    queue.get_nowait()
-                    queue.task_done()
-                except Exception:
-                    break
-            break
+    """Speak sentences in order, with each one synthesized before its turn.
 
+    Two workers. The feeder takes sentences off the router's queue as Claude
+    streams them and starts their synthesis at once, holding one of
+    _SYNTHESIS_AHEAD slots per sentence. The player takes them in order, plays
+    each to the end, and gives the slot back.
+
+    One loop used to do both, so sentence two was not requested until sentence
+    one had finished playing, and every sentence after the first opened with
+    its whole time to first byte as silence. On eleven_v3 that was a median
+    647ms, three times over in a four sentence reply."""
+    loop = asyncio.get_running_loop()
+    ready = asyncio.Queue()
+    slots = asyncio.Semaphore(_SYNTHESIS_AHEAD)
+
+    async def feed():
+        try:
+            while True:
+                sentence = await queue.get()
+                if sentence is None:
+                    return
+                sentence = strip_leading_bracket_cue(sentence, leaks_seen)
+                await slots.acquire()
+                # start_synthesis reads the pronunciation table, so it runs off
+                # the event loop like everything else that touches the disk.
+                synthesis = await loop.run_in_executor(None, start_synthesis, sentence)
+                await ready.put((sentence, synthesis))
+        except Exception as exc:
+            print(f"Could not start speech synthesis: {exc}", flush=True)
+        finally:
+            # Always, including on failure or cancellation. Without it a failure
+            # in here would leave the player waiting forever, and the turn would
+            # hang with nothing in the log.
+            ready.put_nowait(None)
+
+    feeder = asyncio.create_task(feed())
+    played = 0
+    try:
+        while True:
+            item = await ready.get()
+            if item is None:
+                break
+            sentence, synthesis = item
+            text_parts.append(sentence)
+            try:
+                interrupted, waited_ms = await loop.run_in_executor(
+                    None, _play_with_barge_in, synthesis)
+            finally:
+                slots.release()
+            played += 1
+            # For every sentence after the first, the silence heard before it.
+            # The first sentence's wait is already logged as tts_ttfb_ms.
+            if played > 1 and waited_ms is not None:
+                print(f"  sentence {played} waited {waited_ms:.0f}ms for audio", flush=True)
+            if interrupted:
+                # He said the wake word over her. Drop the rest rather than
+                # finishing the thought he interrupted, which is the entire
+                # point of being able to interrupt.
+                break
+    finally:
+        feeder.cancel()
 
 def _trim_history(messages: list) -> list:
     """Shorten past assistant turns before sending them as context.
@@ -222,6 +275,18 @@ def _tool_result_blocks(results):
         }
         for r in results
     ]
+
+
+def _needs_second_call(results):
+    """Whether Nova has to speak about what the tools returned.
+
+    A tool declares returns_to_model at registration, so setting a timer does
+    not cost a second round trip to rephrase "Timer set." A failure always
+    does, whatever the tool declared. The fire and forget branch speaks "Done."
+    when Nova said nothing alongside the call, and on Sep 13 2026 it said "Done."
+    over three cancel calls that had each found nothing to cancel."""
+    return any(r["is_error"] or registry.get(r["block"].name).returns_to_model
+               for r in results)
 
 
 def _with_alerts(messages: list, pending: list) -> list:
@@ -434,9 +499,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # This replaces the hardcoded `any(r["type"] == "weather")` whitelist.
         # Whether a second call happens is now a property of the tool, declared
         # once at registration, so adding a read shaped tool needs no edit here.
-        needs_second_call = any(
-            registry.get(r["block"].name).returns_to_model for r in results
-        )
+        needs_second_call = _needs_second_call(results)
 
         if needs_second_call:
             # Real tool_result blocks, not a synthetic user turn describing the

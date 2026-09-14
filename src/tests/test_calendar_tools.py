@@ -88,3 +88,16 @@ def test_days_are_named_the_way_a_person_says_them(day, expected):
 def test_clock_drops_empty_minutes():
     assert cal._clock(datetime.datetime(2026, 9, 14, 16)) == "4 PM"
     assert cal._clock(datetime.datetime(2026, 9, 14, 16, 30)) == "4:30 PM"
+
+
+
+def test_several_lessons_proposed_in_one_turn_are_all_created_by_one_yes(monkeypatch):
+    writes = []
+    monkeypatch.setattr(cal, "_insert_event", lambda summary, *a: writes.append(summary) or f"Added {summary}.")
+    pa.begin_turn()
+    cal.create_calendar_event("Isaiah lesson", "tuesday at 3:30pm", 90, now=NOW)
+    reply = cal.create_calendar_event("Andrew lesson", "thursday at 4pm", 90, now=NOW)
+    assert "Add Isaiah lesson on Tuesday at 3:30 PM for 90 minutes, and add Andrew lesson on Thursday at 4 PM for 90 minutes?" in reply
+    pa.begin_turn()
+    assert pa.resolve(True) == "Added Isaiah lesson. Added Andrew lesson."
+    assert writes == ["Isaiah lesson", "Andrew lesson"]
