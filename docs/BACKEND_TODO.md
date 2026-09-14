@@ -1085,3 +1085,19 @@ console.
 They live in memory, per process. A restart between the question and the answer
 loses the proposal, and the "yes" gets "nothing is waiting". Accepted, because
 the confirmation window is two minutes and restarts are rare.
+
+### A correction Nova notices on her own skips his review
+
+Found Sep 13 2026. `supersede_memory` always inserts the replacement as `active`,
+so when `remember` is called with `certainty: inferred` and `supersedes`, the
+correction replaces the old memory immediately instead of waiting in the review
+queue the way a new inferred fact does. It predates the memory fix; the fix only
+made inferred calls common enough to notice.
+
+Not fixed in the same change because doing it properly needs the queue to hold a
+pending replacement: a pending row that records which memory it would retire, and
+an approval that performs the supersede. That is a schema migration. Applying an
+inferred correction as a plain new pending row would leave both facts active once
+approved, and superseding into a pending row would hide the old fact from Nova
+until he reviewed it, both worse than today. Corrections he states himself are
+"asked" and should apply at once, so the gap is only in corrections she infers.

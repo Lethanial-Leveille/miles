@@ -1,4 +1,5 @@
 import asyncio
+import re
 import threading
 import time
 from datetime import datetime
@@ -259,6 +260,23 @@ def _with_current_time(messages: list) -> list:
 # nothing left to reach for.
 MAX_TOOL_ROUNDS = 3
 
+# Phrases that tell him something was kept. Checked against the tools actually
+# called; see _claims_a_save_without_calling.
+_CLAIMS_A_SAVE = re.compile(
+    r"\b(i've got that down|got that down|i've noted|noted that|i'll remember|"
+    r"i've saved|saved that|i've stored|stored that|made a note|"
+    r"i'll keep that in mind)\b",
+    re.IGNORECASE)
+
+
+def _claims_a_save_without_calling(text, called_tools):
+    """Whether Nova told him she kept something without calling remember.
+
+    Measurement, not enforcement. On Sep 13 2026 she said "I've got that down"
+    and stored nothing, which tells him a fact is kept that is not. The prompt
+    forbids it now; this makes every time it still happens visible."""
+    return "remember" not in called_tools and bool(_CLAIMS_A_SAVE.search(text or ""))
+
 
 def _tool_result_blocks(results):
     """Tool results shaped for the API, one block per call.
@@ -467,6 +485,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     accumulated = strip_leading_bracket_cue(accumulated, leaks_seen)
 
     tool_uses = [b for b in final_message.content if b.type == "tool_use"]
+    called_tools = {b.name for b in tool_uses}
 
     if tool_uses:
         action_start = time.monotonic()
@@ -561,6 +580,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                 final_text = f"{final_text} {round_text}".strip()
                 more_tools = [b for b in followup_message.content
                               if b.type == "tool_use"]
+                called_tools |= {b.name for b in more_tools}
                 if not more_tools:
                     break
 
@@ -621,6 +641,10 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     # next twenty turns read back as context. save_message is skipped rather
     # than storing "", because get_recent_messages does not filter and the API
     # rejects an empty content block.
+    if _claims_a_save_without_calling(final_text, called_tools):
+        print(f"Claimed to remember without calling remember: {final_text[:120]!r}",
+              flush=True)
+
     if final_text:
         save_message("assistant", final_text, device=device)
     return TurnResult(text=final_text, dismissed=dismissed, ignored=ignored)

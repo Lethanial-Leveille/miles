@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 13 2026 (19) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (621) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (643) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -895,3 +895,28 @@ to each clip's length, already rejected in August for corrupting transcripts.
 **The pieces are cut in code at the quietest point** near each boundary, tested on
 synthetic audio. Not yet tested against a real recording over 28 seconds, because
 none exists yet; the first one he makes is that test.
+
+### Memory: store what he asks, notice more, never claim a save (Sep 13 2026) (DONE)
+
+`remember` had never been called in a month. Measured before changing anything,
+then after; the numbers are in [BRAIN.md](BRAIN.md#memory-nova-actually-remembers-now).
+
+**Chosen:** a lower bar for inferred storage, because inferred memories already
+wait for review, so a reasonable guess costs one "discard" while never noticing
+anything costs everything. Explicit requests store first and ask after. The claim
+of a save without a call is logged rather than blocked: blocking would need
+rewriting her text, and the prompt already stopped it in all fifteen samples.
+
+**Review by voice instead of waiting for the app**, limited to ids actually in the
+queue.
+
+**Deferred:** inferred corrections skipping review, which needs a schema change;
+see BACKEND_TODO.md.
+
+### Schedule conflicts found in code, suggestions left to Nova (Sep 13 2026) (DONE)
+
+What he meant by clearing his schedule was seeing what overlaps, not hiding or
+deleting anything. Overlap is arithmetic, so code finds it; which event to skip is
+judgment, so Nova suggests it, with classes and his own commitments first. The
+general session planner for tutoring and study blocks is next, built for sessions
+of any kind rather than for tutoring, which is temporary.

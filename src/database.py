@@ -1223,6 +1223,14 @@ def get_active_memories(limit=50, offset=0):
     return rows, total
 
 
+def memory_content(memory_id: int):
+    """The text of one memory, or None when the id does not exist."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT content FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 def supersede_memory(old_id: int, new_content: str, **fields):
     """Replace a memory with a corrected one, keeping the link between them.
 

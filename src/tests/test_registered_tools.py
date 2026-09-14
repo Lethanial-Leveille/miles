@@ -32,6 +32,9 @@ EXPECTED = {
     "create_calendar_event":   (Permission.EXTERNAL_WRITE, True),
     "confirm_pending_action":  (Permission.EXTERNAL_WRITE, True),
     "update_calendar_event":   (Permission.EXTERNAL_WRITE, True),
+    "list_pending_memories":   (Permission.READ,           True),
+    "find_schedule_conflicts": (Permission.READ,           True),
+    "review_pending_memory":   (Permission.WRITE,          True),
     "delete_calendar_event":   (Permission.EXTERNAL_WRITE, True),
     "get_oura_readiness":      (Permission.READ,           True),
     "get_oura_sleep":          (Permission.READ,           True),
@@ -46,6 +49,8 @@ HOKAGE_ONLY = {
     "create_calendar_event", "confirm_pending_action", "get_oura_readiness",
     "get_oura_sleep", "get_oura_heartrate", "get_oura_activity",
     "update_calendar_event", "delete_calendar_event",
+    "list_pending_memories", "review_pending_memory",
+    "find_schedule_conflicts",
 }
 
 # WRITE tools that legitimately cost a second round trip, with the reason.
@@ -66,6 +71,9 @@ ROUND_TRIP_WRITES = {
     # The write itself can fail at Google, and a confirmation nobody hears
     # sounds exactly like one that did not happen.
     "confirm_pending_action",
+    # He has to hear whether it was kept or discarded, and an id that was
+    # not waiting for review is refused out loud rather than silently.
+    "review_pending_memory",
 }
 
 

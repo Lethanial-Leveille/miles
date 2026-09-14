@@ -658,3 +658,100 @@ def _patch_event(calendar_id, event_id, body, name):
     left exactly as they were."""
     _service().events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
     return f"Updated {name}."
+
+
+def find_overlaps(events):
+    """Groups of events whose times overlap, in time order.
+
+    events are (start, end, label). Touching is not overlapping: a lesson ending
+    at 4:30 and another starting at 4:30 is back to back, which he said is fine.
+    A chain where A overlaps B and B overlaps C is one group, because choosing
+    what to skip among the three is one decision, not three."""
+    groups, current, current_end = [], [], None
+    for start, end, label in sorted(events, key=lambda e: (e[0], e[1])):
+        if current and start < current_end:
+            current.append((start, end, label))
+            current_end = max(current_end, end)
+            continue
+        if len(current) > 1:
+            groups.append(current)
+        current, current_end = [(start, end, label)], end
+    if len(current) > 1:
+        groups.append(current)
+    return groups
+
+
+def _names(labels):
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+
+
+@tool(
+    name="find_schedule_conflicts",
+    description=(
+        "Where Lethanial's events overlap, with each overlap's time already "
+        "worked out: his own events against each other and against events on "
+        "club and event calendars he follows. Covers the next seven days unless "
+        "given a range. Call this when he asks what conflicts, what overlaps, or "
+        "what he should skip. Then suggest what to keep: his classes and his own "
+        "commitments come before events on calendars he follows, which are "
+        "optional. Changes nothing. " + _WINDOW_HELP
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "time_min": {"type": "string", "description": "Optional start. Defaults to now."},
+            "time_max": {"type": "string", "description": "Optional end. Defaults to seven days later."},
+        },
+        "required": [],
+    },
+    permission=Permission.READ,
+    returns_to_model=True,
+    min_tier="hokage",
+)
+def find_schedule_conflicts(time_min=None, time_max=None, now=None):
+    now = now or datetime.datetime.now()
+    start, end = resolve_window(time_min, time_max, now)
+    # Same reasoning as get_upcoming_events: a conflict that is already over is
+    # not something he can still decide about.
+    start = max(start, now)
+    if end is None:
+        end = start + datetime.timedelta(days=7)
+    if end <= start:
+        return "That whole range has already passed."
+    service = _service()
+
+    timed, unreadable = [], []
+    calendars = {cid: (name, owned) for cid, (name, selected, owned)
+                 in _calendars(service).items() if selected and "#holiday@" not in cid}
+    for cid, (name, owned) in calendars.items():
+        try:
+            items = service.events().list(
+                calendarId=cid, timeMin=_utc(start), timeMax=_utc(end), maxResults=50,
+                singleEvents=True, orderBy="startTime").execute().get("items", [])
+        except Exception:
+            unreadable.append(name)
+            continue
+        for event in items:
+            # A birthday or a holiday is a fact about the day, not a block of
+            # time, so it cannot conflict with anything.
+            if "dateTime" not in event["start"]:
+                continue
+            whose = "his own" if owned else name
+            timed.append((datetime.datetime.fromisoformat(event["start"]["dateTime"]).astimezone(),
+                          datetime.datetime.fromisoformat(event["end"]["dateTime"]).astimezone(),
+                          f"{event.get('summary', 'Untitled')} ({whose})"))
+
+    if calendars and len(unreadable) == len(calendars):
+        raise RuntimeError("could not read any calendar")
+
+    lines = []
+    for group in find_overlaps(timed):
+        first = min(g[0] for g in group)
+        last = max(g[1] for g in group)
+        lines.append(f"{_spoken(first)} until {last.strftime('%-I:%M %p')}: "
+                     f"{_names([g[2] for g in group])} overlap")
+    if not lines:
+        lines = ["No overlaps in that range."]
+    if unreadable:
+        lines.append(f"Could not read: {', '.join(unreadable)}.")
+    return "\n".join(lines)
