@@ -56,8 +56,9 @@ the table can stay a plain reference:
 - **`VAD_PREROLL_MS`** retains frames before onset so soft leading consonants
   survive.
 - **`MAX_RECORD`** was raised from 15.0, which truncated 15 percent of follow ups,
-  and again to 60 on Sep 13 2026 once long recordings stopped depending on the
-  twenty second window. See [long recordings](#long-recordings).
+  to 60 on Sep 13 2026 once long recordings stopped depending on the twenty
+  second window, and down to 30 the same night after a busy room held the mic.
+  See [long recordings](#long-recordings).
 - **`WHISPER_AUDIO_CTX`** caps the context at 20 seconds. The default of 1500
   padded every clip to 30s and cost a flat ~2000ms regardless of input length.
   Do not lower it without rerunning the validation: 750 and 900 both corrupted
@@ -338,6 +339,34 @@ will be cut into pieces, because one run cannot stand in for several.
 
 **Not fixed by this:** `SILENCE_LIMIT` still ends a recording on a pause, so a long
 explanation with a long thinking pause ends at the pause.
+
+### The cap came down to 30, and the wake word interrupts a recording
+
+The same night, guests came over and 60 seconds was the wrong cap. webrtcvad
+counts anyone talking as speech, so a recording in a busy room never reaches its
+silence and runs to the cap. A false wake recorded 53 seconds of their
+conversation; a follow up ran the full 60. The evidence is in
+[INCIDENTS.md](INCIDENTS.md#a-busy-room-held-the-microphone-sep-13-2026).
+
+Two changes, and neither separates his voice from the room, which is still open:
+
+- **`MAX_RECORD` 30.** His longest real request was 42 words in 18 seconds, and
+  30 seconds is about 75 words.
+- **The wake word is listened for during a recording.** A second copy of the
+  wake model hears it, because the main model's buffer must stay frozen on "hey
+  nova" for `wake_word_audio` to hand to verification. On a detection the chime
+  plays and the recording starts over from that moment. `wake_listener.py` turns
+  the 30ms capture frames into the 80ms chunks the model needs.
+
+Transcripts are checked for the wake phrase anywhere, not only at the start:
+"No way. Hey Nova. Hey Nova." now means he said only the wake word, and she
+records again instead of sending it to Claude.
+
+**Rejected: ending the recording as soon as the speculative transcript is ready.**
+It is ready at 450ms of silence in 86 of 98 recordings, which looked like half a
+second free. But across 241 turns he spoke through a pause longer than 450ms in
+85 and longer than 750ms in 44. Ending early would have cut him off mid thought
+in about one turn in five.
 
 ## Speculative transcription
 

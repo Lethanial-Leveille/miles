@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 13 2026 (19) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (643) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (652) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -920,3 +920,39 @@ deleting anything. Overlap is arithmetic, so code finds it; which event to skip 
 judgment, so Nova suggests it, with classes and his own commitments first. The
 general session planner for tutoring and study blocks is next, built for sessions
 of any kind rather than for tutoring, which is temporary.
+
+### A busy room: the wake word interrupts, the cap is 30 (Sep 13 2026) (DONE)
+
+What happened is in [INCIDENTS.md](INCIDENTS.md#a-busy-room-held-the-microphone-sep-13-2026).
+
+**Cap 30, not 60.** Both recordings that ran past 30 that night were guests, and
+his longest real request was 18 seconds. 30 seconds is about 75 words.
+
+**Wake word during recording, on a second model.** Sharing the main model would
+have overwritten the wake audio verification reads from its buffer.
+
+**Rejected, on measurement:**
+- Ending the recording once the speculative transcript is ready. He speaks
+  through pauses over 750ms in 18% of turns; it would cut him off in one in five.
+- Giving each sentence its neighbours for a steadier voice. ElevenLabs refuses:
+  "Providing previous_text or next_text is not yet supported with the 'eleven_v3'
+  model."
+- Online speech to text for speed. Whisper takes about 250ms here, so a cloud
+  round trip is slower; only a streaming service that also decided the endpoint
+  could be faster, and the pause data above is the same risk. Its real value is
+  robustness in a loud room, which is recorded in BACKEND_TODO.md.
+
+### Calendar questions: fetch in parallel, remember the calendar list (Sep 13 2026) (DONE)
+
+The calendar tool was 2.6 to 2.9 seconds of the slowest turns. Measured before
+changing anything: 497ms listing calendars, then 1621ms for nine calendars asked
+in turn. Now fetched at once and the list remembered for five minutes: 482 to
+907ms. Measurements in [LATENCY.md](LATENCY.md#calendar-tools-sep-13-2026).
+
+**Threads, each with its own client,** because the Google client's HTTP
+connection is not safe to share. **Rejected:** Google's batch endpoint, one more
+API shape to get right for a saving the threads already deliver.
+
+**The remembered list is cleared when the MILES calendar is created**, the one
+change Nova can make to it. A calendar he subscribes to by hand can take up to
+five minutes to appear.

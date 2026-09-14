@@ -17,7 +17,7 @@ import actions
 import local_intent
 from brain import ask_nova, TurnResult
 from database import init_db, log_wake_near_miss, save_message
-from parsing import is_noise_transcript, split_wake_phrase
+from parsing import is_noise_transcript, split_after_wake_phrase
 from config import (CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS,
                     FOLLOWUP_TIMEOUT, ACK_SPOKEN_CHANCE, RATE,
                     WAKE_MISS_FLOOR, WAKE_MISS_PREROLL_MS)
@@ -256,9 +256,23 @@ try:
                 tts.play_chime()
 
             timing.begin_turn('initial')
-            wav_path  = audio.record_command()
+            wav_path  = audio.record_command(on_wake=tts.play_chime)
             recording = audio.archive_recording(wav_path, 'initial')
             user_text = audio.transcribe(wav_path)
+
+            # Only the wake word, usually said again because the first recording
+            # caught the room. She is listening; record once more for the
+            # command instead of sending "Hey Nova. Hey Nova." to Claude.
+            said_wake, remainder = split_after_wake_phrase(user_text)
+            if said_wake and not remainder:
+                print("Only the wake word, listening again.", flush=True)
+                tts.play_chime()
+                wav_path  = audio.record_command(on_wake=tts.play_chime)
+                recording = audio.archive_recording(wav_path, 'initial')
+                user_text = audio.transcribe(wav_path)
+                said_wake, remainder = split_after_wake_phrase(user_text)
+            if said_wake and remainder:
+                user_text = remainder
 
             if is_noise_transcript(user_text):
                 print(f"No speech detected (transcript: {user_text!r}).\n", flush=True)
@@ -346,7 +360,8 @@ try:
 
                 print(f"Listening for follow up... ({FOLLOWUP_TIMEOUT}s timeout)", flush=True)
                 timing.begin_turn('followup')
-                followup_path = audio.listen_for_followup(timeout=FOLLOWUP_TIMEOUT)
+                followup_path = audio.listen_for_followup(timeout=FOLLOWUP_TIMEOUT,
+                                                          on_wake=tts.play_chime)
                 followup_turns += 1
                 recording = (audio.archive_recording(followup_path, 'followup')
                              if followup_path else None)
@@ -375,7 +390,7 @@ try:
                 # the chime that confirms she is listening, and the turn is
                 # verified properly instead of accepted on session state, since
                 # "hey nova" plus a command is long enough to embed.
-                said_wake, remainder = split_wake_phrase(followup_text)
+                said_wake, remainder = split_after_wake_phrase(followup_text)
                 if said_wake:
                     tts.play_chime()
                     if not remainder:

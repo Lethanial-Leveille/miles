@@ -86,6 +86,7 @@ from config import (
     CAPTURE_WAKE_HITS, WAKE_HIT_DIR, WAKE_HIT_MAX_FILES,
 )
 from audio_segments import audio_ctx_for, segment_bounds
+from wake_listener import WakeListener
 from database import keep_voiceprint_sample, log_verification
 import timing
 
@@ -141,6 +142,11 @@ def flush_input(margin_ms=None):
 print("Loading wake word model...", flush=True)
 with silence_stderr():
     wake_model = Model(wakeword_model_paths=[WAKE_MODEL_PATH])
+    # A second copy, fed only while a command is being recorded. The main
+    # model's buffer has to stay frozen on "hey nova" until verification
+    # reads it back out (see wake_word_audio), so listening during a
+    # recording cannot use it.
+    recording_wake_model = Model(wakeword_model_paths=[WAKE_MODEL_PATH])
 
 print(f"Loading voice encoder ({SPEAKER_ENCODER})...", flush=True)
 with silence_stderr():
@@ -208,7 +214,13 @@ with silence_stderr():
 
 # ── Audio functions ──
 
-def record_command():
+def _recording_wake():
+    """A fresh listener on the recording copy of the wake model."""
+    recording_wake_model.reset()
+    return WakeListener(recording_wake_model.predict, WAKE_THRESHOLD)
+
+
+def record_command(on_wake=None):
     print("Listening...", flush=True)
 
     MIN_RECORD        = 1.0
@@ -224,11 +236,25 @@ def record_command():
 
     cancel_speculation()
     spec_chunks = int(SPECULATIVE_SILENCE_MS / 30.0)
+    wake = _recording_wake()
 
     while total_chunks < max_chunks:
         data  = stream.read(VAD_FRAME, exception_on_overflow=False)
         frames.append(data)
         total_chunks += 1
+
+        if wake.feed(data):
+            # "Hey Nova" in the middle of a recording. What came before it was
+            # not the command, usually the room, so it is dropped and the
+            # command starts here. On Sep 13 2026 a busy room held the mic for
+            # the whole cap while he said the wake word into the recording.
+            print("Wake word during recording, starting over.", flush=True)
+            if on_wake is not None:
+                on_wake()
+            cancel_speculation()
+            frames, total_chunks, silent_chunks, longest_pause = [], 0, 0, 0
+            last_speech_at = time.monotonic()
+            continue
 
         # Endpoint on speech absence rather than quiet. Room noise loud enough
         # to stay above an amplitude floor used to hold the recording open
@@ -270,7 +296,7 @@ def record_command():
     return TEMP_WAV
 
 
-def listen_for_followup(timeout=10):
+def listen_for_followup(timeout=10, on_wake=None):
     timeout_chunks    = int(timeout / 0.03)
     max_chunks        = int(MAX_RECORD / 0.03)
     min_chunks        = int(0.5 / 0.03)
@@ -312,11 +338,25 @@ def listen_for_followup(timeout=10):
 
     cancel_speculation()
     spec_chunks = int(SPECULATIVE_SILENCE_MS / 30.0)
+    wake = _recording_wake()
 
     while total_chunks < max_chunks:
         data   = stream.read(VAD_FRAME, exception_on_overflow=False)
         frames.append(data)
         total_chunks += 1
+
+        if wake.feed(data):
+            # "Hey Nova" in the middle of a recording. What came before it was
+            # not the command, usually the room, so it is dropped and the
+            # command starts here. On Sep 13 2026 a busy room held the mic for
+            # the whole cap while he said the wake word into the recording.
+            print("Wake word during recording, starting over.", flush=True)
+            if on_wake is not None:
+                on_wake()
+            cancel_speculation()
+            frames, total_chunks, silent_chunks, longest_pause = [], 0, 0, 0
+            last_speech_at = time.monotonic()
+            continue
 
         if _is_speech(data):
             longest_pause = max(longest_pause, silent_chunks)

@@ -1101,3 +1101,21 @@ inferred correction as a plain new pending row would leave both facts active onc
 approved, and superseding into a pending row would hide the old fact from Nova
 until he reviewed it, both worse than today. Corrections he states himself are
 "asked" and should apply at once, so the gap is only in corrections she infers.
+
+### A loud room: telling his voice apart from everyone else's
+
+Sep 13 2026, after guests came over. The wake word now interrupts a recording and
+the cap is 30, which stops the room holding the microphone. Nothing yet separates
+his voice from the room, and that is the harder half:
+
+- **webrtcvad detects speech, not his speech.** Anyone talking keeps a recording
+  open until the cap.
+- **The wake model was trained before this apartment** and already separates
+  poorly here (see INCIDENTS.md, Sep 8 2026). Retraining with room noise and his
+  archived wake hits is the software route.
+- **Hardware is the strongest route:** a microphone array with beamforming and
+  echo cancellation listens toward where he is. It decides the enclosure's
+  openings, so choose it before the enclosure.
+- **Online speech to text** would transcribe a noisy room better than base.en,
+  at a monthly cost and with room audio leaving the Pi. Not faster; see the
+  decision log.

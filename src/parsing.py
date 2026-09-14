@@ -142,6 +142,29 @@ def split_wake_phrase(transcript):
     return True, transcript[match.end():].strip()
 
 
+# Anywhere, not only at the start. See split_after_wake_phrase.
+_WAKE_ANYWHERE = re.compile(r"\bhey[\s,]+nova\b[\s,.!?]*", re.I)
+
+
+def split_after_wake_phrase(transcript):
+    """Return (said_wake_word, what came after the last one).
+
+    split_wake_phrase only looks at the start of a transcript. In a busy room a
+    recording usually opens on other people talking and ends on him: on Sep 13
+    2026 one came back as "No way. Hey Nova. Hey Nova." and went to Claude,
+    which correctly judged it not addressed to her and said nothing, while he
+    stood there saying the wake word. Everything before the last wake phrase is
+    the room; what follows it is the command, if there is one.
+
+    The full phrase is still required, for the reason split_wake_phrase gives."""
+    if not transcript:
+        return False, transcript
+    matches = list(_WAKE_ANYWHERE.finditer(transcript))
+    if not matches:
+        return False, transcript
+    return True, transcript[matches[-1].end():].strip()
+
+
 # ── Number words ──
 # Both directions are needed. Whisper writes numbers as digits or as words
 # depending on the phrasing, so parsing a transcript has to accept either, and
