@@ -272,3 +272,56 @@ def test_an_all_day_event_is_a_day_not_a_duration(monkeypatch):
     assert "Monday September 14: David's birthday" in reply
     assert "all day" not in reply
     assert "gmail.com" not in reply, "his own calendar's name is his email address"
+
+
+
+# ── conflicts ──
+
+def _t(hour, minute=0, day=17):
+    return datetime.datetime(2026, 9, day, hour, minute)
+
+
+def test_overlapping_events_are_grouped():
+    groups = cal.find_overlaps([(_t(16), _t(18), "DSA"), (_t(17), _t(18, 30), "Workshop")])
+    assert [[g[2] for g in group] for group in groups] == [["DSA", "Workshop"]]
+
+
+def test_back_to_back_is_not_a_conflict():
+    """He said lessons can run back to back online."""
+    assert cal.find_overlaps([(_t(15), _t(16, 30), "Isaiah"), (_t(16, 30), _t(18), "Andrew")]) == []
+
+
+def test_a_chain_of_overlaps_is_one_decision():
+    groups = cal.find_overlaps([(_t(15), _t(17), "A"), (_t(16), _t(18), "B"), (_t(17, 30), _t(19), "C")])
+    assert len(groups) == 1 and [g[2] for g in groups[0]] == ["A", "B", "C"]
+
+
+def test_conflicts_name_whose_event_it_is(monkeypatch):
+    at = lambda h, m=0: datetime.datetime(2026, 9, 17, h, m).astimezone().isoformat()
+    service = FakeService(
+        {
+            "primary": [
+                _timed("dsa", "DSA", at(16), at(18)),
+                {"id": "bd", "summary": "David's birthday",
+                 "start": {"date": "2026-09-17"}, "end": {"date": "2026-09-18"}},
+            ],
+            "ieee": [_timed("ws", "Renesas Tech Workshop", at(17), at(18, 30))],
+            "en.usa#holiday@group.v.calendar.google.com": [_timed("h", "Should never be read", at(16), at(20))],
+        },
+        calendars=[
+            {"id": "primary", "summary": "leveillelethanial@gmail.com", "primary": True, "accessRole": "owner"},
+            {"id": "ieee", "summary": "UF IEEE Calendar", "selected": True, "accessRole": "reader"},
+            {"id": "en.usa#holiday@group.v.calendar.google.com", "summary": "Holidays", "selected": True, "accessRole": "reader"},
+        ],
+    )
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    reply = cal.find_schedule_conflicts(now=NOW)
+    assert reply == "Thursday September 17 at 4:00 PM until 6:30 PM: DSA (his own) and Renesas Tech Workshop (UF IEEE Calendar) overlap"
+    assert "#holiday@" not in {q["calendarId"] for q in service.listed}
+
+
+def test_no_conflicts_says_so(monkeypatch):
+    service = FakeService({"primary": []}, calendars=[
+        {"id": "primary", "summary": "me", "primary": True, "accessRole": "owner"}])
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    assert cal.find_schedule_conflicts(now=NOW) == "No overlaps in that range."

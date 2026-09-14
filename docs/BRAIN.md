@@ -391,6 +391,52 @@ events come with an instruction to mention them only when he asks what is going
 on. He keeps club calendars as options, not as a schedule. The evidence is in
 [INCIDENTS.md](INCIDENTS.md#nova-read-the-calendar-like-a-printout-sep-13-2026).
 
+## Memory: Nova actually remembers now
+
+**Until Sep 13 2026 the `remember` tool had never been called.** Every one of his
+memories came from the seed file. Two causes, neither a wiring fault:
+
+- **He had never asked.** In 240 turns after the tool shipped, no turn asked her
+  to remember anything.
+- **She almost never stored anything on her own.** The description set the bar
+  at facts that "will still matter next week" and called a duplicate "worse than
+  not storing it", so she played safe and stored nothing. When he did ask, she
+  sometimes asked a clarifying question instead of storing. Once she said "I've
+  got that down" and called nothing.
+
+The rules now: an explicit request is stored that turn, in his words, with any
+question asked after rather than instead. Things mentioned in passing that would
+change what she says later are stored as inferred, for his review. She never
+says she noted something unless she called the tool, and `brain.py` logs every
+turn where the text claims a save without the call. Replacing a memory with
+identical words is refused in code.
+
+Measured with the real prompt, memories and tools, three samples each:
+
+| Said | Before | After |
+|---|---|---|
+| "Remember that Charlie's lessons are always on Zoom." | 1/3 | 3/3, as asked |
+| "I just started logging my workouts in Hevy." | 0/3 | 2/3 |
+| "My friend Jalen is going to be my lifting partner now." | not tested | 3/3, inferred |
+| "I'm gonna add my lifting sessions to my calendar soon." | 0/3 | 0/3, an intention rather than a fact |
+| Claimed a save without calling | seen | 0 of 15 |
+
+Still imperfect: one Hevy reply marked a passing mention as "asked", which skips
+review. Inferred memories wait in a queue he can now reach by voice through
+`list_pending_memories` and `review_pending_memory`; the review tool accepts
+only ids that are actually waiting, so a misheard "discard that" cannot delete
+an established memory.
+
+### Conflicts are found in code
+
+`find_schedule_conflicts` sweeps every selected calendar except holidays, drops
+all day events, and groups overlapping timed events. Back to back is not a
+conflict, because he tutors online and a lesson can start the minute another
+ends. A chain of overlaps is one group, because choosing among three is one
+decision. Nova then suggests what to keep, classes and his own commitments over
+events on calendars he follows. On its first run against his real week it found
+four, including his Thursday test prep session against two club events.
+
 ## Failure boundaries
 
 **A failed turn no longer kills the process.** It used to. Nothing caught the

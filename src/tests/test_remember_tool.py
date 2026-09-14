@@ -290,3 +290,65 @@ def test_a_superseded_memory_stops_being_addressable(db):
     block = prompts._episodic_block(db.get_episodic_memories(limit=50))
     assert f"(#{old})" not in block
     assert f"(#{_id_of(db, 'exam is Thursday')})" in block
+
+
+
+# ── Sep 13 2026: it had never once been called ──
+
+def test_an_explicit_request_is_stored_before_any_question():
+    """"Remember that Charlie's lessons are on Zoom" got "who is Charlie?" in two
+    of three tries, and nothing was stored."""
+    d = registry.get("remember").description.lower()
+    assert "ask your question after, never instead" in d
+    assert "store it anyway and ask afterwards" in prompts.MEMORY_INSTRUCTIONS.lower()
+
+
+def test_things_mentioned_in_passing_are_worth_storing():
+    """Zero of six passing mentions were stored under the old, higher bar."""
+    d = registry.get("remember").description.lower()
+    assert "would change what you say to him later" in d
+
+
+def test_never_claiming_a_save_that_did_not_happen():
+    """She said "I've got that down" and called nothing."""
+    assert "unless you called this tool in this turn" in registry.get("remember").description.lower()
+    assert "unless you called remember in this turn" in prompts.MEMORY_INSTRUCTIONS.lower()
+
+
+def test_pending_memories_can_be_listed_and_kept(db):
+    import re
+    _call(content="Started logging workouts in Hevy")
+    listing = registry.call("list_pending_memories", {})
+    assert "Started logging workouts in Hevy" in listing
+    memory_id = int(re.search(r"#(\d+)", listing).group(1))
+    assert registry.call("review_pending_memory", {"memory_id": memory_id, "keep": True}) == "Kept."
+    assert registry.call("list_pending_memories", {}) == "Nothing is waiting for his review."
+
+
+def test_discarding_a_pending_memory_removes_it(db):
+    import re
+    _call(content="Might switch gyms")
+    memory_id = int(re.search(r"#(\d+)", registry.call("list_pending_memories", {})).group(1))
+    assert registry.call("review_pending_memory", {"memory_id": memory_id, "keep": False}) == "Discarded."
+    assert registry.call("list_pending_memories", {}) == "Nothing is waiting for his review."
+
+
+def test_review_cannot_touch_an_established_memory(db):
+    """A misheard "discard that" must never delete something he already has."""
+    _call(content="exam is Friday", certainty="asked")
+    memory_id = _id_of(db, "exam is Friday")
+    with pytest.raises(LookupError):
+        registry.call("review_pending_memory", {"memory_id": memory_id, "keep": False})
+    assert _active(db) == ["exam is Friday"]
+
+
+
+def test_superseding_with_the_same_words_changes_nothing(db):
+    """Sep 13 2026: "I'm taking twelve credits" rewrote the memory that already
+    said so, retiring it for an identical copy."""
+    _call(content="Enrolled in 12 credits for Fall 2026.", certainty="asked")
+    old_id = _id_of(db, "Enrolled in 12 credits for Fall 2026.")
+    reply = _call(content="enrolled in 12 credits for fall 2026", supersedes=old_id, certainty="inferred")
+    assert reply == "already stored, nothing changed"
+    assert _id_of(db, "Enrolled in 12 credits for Fall 2026.") == old_id
+    assert _active(db) == ["Enrolled in 12 credits for Fall 2026."]

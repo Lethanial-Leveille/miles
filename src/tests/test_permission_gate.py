@@ -60,3 +60,10 @@ def test_a_failed_tool_always_goes_back_to_nova():
     assert brain._needs_second_call([quiet_failure])
     assert not brain._needs_second_call([quiet_success])
     assert brain._needs_second_call([{"block": _block("get_weather"), "output": "{}", "is_error": False}])
+
+
+
+def test_a_claimed_save_without_the_call_is_caught():
+    assert brain._claims_a_save_without_calling("I've got that down. Twelve credits flat.", set())
+    assert not brain._claims_a_save_without_calling("I've got that down.", {"remember"})
+    assert not brain._claims_a_save_without_calling("Twelve credits is exactly full time.", set())
