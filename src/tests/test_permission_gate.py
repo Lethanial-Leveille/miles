@@ -67,3 +67,21 @@ def test_a_claimed_save_without_the_call_is_caught():
     assert brain._claims_a_save_without_calling("I've got that down. Twelve credits flat.", set())
     assert not brain._claims_a_save_without_calling("I've got that down.", {"remember"})
     assert not brain._claims_a_save_without_calling("Twelve credits is exactly full time.", set())
+
+
+
+def test_a_proposal_is_spoken_by_code_not_rephrased():
+    """Sep 14 2026: staged for the 21st, spoken as the 14th, created on the 21st.
+    Guards the wiring, since a whole turn cannot run here without speaking."""
+    import inspect
+    source = inspect.getsource(brain.ask_nova_async)
+    assert "staged = pending_action.words_for_turn()" in source
+    assert "needs_second_call = _needs_second_call(results) and staged is None" in source
+    assert "late_question = pending_action.words_for_turn()" in source
+
+
+
+def test_an_unstaged_change_question_is_caught():
+    assert brain._asks_an_unstaged_change("Rename Charley lesson on Wednesday at 4 PM to Charley lesson?", None)
+    assert not brain._asks_an_unstaged_change("Rename Charlie to Charley?", "Rename Charlie to Charley?")
+    assert not brain._asks_an_unstaged_change("How did you sleep?", None)

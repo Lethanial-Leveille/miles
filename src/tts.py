@@ -178,6 +178,26 @@ class Synthesis:
             yield chunk
 
 
+def join_for_speech(sentences):
+    """Several sentences as one request, with a breath between them.
+
+    Chosen by ear, Sep 13 2026. On eleven_v3 at stability 1.0 every sentence
+    came out in the same tone with almost no pause. A full stop written as an
+    ellipsis made v3 pause 550ms between sentences against 210ms without, and
+    nothing else about the delivery changed. A question or an exclamation keeps
+    its own mark, because "?..." reads as uncertainty rather than a pause.
+
+    Only what is sent to ElevenLabs is shaped. History and the app keep the
+    punctuation Nova actually wrote."""
+    parts = []
+    for i, sentence in enumerate(sentences):
+        sentence = sentence.strip()
+        if i < len(sentences) - 1 and sentence.endswith(".") and not sentence.endswith("..."):
+            sentence = sentence[:-1] + "..."
+        parts.append(sentence)
+    return " ".join(parts)
+
+
 def start_synthesis(text, voice_settings=None, model=None, seed=None):
     """Begin synthesizing now. None when there is nothing to say."""
     clean = _prepare(text)

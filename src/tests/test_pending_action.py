@@ -101,3 +101,23 @@ def test_one_failure_in_a_batch_is_reported_beside_what_worked():
     reply = pa.resolve(True, now=1.0)
     assert reply.startswith("Added Isaiah.")
     assert "Failed, not done: Add Andrew (Google said no)." in reply
+
+
+
+def test_the_staged_question_belongs_to_this_turn_only():
+    """brain speaks it word for word; on the next turn it has already been asked."""
+    pa.begin_turn()
+    assert pa.staged_question() is None
+    pa.propose("Add Career Fair today from 1 PM to 6 PM", lambda: "Added.", now=0.0)
+    assert pa.staged_question() == "Add Career Fair today from 1 PM to 6 PM?"
+    pa.begin_turn()
+    assert pa.staged_question() is None
+
+
+
+def test_announcements_are_said_this_turn_only():
+    pa.begin_turn()
+    pa.announce("Added Career Fair today from 1 PM to 6 PM.")
+    assert pa.words_for_turn() == "Added Career Fair today from 1 PM to 6 PM."
+    pa.begin_turn()
+    assert pa.words_for_turn() is None

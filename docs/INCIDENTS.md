@@ -33,6 +33,8 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 14 2026 | Fixing one name on three lessons took five read backs and three yeses | [below](#fixing-one-name-took-five-read-backs-sep-14-2026) |
+| Sep 14 2026 | His yes created a career fair on a date Nova never said | [below](#his-yes-created-a-date-he-did-not-hear-sep-14-2026) |
 | Sep 13 2026 | A busy room held the microphone for up to a minute while he said the wake word | [below](#a-busy-room-held-the-microphone-sep-13-2026) |
 | Sep 13 2026 | Confirming one tutoring lesson created a different one, and a failed cancel was reported as done | [below](#confirming-one-lesson-created-another-sep-13-2026) |
 | Sep 13 2026 | Nova read the calendar like a printout: past events, "all day", club events as plans | [below](#nova-read-the-calendar-like-a-printout-sep-13-2026) |
@@ -45,6 +47,76 @@ session real work.
 | Sep 6 2026 | One capsule recorded itself as three microphones; enrollment threw away its audio | [below](#two-guards-that-could-not-do-their-jobs-sep-6-2026) |
 | Aug 13 2026 | Nova confabulated a security tool call that never happened | [BRAIN.md](BRAIN.md#nova-knows-the-transcript-is-not-his-words) |
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
+
+---
+
+## Fixing one name took five read backs (Sep 14 2026)
+
+He asked for Charlie to be spelled Charley on the three lessons Nova had just
+created. From 00:33 to 00:37:
+
+- Nova said she could not change events on other calendars, without calling a
+  tool. They were on MILES.
+- The one event tool renamed only Monday. His reply asking for the whole week and
+  "from now on" was lost to a deploy restart from the assistant's session, not a
+  fault in Nova. The system log shows `systemctl restart miles-voice miles-server`
+  with no terminal attached at 00:34:16, 00:35:26 and 00:36:05, each landing
+  inside his conversation. The first dropped that reply and the proposal waiting
+  for it, so the next confirm found nothing; the other two each swallowed a turn
+  he then had to repeat.
+- Nova then said the other lessons were "already spelled correctly". They were not.
+- She asked "Rename Charley lesson on Wednesday at 4 PM to Charley lesson?" herself,
+  with nothing staged. He said yes, and the tool failed looking for a Charley that
+  did not exist yet.
+- Every read back said "Charlie to Charley", which sounds like no change.
+
+Nothing was remembered about the spelling despite "from now on".
+
+**The lesson, for whoever deploys:** a restart ends the turn in progress and wipes
+any proposal held in memory. Check the voice journal for recent speech before
+restarting, and do not restart while he is talking to her.
+
+Fixed by `rename_calendar_events` (every event with the name, one question), by
+spelling a rename whose words sound alike, by prompt lines against asking change
+questions herself or refusing without checking, and by a log line when she still
+asks one. See [BRAIN.md](BRAIN.md#renaming-a-name-everywhere-and-spelling-what-cannot-be-heard).
+
+---
+
+## His yes created a date he did not hear (Sep 14 2026)
+
+Just after midnight he asked Nova to add a career fair today, 1 to 6. It took
+four exchanges and ended on the wrong week.
+
+```
+00:11:54  He:   Can you add career fair today from one to six?
+00:12:05  Nova: asks whether he meant today, since it is just after midnight
+00:12:13  create_calendar_event "monday at 1pm"  -> staged Monday September 21
+00:12:34  Nova: Add career fair on Monday September 14 at 1 PM for five hours?
+                (no tool call; her own words over the staged 21st)
+00:12:39  confirm -> expired, a turn had passed since the proposal
+00:15:30  create_calendar_event "Monday at 1 PM" -> staged Monday September 21
+00:15:36  Nova: Add career fair on Monday September 14 at 1 PM for 300 minutes?
+00:15:51  He:   yes -> "Added career fair."  on September 21
+```
+
+Three separate faults:
+
+- **Today's weekday meant next week.** Day names prefer the future, and at 12:10 AM
+  on a Monday that made "monday at 1pm" the 21st. It had been fixed for the
+  planner's blocked times hours earlier and not for creating an event.
+- **The spoken question was not the staged one.** The tool returned "Monday
+  September 21" and the instruction to ask exactly that. Nova said "September 14"
+  instead. The confirmation guarantee covered what ran, not what he heard, and the
+  gap between them was a model turn.
+- **Friction on top.** She questioned "today" after midnight, said "300 minutes"
+  for a five hour event, and asked a question once with no proposal behind it.
+
+**The lesson:** a guarantee is only as strong as its weakest link to him. Staging
+the change in code was not enough while the words he answered were still the
+model's. The question is now spoken by code.
+
+The event itself was moved to the 14th by hand the same night.
 
 ---
 

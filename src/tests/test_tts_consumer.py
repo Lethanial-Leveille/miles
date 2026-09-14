@@ -67,14 +67,23 @@ def test_never_more_than_the_limit_in_flight(monkeypatch):
 
 
 def test_sentences_play_in_the_order_they_were_written(monkeypatch):
-    def start(sentence):
+    def start(text):
         # The first request is the slowest, so a race would reorder the reply.
-        time.sleep(0.05 if sentence == "One." else 0)
-        return sentence
+        time.sleep(0.05 if text == "One." else 0)
+        return text
     order = []
     parts = _run(monkeypatch, ["One.", "Two.", "Three."],
                  lambda s: (order.append(s), (False, 0.0))[1], start)
-    assert order == parts == ["One.", "Two.", "Three."]
+    assert order == ["One.", "Two... Three."]
+    assert parts == ["One.", "Two.", "Three."], "history keeps what she actually wrote"
+
+
+def test_the_first_sentence_alone_and_the_rest_as_one_request(monkeypatch):
+    """Separate requests per sentence were heard as different deliveries."""
+    requested = []
+    _run(monkeypatch, ["Sure.", "It's due Friday.", "Want a reminder?", "I can set one."],
+         lambda s: (False, 0.0), lambda text: requested.append(text) or text)
+    assert requested == ["Sure.", "It's due Friday... Want a reminder? I can set one."]
 
 
 def test_an_interruption_keeps_only_what_was_said(monkeypatch):

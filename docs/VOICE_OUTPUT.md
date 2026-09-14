@@ -58,6 +58,35 @@ Victoria herself is listed by ElevenLabs as `narrative_story`: "VO for explainer
 videos, viral social media and modern brand ads. Warm, upbeat". He kept her
 anyway, and the upbeat edge is partly the voice.
 
+### One delivery for the rest of a reply, with a breath between sentences
+
+Also Sep 13 2026, after the move to v3. He heard replies as "different cadences
+that didn't match, like it could have been a different person", and as having
+too few pauses with no variety in tone.
+
+Each sentence had been its own request, and on v3 each request is voiced on its
+own. Unseeded renders of one real reply, each played with no gap: every sentence
+alone, the first alone and the rest together, and the whole reply at once. He
+preferred the whole reply, and heard little difference from first plus rest.
+The whole reply would mean waiting for Claude to finish before any sound, so
+**the first sentence is sent at once and the rest together**, which gets the
+single delivery without the wait. Giving each sentence its neighbours as context
+was the other candidate, and ElevenLabs refuses it on v3: "Providing
+previous_text or next_text is not yet supported with the 'eleven_v3' model."
+
+For the pauses, the same whole reply at one seed, measured:
+
+| Variant | Longest pause | Heard |
+|---|---|---|
+| stability 1.0 (live) | 210ms | too even |
+| stability 0.75 | 200ms, and exactly the same length as 1.0 | v3 appears to treat it as 1.0 |
+| stability 1.0, a full stop written as an ellipsis | **550ms** | chosen |
+| stability 0.5 | 290ms | more variety, but the exaggeration he moved away from |
+
+`tts.join_for_speech` writes the full stop between sentences as an ellipsis,
+leaves a question or an exclamation alone, and shapes only what goes to
+ElevenLabs. Commas are untouched; nothing tested gave them a longer pause.
+
 ### The flash_v2 tuning, kept as history
 
 `VOICE_WITTY` and `VOICE_SERIOUS` are also defined and currently inert:

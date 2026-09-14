@@ -25,6 +25,7 @@ is empty. The executor turns a raise into an is_error result instead.
 import datetime
 import os
 import re
+import string
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -76,7 +77,21 @@ def parse_when(phrase, now=None):
                         f"clock time, like 'monday at 3pm'")
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone().replace(tzinfo=None)
-    return parsed, bool(_HAS_TIME.search(phrase))
+    has_time = bool(_HAS_TIME.search(phrase))
+
+    # Today's weekday with a time still ahead means today. Just after midnight on
+    # Monday Sep 14 2026, "monday at 1pm" preferred the future and became the
+    # 21st, and a career fair went on the wrong week. Only with a time: a bare
+    # "sunday" said on a Sunday still means next week, which is what "plan
+    # through sunday" needs. A time already gone today still rolls forward.
+    today_name = now.strftime("%A").lower()
+    if (has_time and (parsed.date() - now.date()).days == 7
+            and not re.search(r"\bnext\b", phrase, re.I)
+            and re.search(rf"\b{today_name}\b", phrase, re.I)):
+        same_day = parsed - datetime.timedelta(days=7)
+        if same_day >= now:
+            parsed = same_day
+    return parsed, has_time
 
 
 def _start_of_day(dt):
@@ -123,6 +138,82 @@ def _spoken(dt):
 def _clock(dt):
     """"4 PM", "4:30 PM". The minutes only when they carry information."""
     return dt.strftime("%-I:%M %p").replace(":00", "")
+
+
+def _soundex(word):
+    """The classic four character sound code: similar sounding names share one.
+
+    Used only to decide when a rename has to be spelled out loud. "Charlie" and
+    "Charley" are both C640, and read back as "rename Charlie to Charley" they
+    sounded identical, so he could not hear what was being confirmed."""
+    codes = {**dict.fromkeys("bfpv", "1"), **dict.fromkeys("cgjkqsxz", "2"),
+             **dict.fromkeys("dt", "3"), "l": "4", **dict.fromkeys("mn", "5"), "r": "6"}
+    letters = [ch for ch in word.lower() if ch.isalpha()]
+    if not letters:
+        return ""
+    result, last = letters[0].upper(), codes.get(letters[0], "")
+    for ch in letters[1:]:
+        code = codes.get(ch, "")
+        if code and code != last:
+            result += code
+        if ch not in "hw":
+            last = code
+    return (result + "000")[:4]
+
+
+def _letters(text):
+    return " ".join(ch.upper() for ch in text if ch.isalpha())
+
+
+def _spelled_difference(old, new):
+    """Only the letters that changed: "E Y instead of I E" for Charlie to Charley.
+
+    Spelling the whole word, "C, H, A, R, L, E, Y", was more than he needed to
+    hear. The shared start and end are left out; a change longer than four
+    letters is spelled whole, since a description of it would be no shorter."""
+    o, n = old.casefold(), new.casefold()
+    start = 0
+    while start < min(len(o), len(n)) and o[start] == n[start]:
+        start += 1
+    end = 0
+    while end < min(len(o), len(n)) - start and o[len(o) - 1 - end] == n[len(n) - 1 - end]:
+        end += 1
+    old_mid, new_mid = old[start:len(old) - end], new[start:len(new) - end]
+    if len(new_mid) > 4 or len(old_mid) > 4:
+        return f"spelled {_letters(new)}"
+    if not old_mid:
+        return f"with an added {_letters(new_mid)}"
+    if not new_mid:
+        return f"without the {_letters(old_mid)}"
+    return f"{_letters(new_mid)} instead of {_letters(old_mid)}"
+
+
+def _spelling_note(old_title, new_title):
+    """", E Y instead of I E" for each changed word that sounds like the word it
+    replaced, and nothing when the change can be heard."""
+    old_words, new_words = old_title.split(), new_title.split()
+    notes = [_spelled_difference(old, new) for old, new in zip(old_words, new_words)
+             if old.casefold() != new.casefold() and _soundex(old) == _soundex(new)]
+    return "".join(f", {note}" for note in notes)
+
+
+def _title(text):
+    """"career fair" becomes "Career Fair". Only an all lowercase title changes;
+    one he capitalized himself, like "Isaiah lesson", is his to keep."""
+    return string.capwords(text) if text == text.lower() else text
+
+
+def _length_words(minutes):
+    """"90 minutes", but "5 hours" rather than "300 minutes", which is arithmetic
+    he should not have to do by ear."""
+    if minutes < 120:
+        return f"{minutes} minutes"
+    hours, rest = divmod(minutes, 60)
+    if rest == 0:
+        return f"{hours} hours"
+    if rest == 30:
+        return f"{hours} and a half hours"
+    return f"{hours} hours {rest} minutes"
 
 
 def _day_words(dt, now):
@@ -514,12 +605,11 @@ def check_calendar_freebusy(time_min, time_max):
 @tool(
     name="create_calendar_event",
     description=(
-        "Propose a new event on Lethanial's MILES calendar. This does not create "
-        "it. It returns one short question to ask him. Say nothing before calling "
-        "this. Call this when he asks "
-        "you to schedule, book, or add something. start_time needs a day and a "
-        "clock time, like 'tomorrow at 2pm'. If he has already been asked about "
-        "the event and agrees, call confirm_pending_action instead."
+        "Add a new event to Lethanial's MILES calendar right away. It is added "
+        "immediately and read back to him word for word, and he can say undo. "
+        "Say nothing before or after calling this. Call this when he asks you to "
+        "schedule, book, or add something. start_time needs a day and a clock "
+        "time, like 'tomorrow at 2pm'."
     ),
     input_schema={
         "type": "object",
@@ -545,18 +635,43 @@ def create_calendar_event(summary, start_time, duration_minutes, now=None):
         raise WhenError("duration_minutes must be between 1 and 1440")
 
     end = start + datetime.timedelta(minutes=duration_minutes)
-    question = f"Add {summary} {_on_day(start, now)} at {_clock(start)} for {duration_minutes} minutes?"
-    return _ask(pending_action.propose(question.rstrip("?"),
-                                       lambda: _insert_event(summary, start, end)))
+    summary = _title(summary)
+    # A time range rather than a length: "for 300 minutes" left him working out
+    # when the career fair ended.
+    finish = _clock(end) if end.date() == start.date() else f"{_day_words(end, now)} at {_clock(end)}"
+    # Added at once since Sep 14 2026: he found a question before every addition
+    # too much. Adding is the one change undo fully reverses, so moving,
+    # renaming and deleting still ask.
+    _insert_event(summary, start, end)
+    said = f"Added {summary} {_on_day(start, now)} from {_clock(start)} to {finish}."
+    pending_action.announce(said)
+    return f"{said} This was read back to him word for word; he can say undo."
+
+
+# What the most recent addition put on the calendar, so "undo that" can take it
+# back as a whole: one event, or every session of one plan.
+_UNDO_WINDOW_S = 30 * 60
+_recent_additions = {}
+
+
+def _record_addition(calendar_id, event_id, title):
+    """Everything added on one turn is one addition, so a whole plan undoes
+    together while an earlier, separate addition is left alone."""
+    turn = pending_action.current_turn()
+    if _recent_additions.get("turn") != turn:
+        _recent_additions.update(turn=turn, at=time.monotonic(), events=[])
+    _recent_additions["events"].append((calendar_id, event_id, title))
 
 
 def _insert_event(summary, start, end):
-    """The actual write, reached only through confirm_pending_action."""
+    """The actual write, remembered so it can be undone."""
     service = _service()
     body = {"summary": summary,
             "start": {"dateTime": start.astimezone().isoformat()},
             "end": {"dateTime": end.astimezone().isoformat()}}
-    service.events().insert(calendarId=_write_calendar_id(service), body=body).execute()
+    calendar_id = _write_calendar_id(service)
+    created = service.events().insert(calendarId=calendar_id, body=body).execute()
+    _record_addition(calendar_id, created.get("id"), summary)
     return f"Added {summary}."
 
 
@@ -613,7 +728,8 @@ def _once(event):
         "start time, its length, or any of those. This does not change it. It "
         "returns one short question to ask him. Say nothing before calling this. "
         "Call this when he asks you to "
-        "move, reschedule, rename, shorten or lengthen an event. A new time alone, "
+        "move, reschedule, rename, shorten or lengthen one event. To fix a name on "
+        "every event that has it, use rename_calendar_events instead. A new time alone, "
         "like '4pm', stays on the event's day; a new day alone, like 'tuesday', "
         "keeps its time. Events on his other calendars cannot be changed. If he "
         "has already been asked about the change and agrees, call "
@@ -640,6 +756,7 @@ def update_calendar_event(title, day, new_title=None, new_start_time=None,
     if new_title is None and new_start_time is None and new_duration_minutes is None:
         raise WhenError("nothing to change; give a new title, start time, or duration")
     now = now or datetime.datetime.now()
+    new_title = _title(new_title) if new_title else new_title
     calendar_id, event = _find_miles_event(_service(), title, day, now)
     start, end, all_day = _event_bounds(event)
     if all_day and (new_start_time or new_duration_minutes is not None):
@@ -682,8 +799,9 @@ def update_calendar_event(title, day, new_title=None, new_start_time=None,
         clauses.append(f"make it {minutes} minutes long" if clauses
                        else f"make {name} {_on_day(start, now)} {minutes} minutes long")
     if "summary" in body:
-        clauses.append(f"rename it to {new_title}" if clauses
-                       else f"rename {name} {_on_day(start, now)} to {new_title}")
+        spelled = _spelling_note(name, new_title)
+        clauses.append(f"rename it to {new_title}{spelled}" if clauses
+                       else f"rename {name} {_on_day(start, now)} to {new_title}{spelled}")
 
     sentence = ", and ".join(clauses) + _once(event)
     question = sentence[0].upper() + sentence[1:] + "?"
@@ -800,3 +918,406 @@ def find_schedule_conflicts(time_min=None, time_max=None, now=None):
     if unreadable:
         lines.append(f"Could not read: {', '.join(unreadable)}.")
     return "\n".join(lines)
+
+
+# ── session planner ──
+#
+# Placing sessions is arithmetic, so code does it. On Sep 13 2026 Nova placed
+# seven tutoring lessons in her head: offered 2 PM after being told "after
+# three", put one in a class he had just described, and overlapped two others.
+# Here the model only turns what he said into sessions; plan_sessions_on puts
+# them on the calendar and nothing it returns can break a rule it was given.
+
+# Defaults for a session given no times. Each is overridden per request, because
+# they differ by person: a student's earliest start "depends on when they get out
+# of school" and the latest "depends on the kid too, but not too late".
+_SCHOOL_DAY_START = datetime.time(15, 0)
+_LATEST_END = datetime.time(20, 0)
+# He said weekends are fine but he would rather they be mornings. Holidays are
+# treated the same, since the afternoon rule exists only because of school.
+_NO_SCHOOL_MORNING = (datetime.time(9, 0), datetime.time(12, 0))
+_SLOT_STEP = datetime.timedelta(minutes=15)
+
+
+def _time_of(phrase, default):
+    if not phrase:
+        return default
+    when, has_time = parse_when(phrase, datetime.datetime(2000, 1, 3))
+    if not has_time:
+        raise WhenError(f"{phrase!r} is not a time of day")
+    return when.time()
+
+
+def _first_free(day, session, taken, no_school, not_before, not_after):
+    length = datetime.timedelta(minutes=session["minutes"])
+    if no_school:
+        windows = [_NO_SCHOOL_MORNING, (_NO_SCHOOL_MORNING[1], session["latest_end"])]
+    else:
+        windows = [(session["earliest"], session["latest_end"])]
+    for open_at, close_at in windows:
+        start = datetime.datetime.combine(day, open_at)
+        close = min(datetime.datetime.combine(day, close_at), not_after)
+        while start + length <= close:
+            end = start + length
+            # Touching is not overlapping: he tutors online, so one lesson can
+            # start the minute another ends.
+            if start >= not_before and all(end <= b_start or start >= b_end
+                                           for b_start, b_end in taken):
+                return start, end
+            start += _SLOT_STEP
+    return None
+
+
+def plan_sessions_on(sessions, busy, days, no_school, not_before, not_after, soft_busy=()):
+    """Place sessions. Pure: no Google and no clock, so every rule is testable.
+
+    sessions are dicts of name, count, minutes, earliest and latest_end, the last
+    two as datetime.time. busy is [(start, end)] he is committed to. days are the
+    dates in range; no_school is the subset that are weekends or holidays.
+
+    Returns (placed, unplaced): placed is [(name, start, end)] in time order,
+    unplaced is [(name, how many did not fit)]. A session that does not fit is
+    reported, never squeezed in against a rule.
+
+    One session per name per day, which is the simplest rule that guarantees he
+    never teaches the same student back to back. The sessions with the most
+    repeats are placed first, because they have the least room to move.
+
+    Each further session goes on the workable day farthest from the days that
+    name already has, earliest on a tie. Spreading by fixed positions in the
+    range failed on his real calendar: planned just after midnight, the range's
+    last day had no usable time, the pick fell back to the next day in order, and
+    two lessons for the same student landed today and tomorrow.
+
+    soft_busy are events on calendars he follows. A session goes clear of them
+    whenever any day has room, and only overlaps one when none does. He keeps
+    club calendars so there is something to go to, and on Sep 14 2026 a plan
+    that ignored them put lessons across a mini career fair, three info
+    sessions and a workshop he might have wanted."""
+    taken, placed, unplaced = sorted(busy), [], []
+    soft = sorted((event[0], event[1]) for event in soft_busy)
+    for session in sorted(sessions, key=lambda s: -s["count"]):
+        used_days = []
+        for _ in range(session["count"]):
+            best = None
+            # Clear of club events first; only if no day allows that, around
+            # his commitments alone.
+            for avoid in (taken + soft, taken):
+                for day in days:
+                    if day in used_days:
+                        continue
+                    slot = _first_free(day, session, avoid, day in no_school, not_before, not_after)
+                    if slot is None:
+                        continue
+                    distance = min((abs((day - used).days) for used in used_days), default=0)
+                    if best is None or distance > best[0]:
+                        best = (distance, day, slot)
+                if best is not None:
+                    break
+            if best is None:
+                break
+            _, day, slot = best
+            placed.append((session["name"], *slot))
+            taken = sorted(taken + [slot])
+            used_days.append(day)
+        if len(used_days) < session["count"]:
+            unplaced.append((session["name"], session["count"] - len(used_days)))
+    return sorted(placed, key=lambda p: p[1]), unplaced
+
+
+def _club_overlaps(placed, soft_busy):
+    """(session name, start, club event title) for each placed session that had
+    to overlap an event on a calendar he follows."""
+    return [(name, start, label) for name, start, end in placed
+            for s_start, s_end, label in soft_busy if start < s_end and s_start < end]
+
+
+def _overlap_notes(overlaps, now):
+    """One short note per session that overlaps club events, naming at most two.
+
+    Listed one overlap at a time, a two session plan read out five notes and a
+    sixty word event title before the question."""
+    by_session = {}
+    for name, start, label in overlaps:
+        by_session.setdefault((name, start), []).append(label)
+    notes = []
+    for (name, start), labels in by_session.items():
+        shown = labels[:2]
+        named = shown[0] if len(shown) == 1 else f"{shown[0]} and {shown[1]}"
+        if len(labels) > 2:
+            named = f"{shown[0]}, {shown[1]} and {len(labels) - 2} more"
+        notes.append(f"{name} {_day_words(start, now)} at {_clock(start)} overlaps {named}")
+    return notes
+
+
+def _plan_sentence(placed, now):
+    """The whole plan as one sentence, grouped by name so it can be followed by
+    ear: "Added 4 sessions: Isaiah lesson Monday at 3 PM and Thursday at 3 PM;
+    Andrew lesson..., all 90 minutes."."""
+    by_name = {}
+    for name, start, end in placed:
+        by_name.setdefault(name, []).append(f"{_day_words(start, now)} at {_clock(start)}")
+    groups = [f"{name} {times[0] if len(times) == 1 else ', '.join(times[:-1]) + ' and ' + times[-1]}"
+              for name, times in by_name.items()]
+    lengths = {int((end - start).total_seconds() // 60) for _, start, end in placed}
+    suffix = f", all {_length_words(lengths.pop())}" if len(lengths) == 1 else ""
+    count = len(placed)
+    return f"Added {count} session{'' if count == 1 else 's'}: {'; '.join(groups)}{suffix}."
+
+
+@tool(
+    name="plan_sessions",
+    description=(
+        "Plan several sessions around Lethanial's week and propose them all as "
+        "one question: tutoring lessons, study blocks, workouts, anything with a "
+        "length and a number of times. Call this when he asks you to schedule or "
+        "fit in several sessions. Turn what he says into the sessions list and "
+        "let the code place them; never work out the times yourself. For each "
+        "session give the event title, how many, how long, and when that person "
+        "is available on school days if he said so. Anything he says is off limits "
+        "that is not on his calendar, like a class or a career fair, goes in "
+        "blocked, and so does any club event you know he should attend, such as a "
+        "career fair or an info session with a company he wants to work for. "
+        "Weekends and holidays default to mornings. It never books the same session twice in one day, avoids "
+        "everything on his own calendars, and avoids club events whenever there is room. It adds "
+        "them right away and reads the plan back to him word for word, and he can "
+        "say undo. Say nothing before or after calling this."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "sessions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "The event title, like 'Isaiah lesson'."},
+                        "count": {"type": "integer", "description": "How many in the range."},
+                        "minutes": {"type": "integer", "description": "Length of each, in minutes."},
+                        "earliest": {"type": "string", "description": "Optional earliest start on school days, like '3:30pm'. Defaults to 3 PM."},
+                        "latest_end": {"type": "string", "description": "Optional latest end, like '7pm'. Defaults to 8 PM."},
+                    },
+                    "required": ["name", "count", "minutes"],
+                },
+            },
+            "blocked": {
+                "type": "array",
+                "description": "Times he said are off limits that are not on his calendar, like a class or a career fair.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "from": {"type": "string", "description": "Start, a day and a time, like 'monday 1pm'."},
+                        "until": {"type": "string", "description": "End, like '6:30pm' for the same day."},
+                    },
+                    "required": ["from", "until"],
+                },
+            },
+            "time_min": {"type": "string", "description": "Optional start of the range. Defaults to now."},
+            "time_max": {"type": "string", "description": "Optional end of the range. Defaults to seven days later."},
+        },
+        "required": ["sessions"],
+    },
+    permission=Permission.EXTERNAL_WRITE,
+    returns_to_model=True,
+    min_tier="hokage",
+)
+def plan_sessions(sessions, blocked=None, time_min=None, time_max=None, now=None):
+    now = now or datetime.datetime.now()
+    start, end = resolve_window(time_min, time_max, now)
+    start = max(start, now)
+    if end is None:
+        end = start + datetime.timedelta(days=7)
+    if end <= start:
+        raise WhenError("that whole range has already passed")
+
+    specs = []
+    for s in sessions:
+        count, minutes = s.get("count"), s.get("minutes")
+        if not isinstance(count, int) or count < 1 or not isinstance(minutes, int) or not 0 < minutes <= 600:
+            raise WhenError(f"{s.get('name')!r} needs a count and a length in minutes")
+        specs.append({"name": _title(s["name"]), "count": count, "minutes": minutes,
+                      "earliest": _time_of(s.get("earliest"), _SCHOOL_DAY_START),
+                      "latest_end": _time_of(s.get("latest_end"), _LATEST_END)})
+
+    service = _service()
+    calendars = _calendars(service)
+    owned = [cid for cid, (_, selected, is_owned) in calendars.items() if selected and is_owned]
+    holidays = [cid for cid in calendars if "#holiday@" in cid]
+    followed = [cid for cid, (_, selected, is_owned) in calendars.items()
+                if selected and not is_owned and cid not in holidays]
+    queries = [{"calendarId": cid, "timeMin": _utc(start), "timeMax": _utc(end), "maxResults": 100,
+                "singleEvents": True, "orderBy": "startTime"} for cid in owned + holidays + followed]
+
+    busy, soft_busy, no_school = [], [], set()
+    for cid, items, error in _fetch_events(queries):
+        if error is not None:
+            if cid in holidays or cid in followed:
+                continue
+            # A plan that cannot see one of his own calendars could land on top
+            # of it, which is worse than no plan.
+            raise RuntimeError(f"could not read {calendars[cid][0]}, so a plan could collide with it")
+        for event in items:
+            if cid in holidays:
+                if "date" in event["start"]:
+                    no_school.add(datetime.date.fromisoformat(event["start"]["date"]))
+                continue
+            if "dateTime" in event["start"]:
+                event_start, event_end, _ = _event_bounds(event)
+                if cid in followed:
+                    soft_busy.append((event_start, event_end, event.get("summary", "a club event")))
+                else:
+                    busy.append((event_start, event_end))
+
+    # Spoken limits that are on no calendar. On Sep 13 2026 he said "don't
+    # schedule anything on Monday from 1 to 6:30, career fair", and a plan
+    # built only from his calendar put three lessons in it. An end given as just
+    # a time stays on the start's day, the same rule a moved event follows.
+    for block in blocked or []:
+        # A day named in a block includes today. Planned just after midnight on
+        # a Monday, "monday 1pm" preferred the future and resolved to the Monday
+        # after, so a career fair he had ruled out that very day was ignored and
+        # three lessons went into it. Reading from a minute before today began
+        # makes today's weekday mean today and tomorrow's mean tomorrow. A block
+        # that says today, tomorrow or next is still read from now.
+        base = now if _RELATIVE_TO_NOW.search(block["from"]) else (
+            _start_of_day(now) - datetime.timedelta(minutes=1))
+        block_start, has_time = parse_when(block["from"], base)
+        if not has_time:
+            block_start = _start_of_day(block_start)
+        block_end = _resolve_new_start(block["until"], block_start, now)
+        if block_end <= block_start:
+            raise WhenError(f"the blocked time from {block['from']!r} to {block['until']!r} ends before it starts")
+        busy.append((block_start, block_end))
+
+    days = [start.date() + datetime.timedelta(days=i)
+            for i in range((end.date() - start.date()).days + 1)]
+    no_school |= {day for day in days if day.weekday() >= 5}
+    placed, unplaced = plan_sessions_on(specs, busy, days, no_school, start, end, soft_busy)
+
+    missing = "; ".join(f"{name}, {count} more" for name, count in unplaced)
+    if not placed:
+        return f"Nothing fits in that range with those rules. Tell him plainly: {missing}."
+
+    # Added at once, like a single event, and the whole plan undoes together.
+    added, failed = [], []
+    for name, session_start, session_end in placed:
+        try:
+            _insert_event(name, session_start, session_end)
+            added.append((name, session_start, session_end))
+        except Exception:
+            failed.append(f"{name} {_day_words(session_start, now)} at {_clock(session_start)}")
+
+    # Everything is said by code, in one go: overlaps with club events and
+    # anything that did not fit are part of what he hears, not left to Nova.
+    notes = _overlap_notes(_club_overlaps(added, soft_busy), now)
+    if unplaced:
+        notes.append(f"Did not fit: {missing}")
+    if failed:
+        notes.append(f"Could not add: {'; '.join(failed)}")
+    said = (". ".join(notes) + ". " if notes else "") + (_plan_sentence(added, now) if added else "")
+    said = said.strip()
+    pending_action.announce(said)
+    return f"{said} This was read back to him word for word; he can say undo."
+
+
+@tool(
+    name="rename_calendar_events",
+    description=(
+        "Propose replacing a name or word in the title of every event on "
+        "Lethanial's MILES calendar that contains it, like correcting Charlie to "
+        "Charley on all of a student's lessons at once. This does not change "
+        "them: it returns one short question to ask him. Call this whenever he "
+        "asks to fix a name or a spelling, rather than renaming events one at a "
+        "time. Say nothing before calling this. If he also wants the spelling "
+        "kept from now on, call remember with the correct spelling too."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "find": {"type": "string", "description": "The word as it is now, like 'Charlie'."},
+            "replace_with": {"type": "string", "description": "What it should be, like 'Charley'."},
+            "time_min": {"type": "string", "description": "Optional start of the range. Defaults to now."},
+            "time_max": {"type": "string", "description": "Optional end. Defaults to sixty days later."},
+        },
+        "required": ["find", "replace_with"],
+    },
+    permission=Permission.EXTERNAL_WRITE,
+    returns_to_model=True,
+    min_tier="hokage",
+)
+def rename_calendar_events(find, replace_with, time_min=None, time_max=None, now=None):
+    now = now or datetime.datetime.now()
+    start, end = resolve_window(time_min, time_max, now)
+    start = max(start, now)
+    if end is None:
+        end = start + datetime.timedelta(days=60)
+    service = _service()
+    calendar_id = _miles_calendar_id(service)
+    if calendar_id is None:
+        raise EventLookupError("there is no MILES calendar yet, so there is nothing to rename")
+
+    word = re.compile(rf"\b{re.escape(find)}\b", re.IGNORECASE)
+    items = service.events().list(calendarId=calendar_id, timeMin=_utc(start), timeMax=_utc(end),
+                                  singleEvents=True, orderBy="startTime", maxResults=250,
+                                  ).execute().get("items", [])
+    matches = [e for e in items if word.search(e.get("summary", ""))]
+    if not matches:
+        raise EventLookupError(f"no event on the MILES calendar has {find!r} in its title in that range")
+
+    changes = [(e, word.sub(replace_with, e["summary"])) for e in matches]
+    days = list(dict.fromkeys(_day_words(_event_bounds(e)[0], now) for e, _ in changes))
+    when = days[0] if len(days) == 1 else ", ".join(days[:-1]) + " and " + days[-1]
+    spelled = f", {_spelled_difference(find, replace_with)}" if _soundex(find) == _soundex(replace_with) else ""
+    count = len(changes)
+    question = (f"Rename {find} to {replace_with}{spelled}, on {count} "
+                f"event{'' if count == 1 else 's'}: {when}?")
+
+    def rename_all():
+        done, failed = 0, []
+        for event, new_title in changes:
+            try:
+                _service().events().patch(calendarId=calendar_id, eventId=event["id"],
+                                          body={"summary": new_title}).execute()
+                done += 1
+            except Exception as exc:
+                failed.append(f"{event.get('summary')} ({exc})")
+        reply = f"Renamed {done} event{'' if done == 1 else 's'}."
+        return reply + (f" Failed, not renamed: {'; '.join(failed)}." if failed else "")
+
+    return _ask(pending_action.propose(question.rstrip("?"), rename_all))
+
+
+@tool(
+    name="undo_last_addition",
+    description=(
+        "Take back the most recent addition to Lethanial's calendar as a whole: "
+        "the one event, or every session of the plan. Call this when he says undo "
+        "that, take that off, or that was wrong, right after something was added. "
+        "It works for thirty minutes; anything older, delete it by name instead. "
+        "What was removed is read back to him word for word, so say nothing after."
+    ),
+    input_schema={"type": "object", "properties": {}, "required": []},
+    permission=Permission.EXTERNAL_WRITE,
+    returns_to_model=True,
+    min_tier="hokage",
+)
+def undo_last_addition():
+    events = _recent_additions.get("events") or []
+    if not events or time.monotonic() - _recent_additions.get("at", 0) > _UNDO_WINDOW_S:
+        raise LookupError("nothing was added in the last thirty minutes to undo")
+    removed, failed = [], []
+    for calendar_id, event_id, title in events:
+        try:
+            _service().events().delete(calendarId=calendar_id, eventId=event_id).execute()
+            removed.append(title)
+        except Exception as exc:
+            failed.append(f"{title} ({exc})")
+    _recent_additions.clear()
+    said = ""
+    if removed:
+        said = f"Removed {len(removed)} events." if len(removed) > 2 else f"Removed {_names(removed)}."
+    if failed:
+        said += f" Could not remove: {'; '.join(failed)}."
+    said = said.strip()
+    pending_action.announce(said)
+    return said

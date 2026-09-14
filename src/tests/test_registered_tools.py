@@ -34,6 +34,9 @@ EXPECTED = {
     "update_calendar_event":   (Permission.EXTERNAL_WRITE, True),
     "list_pending_memories":   (Permission.READ,           True),
     "find_schedule_conflicts": (Permission.READ,           True),
+    "plan_sessions":           (Permission.EXTERNAL_WRITE, True),
+    "rename_calendar_events":  (Permission.EXTERNAL_WRITE, True),
+    "undo_last_addition":      (Permission.EXTERNAL_WRITE, True),
     "review_pending_memory":   (Permission.WRITE,          True),
     "delete_calendar_event":   (Permission.EXTERNAL_WRITE, True),
     "get_oura_readiness":      (Permission.READ,           True),
@@ -50,7 +53,8 @@ HOKAGE_ONLY = {
     "get_oura_sleep", "get_oura_heartrate", "get_oura_activity",
     "update_calendar_event", "delete_calendar_event",
     "list_pending_memories", "review_pending_memory",
-    "find_schedule_conflicts",
+    "find_schedule_conflicts", "plan_sessions", "rename_calendar_events",
+    "undo_last_addition",
 }
 
 # WRITE tools that legitimately cost a second round trip, with the reason.
@@ -74,6 +78,12 @@ ROUND_TRIP_WRITES = {
     # He has to hear whether it was kept or discarded, and an id that was
     # not waiting for review is refused out loud rather than silently.
     "review_pending_memory",
+    # A proposal of a whole plan; the question it returns is the point.
+    "plan_sessions",
+    # A proposal to rename many events; one question for all of them.
+    "rename_calendar_events",
+    # What was removed is read back word for word.
+    "undo_last_addition",
 }
 
 
