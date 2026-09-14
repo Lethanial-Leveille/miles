@@ -259,13 +259,18 @@ Three rules the gate keeps, each pinned by a test:
 `tier_tool.py` used to check for hokage inside its own body. That check is gone:
 the gate does it for every tool, including the ones nobody remembers to guard.
 
-### Writes that leave the Pi wait for the next turn
+### Changes to what exists wait for the next turn; additions happen at once
 
-Over voice there is no button. `create_calendar_event` does not create anything.
-It stages the event in `pending_action.py` and returns it with the time already
-resolved, which Nova reads back as a question. Only `confirm_pending_action`,
+Over voice there is no button. Moving, renaming and deleting are staged in
+`pending_action.py` and asked as a question. Only `confirm_pending_action`,
 called on the **very next** Claude turn and inside `CONFIRM_WINDOW_S`, performs
-the write.
+the change.
+
+**Adding does not ask, since Sep 14 2026.** An event, or a whole planned week, is
+added immediately, and code reads back exactly what was added: "Added Career Fair
+today from 1 PM to 6 PM." `undo_last_addition` removes the most recent addition as
+a whole for thirty minutes. He found a question before every addition too much,
+and an addition is the one change undo fully reverses; a move or a delete is not.
 
 - Confirming on the same turn as the proposal is refused, so the model cannot
   ask and answer itself. A human turn has to happen in between.
@@ -273,6 +278,12 @@ the write.
   back, so the model cannot confirm something other than what he heard.
 - Anything unrelated said in between drops the proposal. A correction ("make it
   eleven") is a new proposal and is read back again.
+- **The question is spoken by code, word for word.** When a turn stages a
+  proposal, `brain.py` skips the model's reply and speaks
+  `pending_action.staged_question()`, also when the proposal follows a lookup.
+  Until Sep 14 2026 the model read the question out, and once it said a
+  different date from the one staged; his yes created the date he never heard.
+  It also saves a Claude call on every confirmation.
 - Several proposals on the **same** turn join one batch, asked as one question
   and confirmed or cancelled together. Until Sep 13 2026 each replaced the last,
   and his yes to the first of seven lessons created the seventh. In a batch, one
@@ -340,6 +351,26 @@ unless the phrase names today or tomorrow; a new day alone keeps the event's
 time; moving keeps its length. A repeating event changes only the one occurrence,
 and the read back says so. Edits use `patch`, so fields the tool never touches
 are left as they were.
+
+### Renaming a name everywhere, and spelling what cannot be heard
+
+`rename_calendar_events` replaces a word in the title of every MILES event that
+has it, across a range, with one question. On Sep 14 2026 correcting Charlie to
+Charley on three lessons took five read backs and three yeses through the one
+event tool, one lesson at a time.
+
+A rename whose new word sounds like the old one says which letters changed: "Rename
+Charlie to Charley, E Y instead of I E, on 3 events". Read back without that, the
+two sounded identical, so he could not hear what he was confirming. Spelling the
+whole name out was tried first and he found it too much; a change of more than
+four letters is still spelled whole. Whether they sound
+alike is decided by Soundex, which gives similar sounding names the same four
+character code; a rename that can be heard, like "session" to "grind", is not
+spelled, because spelling everything would bury the one case that needs it.
+
+`brain.py` logs a turn where Nova asks to add, move, rename or delete something
+herself with nothing staged, which is how "Rename Charley lesson on Wednesday to
+Charley lesson?" reached him with nothing behind it.
 
 ### Oura values carry their units
 
@@ -436,6 +467,45 @@ ends. A chain of overlaps is one group, because choosing among three is one
 decision. Nova then suggests what to keep, classes and his own commitments over
 events on calendars he follows. On its first run against his real week it found
 four, including his Thursday test prep session against two club events.
+
+### Sessions are placed in code
+
+`plan_sessions` exists because Nova placed seven tutoring lessons in her head on
+Sep 13 2026 and broke nearly every rule she was given: 2 PM after "after three",
+a lesson inside the class he had just described, two lessons overlapping each
+other, and a confirmation for each one separately. Now she only turns what he
+said into sessions and limits; `plan_sessions_on` places them.
+
+The rules it enforces, each with a test:
+
+- **A student's earliest start and latest end** come from what he says, per
+  session. 3 PM and 8 PM are only defaults.
+- **Weekends and holidays prefer mornings**, falling back to the afternoon. The
+  after school rule exists only because of school.
+- **Nothing lands on his own calendars.** Club events are avoided whenever any
+  day has room and overlapped only when none does, and every forced overlap is
+  named in the spoken question before he answers. A club event Nova knows he
+  should attend goes in `blocked`, which is never overlapped. Until Sep 14 2026
+  club events were ignored outright, and a plan landed lessons across a mini
+  career fair, three info sessions and a workshop.
+- **One session per name per day**, so one student is never back to back, while
+  different students can run back to back, because the lessons are online.
+- **Each further session goes on the workable day farthest from that name's other
+  days**, so two lessons are early and late in the week.
+- **Anything that does not fit is reported**, never squeezed in, and it is said
+  before the question, along with one short note per session that had to
+  overlap club events, because the whole question is spoken by code.
+- **Spoken limits that are on no calendar go in `blocked`**: a career fair, a class
+  not yet on the calendar. A day named in a block includes today, and an end
+  given as only a time stays on the same day.
+
+The whole plan is one question, grouped by name so it can be followed by ear, and
+one yes creates every event.
+
+A dry run on his real calendar before first use caught two bugs the rule tests
+had not: fixed position spreading bunched lessons into consecutive days when the
+range's last day had no usable time, and "monday 1pm" said on a Monday resolved
+to the Monday after. Both are fixed and tested.
 
 ## Failure boundaries
 

@@ -7,7 +7,7 @@ from typing import NamedTuple
 
 import anthropic
 import timing
-from tts import play, speak, start_synthesis
+from tts import join_for_speech, play, speak, start_synthesis
 from prompts import build_enhanced_prompt
 from database import (save_message, get_seed_memories, get_episodic_memories,
                       get_recent_messages, search_memories, memory_manifest,
@@ -111,33 +111,49 @@ def _play_with_barge_in(synthesis):
 
 
 async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set) -> None:
-    """Speak sentences in order, with each one synthesized before its turn.
+    """Speak a reply: the first sentence at once, the rest as one piece.
 
-    Two workers. The feeder takes sentences off the router's queue as Claude
-    streams them and starts their synthesis at once, holding one of
-    _SYNTHESIS_AHEAD slots per sentence. The player takes them in order, plays
-    each to the end, and gives the slot back.
+    Two workers. The feeder starts the first sentence the moment Claude writes
+    it, so first audio is as early as it can be. Every later sentence is held
+    until Claude finishes, then all of them are synthesized together, joined by
+    join_for_speech. The player plays the pieces in order.
 
-    One loop used to do both, so sentence two was not requested until sentence
-    one had finished playing, and every sentence after the first opened with
-    its whole time to first byte as silence. On eleven_v3 that was a median
-    647ms, three times over in a four sentence reply."""
+    Together, because on eleven_v3 each request is voiced on its own, and
+    sentences voiced separately came out as a string of slightly different
+    deliveries, heard as "different cadences, like a different person". One
+    request for the rest is one delivery, and it lets an ellipsis give a pause
+    between sentences, which a separate request per sentence cannot.
+
+    The rest normally finishes streaming while the first sentence is still
+    playing. When the first sentence is very short it may not, and the wait is
+    logged."""
     loop = asyncio.get_running_loop()
     ready = asyncio.Queue()
     slots = asyncio.Semaphore(_SYNTHESIS_AHEAD)
 
+    async def start(sentences):
+        await slots.acquire()
+        # start_synthesis reads the pronunciation table, so it runs off the
+        # event loop like everything else that touches the disk.
+        synthesis = await loop.run_in_executor(
+            None, start_synthesis, join_for_speech(sentences))
+        await ready.put((sentences, synthesis))
+
     async def feed():
         try:
+            rest = []
             while True:
                 sentence = await queue.get()
                 if sentence is None:
-                    return
+                    break
                 sentence = strip_leading_bracket_cue(sentence, leaks_seen)
-                await slots.acquire()
-                # start_synthesis reads the pronunciation table, so it runs off
-                # the event loop like everything else that touches the disk.
-                synthesis = await loop.run_in_executor(None, start_synthesis, sentence)
-                await ready.put((sentence, synthesis))
+                if played_first_request[0]:
+                    rest.append(sentence)
+                    continue
+                played_first_request[0] = True
+                await start([sentence])
+            if rest:
+                await start(rest)
         except Exception as exc:
             print(f"Could not start speech synthesis: {exc}", flush=True)
         finally:
@@ -146,6 +162,7 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
             # hang with nothing in the log.
             ready.put_nowait(None)
 
+    played_first_request = [False]
     feeder = asyncio.create_task(feed())
     played = 0
     try:
@@ -153,18 +170,19 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
             item = await ready.get()
             if item is None:
                 break
-            sentence, synthesis = item
-            text_parts.append(sentence)
+            sentences, synthesis = item
+            text_parts.extend(sentences)
             try:
                 interrupted, waited_ms = await loop.run_in_executor(
                     None, _play_with_barge_in, synthesis)
             finally:
                 slots.release()
             played += 1
-            # For every sentence after the first, the silence heard before it.
-            # The first sentence's wait is already logged as tts_ttfb_ms.
+            # For the rest of the reply, the silence heard before it. The first
+            # sentence's wait is already logged as tts_ttfb_ms.
             if played > 1 and waited_ms is not None:
-                print(f"  sentence {played} waited {waited_ms:.0f}ms for audio", flush=True)
+                print(f"  rest of reply ({len(sentences)} sentences) waited "
+                      f"{waited_ms:.0f}ms for audio", flush=True)
             if interrupted:
                 # He said the wake word over her. Drop the rest rather than
                 # finishing the thought he interrupted, which is the entire
@@ -267,6 +285,18 @@ _CLAIMS_A_SAVE = re.compile(
     r"i've saved|saved that|i've stored|stored that|made a note|"
     r"i'll keep that in mind)\b",
     re.IGNORECASE)
+
+
+_ASKS_A_CHANGE = re.compile(r"\b(add|move|rename|delete|change|reschedule)\b[^?]*\?", re.IGNORECASE)
+
+
+def _asks_an_unstaged_change(text, staged):
+    """Whether Nova asked to change the calendar herself, with nothing staged.
+
+    Measurement, not enforcement. On Sep 14 2026 she asked "Rename Charley lesson
+    on Wednesday at 4 PM to Charley lesson?" with no proposal behind it; he said
+    yes, and nothing could run."""
+    return staged is None and bool(_ASKS_A_CHANGE.search(text or ""))
 
 
 def _claims_a_save_without_calling(text, called_tools):
@@ -518,7 +548,13 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # This replaces the hardcoded `any(r["type"] == "weather")` whitelist.
         # Whether a second call happens is now a property of the tool, declared
         # once at registration, so adding a read shaped tool needs no edit here.
-        needs_second_call = _needs_second_call(results)
+        # A proposed change is asked in code, word for word. On Sep 14 2026 the
+        # staged event was dated the 21st while Nova said "September 14", and his
+        # yes created the one he never heard. With the question spoken here,
+        # nothing between what runs and what he hears can reword it, and a
+        # confirmation no longer costs a second Claude call.
+        staged = pending_action.words_for_turn()
+        needs_second_call = _needs_second_call(results) and staged is None
 
         if needs_second_call:
             # Real tool_result blocks, not a synthetic user turn describing the
@@ -586,6 +622,10 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
                 more_results = await loop.run_in_executor(
                     None, _run_tools, more_tools, model, tier)
+                if pending_action.words_for_turn() is not None:
+                    # A change proposed after a lookup. Its question is spoken
+                    # in code below, not in the model's words.
+                    break
                 followup_messages = followup_messages + [
                     {"role": "assistant", "content": followup_message.content},
                     {"role": "user", "content": _tool_result_blocks(more_results)},
@@ -595,11 +635,18 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             await tts_task2
             final_text, _, _ = extract_memories(final_text)
             final_text = strip_leading_bracket_cue(final_text, leaks_seen)
+            late_question = pending_action.words_for_turn()
+            if late_question is not None:
+                await loop.run_in_executor(None, speak, late_question)
+                final_text = f"{final_text} {late_question}".strip()
         else:
             # Timer, reminder, cancel, dismiss: the text Nova said alongside
             # the call is the answer. A second round trip here would spend a
             # second of latency rephrasing "Timer set."
             final_text = " ".join(spoken_parts).strip()
+            if staged is not None:
+                await loop.run_in_executor(None, speak, staged)
+                final_text = f"{final_text} {staged}".strip()
 
             # A control tool is a state transition, not work, so there is
             # nothing to confirm and nothing to say.
@@ -641,6 +688,10 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     # next twenty turns read back as context. save_message is skipped rather
     # than storing "", because get_recent_messages does not filter and the API
     # rejects an empty content block.
+    if _asks_an_unstaged_change(final_text, pending_action.words_for_turn()):
+        print(f"Asked to change the calendar with nothing staged: {final_text[:120]!r}",
+              flush=True)
+
     if _claims_a_save_without_calling(final_text, called_tools):
         print(f"Claimed to remember without calling remember: {final_text[:120]!r}",
               flush=True)

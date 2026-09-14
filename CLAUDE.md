@@ -103,7 +103,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST + WebSocket
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (652 passing, 6 skipped, Sep 13 2026)
+│   └── tests/                 # pytest suite (711 passing, 6 skipped, Sep 14 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold

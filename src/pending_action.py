@@ -43,6 +43,7 @@ class _Pending:
 _lock = threading.Lock()
 _turn = 0
 _pending = None
+_announcements = []   # (turn, text) said by code this turn
 
 
 def begin_turn():
@@ -51,6 +52,7 @@ def begin_turn():
     global _turn
     with _lock:
         _turn += 1
+        _announcements.clear()
 
 
 def _question(changes):
@@ -79,6 +81,45 @@ def propose(description, run, now=None):
             _pending.changes.append((description, run))
         else:
             _pending = _Pending([(description, run)], _turn, now)
+        return _question(_pending.changes)
+
+
+def announce(text):
+    """Have code say text word for word at the end of this turn.
+
+    For changes made at once, like an event added without a question since Sep
+    14 2026. Said by code for the same reason a staged question is: what he
+    hears is exactly what happened, with no model turn in between to reword it."""
+    with _lock:
+        _announcements.append((_turn, text))
+
+
+def current_turn():
+    with _lock:
+        return _turn
+
+
+def words_for_turn():
+    """Everything code must say this turn: announcements, then any staged
+    question. None when there is nothing, which leaves the reply to the model."""
+    with _lock:
+        said = [text for turn, text in _announcements if turn == _turn]
+        if _pending is not None and _pending.turn == _turn:
+            said.append(_question(_pending.changes))
+    return " ".join(said) if said else None
+
+
+def staged_question():
+    """The question covering what was proposed on this turn, or None.
+
+    brain.py speaks this word for word instead of letting the model phrase it.
+    On Sep 14 2026 a proposal was staged for the 21st while Nova said "Monday
+    September 14", and his yes created the event he never heard. Only a
+    proposal from this turn counts: on the next turn the question has already
+    been asked, and that turn is his answer."""
+    with _lock:
+        if _pending is None or _pending.turn != _turn:
+            return None
         return _question(_pending.changes)
 
 
@@ -122,8 +163,8 @@ def resolve(approved, now=None):
 @tool(
     name="confirm_pending_action",
     description=(
-        "Carry out or cancel the action you just read back to Lethanial and "
-        "asked him to confirm, such as a calendar event. Call this on his reply "
+        "Carry out or cancel the change he was just asked to confirm, such as "
+        "moving, renaming or deleting a calendar event. Call this on his reply "
         "to that question: approved true if he agreed, false if he declined. "
         "If he asks for a change instead, do not call this; propose the changed "
         "version so he hears it again. It takes no details because it runs "

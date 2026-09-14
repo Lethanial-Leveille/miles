@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 13 2026 (19) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (652) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 14 2026 (711) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -956,3 +956,116 @@ API shape to get right for a saving the threads already deliver.
 **The remembered list is cleared when the MILES calendar is created**, the one
 change Nova can make to it. A calendar he subscribes to by hand can take up to
 five minutes to appear.
+
+### The rest of a reply as one request, sentences joined by an ellipsis (Sep 13 2026) (DONE)
+
+The first sentence is still synthesized the moment Claude writes it, so first
+audio is unchanged. Every later sentence waits for Claude to finish and goes as
+one request. The listening tests and measurements are in
+[VOICE_OUTPUT.md](VOICE_OUTPUT.md#one-delivery-for-the-rest-of-a-reply-with-a-breath-between-sentences).
+
+**Rejected:** the whole reply as one request, which he liked best but which adds
+Claude's full generation time before any sound; stability 0.75, which v3 appears
+to ignore; context between separate requests, which v3 refuses.
+
+**Known risk:** a very short first sentence can finish playing before Claude has
+finished the rest. Each turn logs how long the rest waited; if that shows real
+gaps, grouping the first two sentences is the next step.
+
+### Sessions are planned in code, and a spoken limit counts (Sep 13 2026) (DONE)
+
+`plan_sessions` places several sessions around his week and proposes them as one
+question. Built general rather than for tutoring, which is temporary: study
+blocks and workouts use it the same way. The mechanism is in
+[BRAIN.md](BRAIN.md#sessions-are-placed-in-code).
+
+**Nothing about a student is hardcoded.** Earliest start and latest end are passed
+per session from what he says, with 3 PM and 8 PM only as defaults.
+
+**One session per name per day,** the simplest rule that guarantees he never
+teaches one student back to back. **Rejected:** allowing a second same day
+session with a gap, which he did not ask for and which the spread already avoids.
+
+**Two bugs caught by a dry run on his real calendar before it was used,** both now
+tested: spreading by fixed positions bunched two lessons into consecutive days
+when the range's last day was unusable, and a block naming today's weekday was
+read as next week.
+
+### A proposed change is spoken by code, word for word (Sep 14 2026) (DONE)
+
+The confirmation guarantee held for what was staged and not for what was said:
+Nova staged the 21st, said the 14th, and his yes created the 21st. See
+[INCIDENTS.md](INCIDENTS.md#his-yes-created-a-date-he-did-not-hear-sep-14-2026).
+
+**Chosen:** when a turn stages a proposal, `brain.py` skips the model's reply and
+speaks `pending_action.staged_question()` itself, including when the proposal
+follows a lookup. What he hears is what runs, and each confirmation saves a
+Claude call. **Rejected:** a stronger prompt line to ask the question verbatim,
+which is what had already been in place and was ignored.
+
+**Also:** a new event is read back as a time range; an all lowercase title is
+capitalized; long lengths are said in hours; today's weekday with a time still
+ahead means today, while a bare weekday still means next week; "next monday at
+1pm" is refused, because dateparser cannot read it.
+
+### Club events are avoided when there is room, not ignored (Sep 14 2026) (DONE)
+
+He wants the planner aware of club events worth going to, like a Datadog info
+session. The first plan treated every followed calendar as free time and put
+lessons across a mini career fair, three info sessions and a workshop.
+
+**Chosen:** club events are soft. Each session is placed clear of them if any day
+allows it, and only overlaps one when none does, and the spoken question names
+every forced overlap before asking. Nova is told to put a club event she knows
+he should attend into `blocked`, which is never overlapped.
+
+**Rejected:** treating every club event as a commitment, which on his real week
+leaves most weekday evenings unusable for lessons; and picking important events
+by keyword in code, which is judgment about his goals and belongs to the model.
+
+### A name is fixed everywhere at once, and a homophone is spelled (Sep 14 2026) (DONE)
+
+What went wrong is in [INCIDENTS.md](INCIDENTS.md#fixing-one-name-took-five-read-backs-sep-14-2026).
+
+**Chosen:** a tool that renames every MILES event containing a word, with one
+question, rather than teaching Nova to call the one event tool repeatedly, which
+is what produced five read backs. A rename is spelled only when Soundex says the
+old and new words sound alike.
+
+**Rejected:** spelling every rename, which adds letters to every change that could
+already be heard.
+
+**Still open:** whether adding events should skip confirmation, proposed to him the
+same night and not built without his answer.
+
+### No restarts while he is talking to Nova (Sep 14 2026) (DONE)
+
+Three deploy restarts landed inside one of his conversations and each swallowed a
+turn; see [INCIDENTS.md](INCIDENTS.md#fixing-one-name-took-five-read-backs-sep-14-2026).
+Before restarting `miles-voice`, check the journal for speech in the last two
+minutes (`journalctl -u miles-voice --since -120s` showing "You:", "Wake word
+detected" or "Listening for follow up"). If there is any, do not restart; say so
+and let him finish.
+
+**Spelling a sound alike rename says only what changed**, "E Y instead of I E",
+after he found spelling the whole name too much. A change longer than four letters
+is still spelled whole.
+
+### Additions happen at once, with undo; changes still ask (Sep 14 2026) (DONE)
+
+**Supersedes part of "Permission gate enforced, and outside writes wait a turn"**,
+which confirmed every EXTERNAL_WRITE. He said twice that scheduling had too much
+confirmation.
+
+**Chosen:** `create_calendar_event` and `plan_sessions` add at once and code reads
+back exactly what was added; `undo_last_addition` removes the most recent addition
+as a whole, one event or every session of a plan, for thirty minutes. Moving,
+renaming and deleting still confirm on the next turn.
+
+**Why the line is there:** an addition that is wrong costs one sentence to undo and
+destroys nothing. A move or a delete overwrites what existed, and undo cannot put
+back an event from someone else's invitation or a detail he typed by hand.
+
+**What protects a misheard addition now:** the read back is spoken by code, so he
+hears the real day and time, and undo is one sentence away. The permission gate is
+unchanged; only hokage can add.

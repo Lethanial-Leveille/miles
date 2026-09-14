@@ -191,3 +191,17 @@ def test_speaking_does_not_mutate_the_callers_string(captured):
     tts.speak(original)
     assert original == "Good morning Lethanial."
     assert captured["text"] != original
+
+
+
+def test_a_full_stop_between_sentences_becomes_a_breath():
+    assert tts.join_for_speech(["One.", "Two.", "Three."]) == "One... Two... Three."
+
+
+def test_questions_and_exclamations_keep_their_own_mark():
+    """"?..." reads as uncertainty, not a pause."""
+    assert tts.join_for_speech(["Ready?", "Let's go!", "Done."]) == "Ready? Let's go! Done."
+
+
+def test_a_single_sentence_is_untouched():
+    assert tts.join_for_speech(["It's due Friday."]) == "It's due Friday."

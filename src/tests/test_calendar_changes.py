@@ -40,7 +40,7 @@ class FakeService:
             {"id": "miles_id", "summary": "MILES"},
             {"id": "primary", "summary": "Lethanial", "primary": True},
         ]
-        self.listed, self.deleted, self.patched = [], [], []
+        self.listed, self.deleted, self.patched, self.inserted = [], [], [], []
 
     def calendarList(self):
         service = self
@@ -65,6 +65,10 @@ class FakeService:
             def patch(self, calendarId, eventId, body):
                 service.patched.append((calendarId, eventId, body))
                 return _Call({})
+
+            def insert(self, calendarId, body):
+                service.inserted.append((calendarId, body))
+                return _Call({"id": f"new{len(service.inserted)}"})
         return _Events()
 
 
@@ -73,8 +77,10 @@ def fresh_calendar_list():
     """The calendar list is remembered for minutes, so each test's fake service
     has to start from an empty memory."""
     cal._calendar_cache.clear()
+    cal._recent_additions.clear()
     yield
     cal._calendar_cache.clear()
+    cal._recent_additions.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -375,3 +381,99 @@ def test_the_calendar_list_is_remembered_between_questions(monkeypatch):
     cal.get_upcoming_events(now=NOW)
     cal.find_schedule_conflicts(now=NOW)
     assert len(lookups) == 1
+
+
+
+# ── renaming, and spelling what cannot be heard ──
+
+def test_similar_sounding_names_share_a_sound_code():
+    assert cal._soundex("Charlie") == cal._soundex("Charley") == "C640"
+    assert cal._soundex("session") != cal._soundex("grind")
+
+
+def test_a_rename_that_sounds_the_same_says_only_what_changed():
+    """"Rename Charlie to Charley" sounded like nothing changed, and spelling the
+    whole name out was more than he wanted to hear."""
+    assert cal._spelling_note("Charlie lesson", "Charley lesson") == ", E Y instead of I E"
+    assert cal._spelling_note("LeetCode session", "LeetCode grind") == ""
+
+
+@pytest.mark.parametrize("old,new,said", [
+    ("Charlie", "Charley", "E Y instead of I E"),
+    ("Jon", "John", "with an added H"),
+    ("Isaac", "Isac", "without the A"),
+    ("Kristin", "Christine", "spelled C H R I S T I N E"),
+])
+def test_the_difference_is_said_as_briefly_as_possible(old, new, said):
+    assert cal._spelled_difference(old, new) == said
+
+
+def test_renaming_one_event_spells_a_homophone(google):
+    google.events_by_calendar["miles_id"].append(_timed("c1", "Charlie lesson", _at(12), _at(13)))
+    reply = cal.update_calendar_event("charlie", "monday", new_title="Charley lesson", now=NOW)
+    assert "Rename Charlie lesson tomorrow to Charley lesson, E Y instead of I E?" in reply
+
+
+def test_every_event_with_the_name_is_renamed_in_one_question(monkeypatch):
+    """Sep 14 2026: fixing Charlie to Charley on three lessons took five read
+    backs and three yeses, one event at a time."""
+    at = lambda day, h: datetime.datetime(2026, 9, day, h).astimezone().isoformat()
+    service = FakeService({"miles_id": [
+        _timed("m", "Charlie lesson", at(14, 18), at(14, 19)),
+        _timed("w", "Charlie lesson", at(16, 16), at(16, 17)),
+        _timed("f", "Charlie lesson", at(18, 16), at(18, 17)),
+        _timed("i", "Isaiah lesson", at(18, 17), at(18, 18)),
+    ]})
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    pa.begin_turn()
+    reply = cal.rename_calendar_events("Charlie", "Charley", now=NOW)
+    assert "Rename Charlie to Charley, E Y instead of I E, on 3 events: tomorrow, Wednesday and Friday?" in reply
+    assert service.patched == []
+    pa.begin_turn()
+    assert pa.resolve(True) == "Renamed 3 events."
+    assert {(eid, body["summary"]) for _, eid, body in service.patched} == {
+        ("m", "Charley lesson"), ("w", "Charley lesson"), ("f", "Charley lesson")}
+
+
+def test_a_name_nobody_has_is_refused(google):
+    with pytest.raises(cal.EventLookupError):
+        cal.rename_calendar_events("Zelda", "Zelena", now=NOW)
+
+
+
+# ── undo ──
+
+def test_undo_removes_what_was_just_added(google):
+    pa.begin_turn()
+    cal.create_calendar_event("career fair", "tomorrow at 1pm", 300, now=NOW)
+    assert len(google.inserted) == 1
+    pa.begin_turn()
+    cal.undo_last_addition()
+    assert google.deleted == [("miles_id", "new1")]
+    assert pa.words_for_turn() == "Removed Career Fair."
+
+
+def test_undo_takes_back_a_whole_plan_at_once(google):
+    pa.begin_turn()
+    cal.plan_sessions([{"name": "Charlie lesson", "count": 3, "minutes": 60}],
+                      time_min="tuesday", time_max="friday", now=NOW)
+    assert len(google.inserted) == 3
+    pa.begin_turn()
+    cal.undo_last_addition()
+    assert len(google.deleted) == 3
+    assert pa.words_for_turn() == "Removed 3 events."
+
+
+def test_only_the_latest_addition_is_undone(google):
+    pa.begin_turn()
+    cal.create_calendar_event("Gym", "tomorrow at 7am", 60, now=NOW)
+    pa.begin_turn()
+    cal.create_calendar_event("Study", "tomorrow at 8pm", 60, now=NOW)
+    pa.begin_turn()
+    cal.undo_last_addition()
+    assert google.deleted == [("miles_id", "new2")]
+
+
+def test_nothing_to_undo_is_a_failure_she_explains(google):
+    with pytest.raises(LookupError):
+        cal.undo_last_addition()
