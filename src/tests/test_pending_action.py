@@ -66,3 +66,38 @@ def test_a_new_proposal_replaces_the_old_one():
     pa.begin_turn(); pa.propose("'gym' at eleven", lambda: second.append("ran"), now=1.0)
     pa.begin_turn(); pa.resolve(True, now=2.0)
     assert first == [] and second == ["ran"]
+
+
+def test_several_proposals_on_one_turn_are_confirmed_together():
+    """Sep 13 2026: seven lessons staged in one turn replaced each other, Nova
+    asked about the first, and his yes created the seventh."""
+    runs = []
+    pa.begin_turn()
+    pa.propose("Add Isaiah on Tuesday at 3:30 PM", lambda: runs.append("isaiah") or "Added Isaiah.", now=0.0)
+    question = pa.propose("Add Andrew on Thursday at 4 PM", lambda: runs.append("andrew") or "Added Andrew.", now=0.0)
+    assert question == "Add Isaiah on Tuesday at 3:30 PM, and add Andrew on Thursday at 4 PM?"
+    pa.begin_turn()
+    assert pa.resolve(True, now=1.0) == "Added Isaiah. Added Andrew."
+    assert runs == ["isaiah", "andrew"]
+
+
+def test_declining_a_batch_runs_none_of_it():
+    runs = []
+    pa.begin_turn()
+    for name in ("A", "B", "C"):
+        pa.propose(f"Add {name}", lambda n=name: runs.append(n), now=0.0)
+    pa.begin_turn()
+    assert pa.resolve(False, now=1.0) == "Cancelled. Nothing was done: Add A, add B, and add C."
+    assert runs == []
+
+
+def test_one_failure_in_a_batch_is_reported_beside_what_worked():
+    def broken():
+        raise RuntimeError("Google said no")
+    pa.begin_turn()
+    pa.propose("Add Isaiah", lambda: "Added Isaiah.", now=0.0)
+    pa.propose("Add Andrew", broken, now=0.0)
+    pa.begin_turn()
+    reply = pa.resolve(True, now=1.0)
+    assert reply.startswith("Added Isaiah.")
+    assert "Failed, not done: Add Andrew (Google said no)." in reply

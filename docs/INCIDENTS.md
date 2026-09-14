@@ -33,6 +33,7 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 13 2026 | Confirming one tutoring lesson created a different one, and a failed cancel was reported as done | [below](#confirming-one-lesson-created-another-sep-13-2026) |
 | Sep 13 2026 | Nova read the calendar like a printout: past events, "all day", club events as plans | [below](#nova-read-the-calendar-like-a-printout-sep-13-2026) |
 | Sep 13 2026 | New calendar and Oura tools answered confidently and wrong | [below](#calendar-and-sleep-tools-answered-confidently-and-wrong-sep-13-2026) |
 | Sep 13 2026 | Near misses and false wakes turned out to be one population: the neighbours, sorted by level | [below](#the-near-misses-are-the-neighbours-sep-13-2026) |
@@ -43,6 +44,62 @@ session real work.
 | Sep 6 2026 | One capsule recorded itself as three microphones; enrollment threw away its audio | [below](#two-guards-that-could-not-do-their-jobs-sep-6-2026) |
 | Aug 13 2026 | Nova confabulated a security tool call that never happened | [BRAIN.md](BRAIN.md#nova-knows-the-transcript-is-not-his-words) |
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
+
+---
+
+## Confirming one lesson created another (Sep 13 2026)
+
+Between 20:21 and 20:28 he tried to schedule seven tutoring lessons by voice. It
+went wrong in four separate ways, and the first was a defect in the confirmation
+guarantee itself.
+
+### His yes ran a change he had not been asked about
+
+`pending_action` held one proposal, and a new one replaced it. In a single turn
+Nova called `create_calendar_event` seven times (`tool_call_log` rows 87 to 93),
+so each call replaced the one before and only the seventh survived. She asked the
+question from the first:
+
+```
+20:26:58  Nova: Add Isaiah lesson 1 on Tuesday at 3:30 PM for 90 minutes?
+20:27:17  He:   Yes, schedule it.
+row 94    confirm_pending_action -> "Added Charlie lesson 3."
+```
+
+He then found a Charlie lesson on Wednesday he had never agreed to and deleted it.
+This is precisely what confirmation exists to prevent. **Several proposals on one
+turn now join one batch**, asked as one question and confirmed or cancelled
+together; a proposal on a later turn still replaces the old one. It also removes
+the one at a time asking he found unusable.
+
+### "Done." over a cancel that did nothing
+
+"Cancel all of the tutoring sessions" was sent to `cancel_reminder` three times
+(rows 95 to 97), because lessons are calendar events and there was no way to
+delete several at once. Every call returned "No active reminders found". Nova
+said "Done.", because the fallback for tools that do not return to the model
+speaks "Done." whenever it has nothing else, without looking at the result.
+
+### Two recordings hit the cap
+
+His first and third turns logged `NOTE: hit the 18s recording cap`, and the third
+transcript ends mid thought at "also look at the club event". The cap sits below
+Whisper's 20 second audio context, so audio past it would not be transcribed even
+if it were recorded.
+
+### The scheduling was done in the model's head
+
+Every constraint was spoken and none was enforced. He said lessons had to be
+"later than three" and was offered 2 PM; Andrew was put in the Thursday class he
+had just described; two lessons overlapped each other on Tuesday; three ninety
+minute sessions became "two hours forty five minutes"; Saturday September 20 was
+read as Sunday. Nova also cited "your long lifting day" on Tuesday from a planned
+split that memory itself said had not started; that memory was deleted at his
+request.
+
+**The lesson:** the arithmetic and the constraint checking were all left to the
+model, which is the division of labour this project exists to get right. Code
+should place the lessons; the model should turn what he said into constraints.
 
 ---
 

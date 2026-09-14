@@ -167,14 +167,21 @@ def test_a_broken_lookup_speaks_the_text_unchanged(monkeypatch, captured):
 
 # ── the text channel must never receive an alias ──
 
-def test_normalization_lives_only_inside_speak():
-    """Structural rather than conditional. The text channel never calls speak(),
-    so there is no flag that can be set wrong."""
+def test_normalization_lives_only_on_the_speech_path():
+    """Structural rather than conditional. The text channel never starts a
+    synthesis, so there is no flag that can be set wrong.
+
+    Normalization lives in tts._prepare, reached only through start_synthesis.
+    Since Sep 13 2026 that is called by speak() and by brain's feeder, which
+    starts each sentence ahead of playback; brain itself still never touches
+    the normalizer."""
     import inspect
     import brain
     import server
 
-    assert "normalize_pronunciation" in inspect.getsource(tts.speak)
+    assert "normalize_pronunciation" in inspect.getsource(tts._prepare)
+    assert "_prepare" in inspect.getsource(tts.start_synthesis)
+    assert "start_synthesis" in inspect.getsource(tts.speak)
     for module in (brain, server):
         assert "normalize_pronunciation" not in inspect.getsource(module)
 

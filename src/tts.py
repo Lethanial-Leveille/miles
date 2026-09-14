@@ -1,6 +1,8 @@
 import os
+import queue
 import re
 import subprocess
+import threading
 import time
 from elevenlabs.client import ElevenLabs
 
@@ -113,6 +115,139 @@ def play_chime():
     )
 
 
+def _prepare(text):
+    """The text exactly as the synthesizer should receive it, or None when
+    nothing is left to say."""
+    clean = _BRACKET_CUE.sub('', text).strip()
+    clean = _MILES_ACRONYM.sub('Miles', clean)
+    if not clean:
+        return None
+    if not clean.endswith(('?', '!', '.')):
+        clean += '.'
+
+    # Last thing before the API call, so nothing downstream can undo it and
+    # nothing upstream ever sees an alias. What gets returned, saved to
+    # history, and shown in the app is the real spelling.
+    return normalize_pronunciation(clean)
+
+
+class Synthesis:
+    """One utterance being synthesized now, to be played later.
+
+    Splitting synthesis from playback is what lets the next sentence be fetched
+    while the current one plays. speak() used to do both in order, so a
+    sentence was not even requested until the one before it had finished.
+
+    The stream is drained on a daemon thread into a queue. A failure is kept
+    and reported by the player, so it surfaces where it always did rather than
+    dying quietly on a background thread."""
+
+    _DONE = object()
+
+    def __init__(self, text, voice_settings=None, model=None, seed=None):
+        self.text = text
+        self.error = None
+        self.requested_at = time.monotonic()
+        self._chunks = queue.Queue()
+        self._request = dict(
+            voice_id=TTS_VOICE_ID,
+            text=text,
+            model_id=model or DEFAULT_TTS_MODEL,
+            voice_settings=voice_settings or TTS_VOICE_SETTINGS,
+            output_format=TTS_OUTPUT_FORMAT,
+            **({"seed": seed} if seed is not None else {}),
+        )
+        threading.Thread(target=self._drain, daemon=True).start()
+
+    def _drain(self):
+        try:
+            for chunk in _elevenlabs.text_to_speech.stream(**self._request):
+                if chunk:
+                    self._chunks.put(chunk)
+        except Exception as e:
+            self.error = e
+        finally:
+            self._chunks.put(self._DONE)
+
+    def chunks(self):
+        """Yield audio as it arrives, until the stream ends or fails."""
+        while True:
+            chunk = self._chunks.get()
+            if chunk is self._DONE:
+                return
+            yield chunk
+
+
+def start_synthesis(text, voice_settings=None, model=None, seed=None):
+    """Begin synthesizing now. None when there is nothing to say."""
+    clean = _prepare(text)
+    if clean is None:
+        return None
+    return Synthesis(clean, voice_settings, model, seed)
+
+
+def _open_aplay():
+    return subprocess.Popen(
+        [
+            "aplay", "-D", SPEAKER_DEVICE,
+            "-f", "S16_LE", "-r", "22050", "-c", "1",
+            "--buffer-size=8192", "--period-size=1024",
+        ],
+        stdin=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def play(synthesis, interrupt=None):
+    """Play a started synthesis to the end.
+
+    Returns how long it waited before its first audio reached aplay, in ms, or
+    None if nothing played. That wait is the silence heard before this
+    utterance. For the first sentence of a turn it is roughly the time to first
+    byte; for a later one it is only whatever of its synthesis was unfinished
+    when the sentence before it ended, which is the number fetching ahead
+    exists to drive toward zero.
+
+    aplay is opened on the first chunk rather than up front, so a request that
+    fails outright never starts the audio device, the same as before synthesis
+    and playback were split."""
+    if synthesis is None:
+        return None
+
+    with speak_lock:
+        started = time.monotonic()
+        aplay, waited_ms = None, None
+        try:
+            for chunk in synthesis.chunks():
+                if aplay is None:
+                    ttfb_ms = (time.monotonic() - synthesis.requested_at) * 1000.0
+                    aplay = _open_aplay()
+                # Flush after every write. Without it Python buffers up to 64KB
+                # and adds about 1.5s of phantom latency; see VOICE_OUTPUT.md.
+                aplay.stdin.write(chunk)
+                aplay.stdin.flush()
+                if waited_ms is None:
+                    waited_ms = (time.monotonic() - started) * 1000.0
+                    timing.note_tts(ttfb_ms,
+                                    (time.monotonic() - synthesis.requested_at) * 1000.0)
+        except Exception as e:
+            print(f"TTS playback error: {e}", flush=True)
+        finally:
+            if aplay is not None:
+                aplay.stdin.close()
+                # Barge in. The watcher thread reads the microphone while aplay
+                # drains; if it hears the wake word it sets the event, and
+                # killing aplay here is what actually cuts her off, because the
+                # ALSA buffer holds roughly 185ms of audio already written.
+                if interrupt is not None and interrupt.is_set():
+                    aplay.kill()
+                aplay.wait()
+
+    if synthesis.error is not None:
+        print(f"TTS error (ElevenLabs): {synthesis.error}", flush=True)
+    return waited_ms
+
+
 def speak(text, voice_settings=None, model=None, seed=None,
           interrupt=None):
     """Synthesize and play one utterance.
@@ -123,73 +258,4 @@ def speak(text, voice_settings=None, model=None, seed=None,
     wrong the next time. Production leaves it None, because varied delivery is
     desirable in conversation. Comparisons must set it, or they are measuring
     luck rather than the thing being compared."""
-    with speak_lock:
-        clean = _BRACKET_CUE.sub('', text).strip()
-        clean = _MILES_ACRONYM.sub('Miles', clean)
-        if not clean:
-            return
-        if not clean.endswith(('?', '!', '.')):
-            clean += '.'
-
-        # Last thing before the API call, so nothing downstream can undo it and
-        # nothing upstream ever sees an alias. What gets returned, saved to
-        # history, and shown in the app is the real spelling.
-        clean = normalize_pronunciation(clean)
-
-        settings  = voice_settings or TTS_VOICE_SETTINGS
-        tts_model = model or DEFAULT_TTS_MODEL
-
-        requested_at = time.monotonic()
-        try:
-            audio_iter = _elevenlabs.text_to_speech.stream(
-                voice_id=TTS_VOICE_ID,
-                text=clean,
-                model_id=tts_model,
-                voice_settings=settings,
-                output_format=TTS_OUTPUT_FORMAT,
-                **({"seed": seed} if seed is not None else {}),
-            )
-        except Exception as e:
-            print(f"TTS error (ElevenLabs): {e}", flush=True)
-            return
-
-        aplay = subprocess.Popen(
-            [
-                "aplay", "-D", SPEAKER_DEVICE,
-                "-f", "S16_LE", "-r", "22050", "-c", "1",
-                "--buffer-size=8192", "--period-size=1024",
-            ],
-            stdin=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-
-        # Split so network time and local write time are separable: ttfb is
-        # ElevenLabs, the gap between the two is ours.
-        first_chunk_done = False
-        try:
-            for chunk in audio_iter:
-                if chunk:
-                    if not first_chunk_done:
-                        ttfb_ms = (time.monotonic() - requested_at) * 1000.0
-                        aplay.stdin.write(chunk)
-                        aplay.stdin.flush()
-                        timing.note_tts(
-                            ttfb_ms,
-                            (time.monotonic() - requested_at) * 1000.0,
-                        )
-                        first_chunk_done = True
-                        continue
-                    aplay.stdin.write(chunk)
-                    aplay.stdin.flush()
-        except Exception as e:
-            print(f"TTS playback error: {e}", flush=True)
-        finally:
-            aplay.stdin.close()
-
-            # Barge in. The watcher thread reads the microphone while aplay
-            # drains; if it hears the wake word it sets the event, and killing
-            # aplay here is what actually cuts her off, because the ALSA buffer
-            # holds roughly 185ms of audio that has already been written.
-            if interrupt is not None and interrupt.is_set():
-                aplay.kill()
-            aplay.wait()
+    play(start_synthesis(text, voice_settings, model, seed), interrupt)

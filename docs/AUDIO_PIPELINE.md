@@ -55,7 +55,9 @@ the table can stay a plain reference:
   never fired. See the decision log in [SESSION_START.md](SESSION_START.md).
 - **`VAD_PREROLL_MS`** retains frames before onset so soft leading consonants
   survive.
-- **`MAX_RECORD`** was raised from 15.0, which truncated 15 percent of follow ups.
+- **`MAX_RECORD`** was raised from 15.0, which truncated 15 percent of follow ups,
+  and again to 60 on Sep 13 2026 once long recordings stopped depending on the
+  twenty second window. See [long recordings](#long-recordings).
 - **`WHISPER_AUDIO_CTX`** caps the context at 20 seconds. The default of 1500
   padded every clip to 30s and cost a flat ~2000ms regardless of input length.
   Do not lower it without rerunning the validation: 750 and 900 both corrupted
@@ -301,6 +303,41 @@ python3 scripts/label_wake.py --status
 python3 scripts/label_wake.py hits              # every false wake, loudest first
 python3 scripts/label_wake.py misses --min 0.2  # 29 clips, not 400
 ```
+
+## Long recordings
+
+Sep 13 2026. Scheduling seven tutoring lessons by voice hit the 18 second cap
+twice in one conversation, and the third turn ended mid thought. The cap sat under
+Whisper's twenty second window because audio past it was never transcribed.
+
+Real use says long recordings are rare: of 83 recordings since Sep 5, half were
+under 2.9s, nine in ten under 8.2s, and 3 reached 18s. So the fix had to leave
+normal commands exactly as fast.
+
+**Two fixed windows, chosen by the clip's own length.** Up to 15 seconds, the fast
+window. Past it, Whisper's full thirty seconds. Past 28 seconds, the recording is
+cut at the quietest moment near each limit and transcribed in pieces. Not a window
+scaled to each clip, which is the approach rejected above.
+
+**Why 15 and not 19.** The fast window was only ever validated on clips of 3, 6, 10
+and 14 seconds. Run on his five longest archived recordings, all 18 seconds:
+
+| Clip | Fast | Full | Transcript |
+|---|---|---|---|
+| Sep 13, the scheduling request | 1299ms | 1936ms | same words; "S.A.P" against "SA-P" |
+| Aug 16 | 945ms | 1438ms | identical |
+| Aug 16, background talk | 1213ms | 1809ms | fast added a clause, full added a word |
+| Aug 12, background talk | 1300ms | 1994ms | **fast dropped trailing words**: "I'll put it" against "I'll put it on the floor" |
+| Aug 16 | 956ms | 1546ms | identical |
+
+The full window cost 490 to 690ms on these clips. None has ground truth, and two
+are not commands, so this does not prove the fast window wrong at 18 seconds. It
+does show the twenty second limit is not a safe edge, so the line sits just above
+what was validated. Speculative transcription is skipped for a recording that
+will be cut into pieces, because one run cannot stand in for several.
+
+**Not fixed by this:** `SILENCE_LIMIT` still ends a recording on a pause, so a long
+explanation with a long thinking pause ends at the pause.
 
 ## Speculative transcription
 

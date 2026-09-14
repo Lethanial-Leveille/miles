@@ -200,3 +200,13 @@ def test_private_tools_are_hokage_only(name):
     spec = registry.get(name)
     assert not permits(spec, "jonin")
     assert permits(spec, "hokage")
+
+
+
+def test_cancelling_a_reminder_that_does_not_exist_is_a_failure(monkeypatch):
+    """Sep 13 2026: "cancel all of the tutoring sessions" matched no reminders
+    three times over, and Nova said "Done."."""
+    monkeypatch.setattr(actions, "cancel_reminder",
+                        lambda c: f"No active reminders found matching '{c}'.")
+    with pytest.raises(LookupError):
+        registry.call("cancel_reminder", {"content": "Isaiah lesson"})

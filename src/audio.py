@@ -72,7 +72,7 @@ import speaker_encoder
 
 from config import (
     CHUNK, CHANNELS, RATE,
-    WHISPER_MODEL, WHISPER_CLI, WHISPER_AUDIO_CTX, WHISPER_INITIAL_PROMPT,
+    WHISPER_MODEL, WHISPER_CLI, WHISPER_SEGMENT_SECONDS, WHISPER_INITIAL_PROMPT,
     TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
@@ -85,6 +85,7 @@ from config import (
     CAPTURE_WAKE_MISSES, WAKE_MISS_DIR, WAKE_MISS_MAX_FILES,
     CAPTURE_WAKE_HITS, WAKE_HIT_DIR, WAKE_HIT_MAX_FILES,
 )
+from audio_segments import audio_ctx_for, segment_bounds
 from database import keep_voiceprint_sample, log_verification
 import timing
 
@@ -421,16 +422,24 @@ def archive_recording(wav_path, turn_type):
         return None
 
 
+def _wav_seconds(path):
+    with wave.open(path, "rb") as w:
+        return w.getnframes() / w.getframerate()
+
+
 def _whisper_cmd(wav_path, threads=None):
     """The one place the Whisper command line is built.
 
     Both the speculative run and the full one have to pass identical decoding
     settings or the speculation is transcribing under different rules than the
     fallback it stands in for, and the two would disagree for reasons nobody
-    would think to look for. They differ only in thread count."""
+    would think to look for. They differ only in thread count.
+
+    The audio window follows the clip's own length, read from the file rather
+    than passed in, so every caller gets it right without knowing it exists."""
     cmd = [WHISPER_CLI, "-m", WHISPER_MODEL, "-f", wav_path,
            "-bs", "1", "-bo", "1", "--no-prints", "--no-timestamps",
-           "-ac", str(WHISPER_AUDIO_CTX)]
+           "-ac", str(audio_ctx_for(_wav_seconds(wav_path)))]
     if threads is not None:
         cmd += ["-t", str(threads)]
     if WHISPER_INITIAL_PROMPT:
@@ -503,6 +512,10 @@ def maybe_speculate(frames, silent_chunks, spec_chunks, past_minimum):
     if not (SPECULATIVE_TRANSCRIBE and past_minimum
             and _pending_speculation is None and silent_chunks == spec_chunks):
         return
+    # A recording that will be transcribed in pieces cannot be stood in for by
+    # one speculative run, so none is started for it.
+    if len(frames) * 0.03 > WHISPER_SEGMENT_SECONDS:
+        return
     try:
         _pending_speculation = _Speculation(list(frames))
     except Exception as exc:
@@ -541,9 +554,38 @@ def transcribe(wav_path):
         elif speculation is not None:
             speculation.cancel()
 
+        if _wav_seconds(wav_path) > WHISPER_SEGMENT_SECONDS:
+            return _transcribe_in_pieces(wav_path)
+
         result = subprocess.run(_whisper_cmd(wav_path),
                                 capture_output=True, text=True)
     return result.stdout.strip()
+
+
+def _transcribe_in_pieces(wav_path):
+    """Past one Whisper window, transcribe piece by piece and join the text.
+
+    Pieces are cut by segment_bounds at the quietest moment near each limit.
+    Each is written beside the original, transcribed with the same settings as
+    any other clip, and removed."""
+    with wave.open(wav_path, "rb") as w:
+        params = w.getparams()
+        samples = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+
+    texts = []
+    for i, (start, end) in enumerate(segment_bounds(samples, params.framerate,
+                                                    WHISPER_SEGMENT_SECONDS)):
+        piece = f"{wav_path}.part{i}.wav"
+        with wave.open(piece, "wb") as out:
+            out.setparams(params)
+            out.writeframes(samples[start:end].tobytes())
+        try:
+            result = subprocess.run(_whisper_cmd(piece), capture_output=True, text=True)
+            texts.append(result.stdout.strip())
+        finally:
+            os.remove(piece)
+    print(f"(transcribed in {len(texts)} pieces)", flush=True)
+    return " ".join(t for t in texts if t)
 
 
 _MIXER_VALUE = re.compile(r'Capture (\d+) \[(\d+)%\](?: \[([-\d.]+)dB\])?')

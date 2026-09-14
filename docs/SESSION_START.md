@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 13 2026 (19) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (604) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 13 2026 (621) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -863,3 +863,35 @@ would need editing every time he subscribes to something. Google's own
 reads he follows. So a new club calendar lands on the right side untouched.
 Followed events are kept, in their own section, because he subscribes to them
 precisely so there is something to go to when he wants it.
+
+### Several changes on one turn are one batch (Sep 13 2026) (DONE)
+
+**Rejected:** refusing a second proposal on the same turn. It closes the defect,
+but it forces a separate yes per lesson, which is what he found unusable when he
+wanted seven lessons on the calendar to move around afterwards.
+
+**Chosen:** proposals on the same turn accumulate, the question covers all of
+them, and one answer confirms or cancels the lot. The guarantee that confirm runs
+only what was asked now holds for the batch as a whole.
+
+**Known limit:** each tool result carries the growing question, and the model is
+told to ask the one from its last result. If it asked an earlier, partial one,
+the batch would still contain more than he heard. A single tool that takes every
+event at once would close that, and belongs with the scheduling rework.
+
+### Long recordings get Whisper's full window (Sep 13 2026) (DONE)
+
+`MAX_RECORD` 18 to 60, with the audio window chosen by clip length: fast up to 15
+seconds, Whisper's full window beyond, pieces past 28. The measurements are in
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#long-recordings).
+
+**Rejected:** raising the window for every clip, which would slow the nine in ten
+recordings under 8.2 seconds to help three in eighty three; and scaling the window
+to each clip's length, already rejected in August for corrupting transcripts.
+
+**The threshold is 15, not 19**, because the fast window was validated only up to
+14 seconds, and at 18 it dropped trailing words from a real recording.
+
+**The pieces are cut in code at the quietest point** near each boundary, tested on
+synthetic audio. Not yet tested against a real recording over 28 seconds, because
+none exists yet; the first one he makes is that test.

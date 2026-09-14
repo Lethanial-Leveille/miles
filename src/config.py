@@ -181,15 +181,21 @@ VAD_ONSET_FRAMES = 2
 # hidden it goes back to costing full price.
 SILENCE_LIMIT = 1.2
 
-# Hard ceiling on one recording. 15% of recordings were hitting the old 15s
-# limit, every one of them a follow up, and every one truncated mid sentence:
-# thinking out loud in conversation runs longer than issuing a command.
+# Hard ceiling on one recording.
 #
-# Capped below the whisper audio context window (WHISPER_AUDIO_CTX of 1000
-# frames is 20 seconds), because audio past that window is not transcribed at
-# all. Raising this past 18 means raising that too, which costs transcription
-# time, so the two move together or not at all.
-MAX_RECORD = 18.0
+# 60 since Sep 13 2026. At 18 it sat just under Whisper's twenty second window,
+# because audio past that window was never transcribed. Scheduling seven
+# tutoring lessons by voice hit that cap twice in one conversation, and the
+# third turn was cut off mid thought. Long recordings now get Whisper's full
+# window and are split past WHISPER_SEGMENT_SECONDS, so this no longer has to
+# sit under the window at all. It still bounds a recording held open by noise.
+#
+# Normal commands never come close: since Sep 5 2026, half of 83 recordings
+# were under 2.9s and nine in ten under 8.2s. Only 3 ever reached 18.
+#
+# SILENCE_LIMIT still ends a recording on a pause, so a long explanation with a
+# long thinking pause ends at the pause, not here.
+MAX_RECORD = 60.0
 
 # Discarded from the mic after Nova finishes speaking, on top of draining
 # whatever accumulated during playback.
@@ -357,6 +363,17 @@ WHISPER_INITIAL_PROMPT = None
 # corrupted a word on reference speech ("ask not" became "asked not"), and 900
 # additionally sent one noisy clip into a decode loop that took 8.5 seconds.
 WHISPER_AUDIO_CTX = 1000
+
+# Whisper's own full window, thirty seconds, used only for recordings longer than
+# the fast window was validated for, fifteen seconds. Two fixed settings chosen by clip length, not a window
+# scaled to each clip, which was tested in August and rejected for corrupting
+# transcripts at every length. See audio_segments.audio_ctx_for.
+WHISPER_AUDIO_CTX_LONG = 1500
+
+# The longest piece one Whisper run is given. Past this a recording is cut at its
+# quietest moment near each boundary and transcribed in pieces. Under the thirty
+# second window with room to spare.
+WHISPER_SEGMENT_SECONDS = 28.0
 TEMP_WAV        = os.path.expanduser("~/miles/build/command.wav")
 
 # ── Wake miss capture ──

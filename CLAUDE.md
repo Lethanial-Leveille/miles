@@ -81,6 +81,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── actions.py             # Weather, timer, reminder handlers, reminder poller
 │   ├── alerts.py              # Pending alert queue and fold into the next turn
 │   ├── audio.py               # Mic, wake word, VAD, Whisper, Resemblyzer
+│   ├── audio_segments.py      # Whisper window by clip length; cutting long recordings
 │   ├── speaker_encoder.py     # Encoder abstraction behind verify_voice
 │   ├── embeddings.py          # Sentence embeddings for retrieval and intent
 │   ├── tts.py                 # ElevenLabs synthesis, speaker resolution, aplay
@@ -101,7 +102,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST + WebSocket
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (604 passing, 6 skipped, Sep 13 2026)
+│   └── tests/                 # pytest suite (621 passing, 6 skipped, Sep 13 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -182,7 +183,7 @@ of the value itself.
 - `VAD_MODE = 2` (webrtcvad)
 - `VAD_PREROLL_MS = 300`, `VAD_ONSET_FRAMES = 2`
 - `SILENCE_LIMIT = 1.2`
-- `MAX_RECORD = 18.0`
+- `MAX_RECORD = 60.0`
 - `TTS_FLUSH_MARGIN_MS = 250`
 - `EXPECTED_MIC_GAIN = 23`
 - `MIC_NAME_HINT = "Seiren"`. `MIC_MIXER_CARD` is **derived** from it at import
@@ -197,7 +198,11 @@ of the value itself.
   whisper.cpp upgrade)
 - `WHISPER_INITIAL_PROMPT = None` (a decision, not an omission)
 - `WHISPER_AUDIO_CTX = 1000` (20 seconds. Do not lower without rerunning the
-  validation; 750 and 900 both corrupted reference speech)
+  validation; 750 and 900 both corrupted reference speech). Used up to 15
+  seconds of audio, the length it was validated for (`audio_segments.py`)
+- `WHISPER_AUDIO_CTX_LONG = 1500` (Whisper's full 30 seconds, for longer clips)
+- `WHISPER_SEGMENT_SECONDS = 28.0` (longer recordings are cut at a pause and
+  transcribed in pieces)
 
 ### Wake capture — why: [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#wake-capture)
 - `CAPTURE_WAKE_MISSES = True`, `WAKE_MISS_DIR = ~/miles/data/wake_misses`

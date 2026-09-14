@@ -486,7 +486,13 @@ def set_reminder_tool(content, due=None):
     returns_to_model=False,
 )
 def cancel_reminder_tool(content):
-    return cancel_reminder(content)
+    result = cancel_reminder(content)
+    # Nothing matched is a failure, not a quiet success. Returned as a string it
+    # reached the "Done." fallback; raised, it becomes an is_error result, which
+    # always goes back to Nova so she can say what she could not find.
+    if result.startswith("No active reminders"):
+        raise LookupError(result)
+    return result
 
 
 @tool(

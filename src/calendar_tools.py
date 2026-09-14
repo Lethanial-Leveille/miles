@@ -149,7 +149,9 @@ def _ask(question):
     through, recorded Sep 13 2026."""
     return (f"Nothing has changed yet. Ask Lethanial exactly this, with nothing "
             f"added before or after: {question} Then end your turn. When he "
-            f"answers, call confirm_pending_action.")
+            f"answers, call confirm_pending_action. If you proposed several changes "
+            f"this turn, this question covers all of them; ask only the one from "
+            f"your last result.")
 
 
 def _event_start(event):
@@ -499,8 +501,8 @@ def create_calendar_event(summary, start_time, duration_minutes, now=None):
 
     end = start + datetime.timedelta(minutes=duration_minutes)
     question = f"Add {summary} {_on_day(start, now)} at {_clock(start)} for {duration_minutes} minutes?"
-    pending_action.propose(question.rstrip("?"), lambda: _insert_event(summary, start, end))
-    return _ask(question)
+    return _ask(pending_action.propose(question.rstrip("?"),
+                                       lambda: _insert_event(summary, start, end)))
 
 
 def _insert_event(summary, start, end):
@@ -549,9 +551,8 @@ def delete_calendar_event(title, day, now=None):
         question = f"Delete the all day event {name} {_on_day(start, now)}{_once(event)}?"
     else:
         question = f"Delete {name} {_on_day(start, now)} at {_clock(start)}{_once(event)}?"
-    pending_action.propose(question.rstrip("?"),
-                           lambda: _delete_event(calendar_id, event["id"], name))
-    return _ask(question)
+    return _ask(pending_action.propose(question.rstrip("?"),
+                                       lambda: _delete_event(calendar_id, event["id"], name)))
 
 
 def _once(event):
@@ -641,9 +642,8 @@ def update_calendar_event(title, day, new_title=None, new_start_time=None,
 
     sentence = ", and ".join(clauses) + _once(event)
     question = sentence[0].upper() + sentence[1:] + "?"
-    pending_action.propose(question.rstrip("?"),
-                           lambda: _patch_event(calendar_id, event["id"], body, new_title or name))
-    return _ask(question)
+    return _ask(pending_action.propose(question.rstrip("?"),
+                                       lambda: _patch_event(calendar_id, event["id"], body, new_title or name)))
 
 
 def _delete_event(calendar_id, event_id, name):

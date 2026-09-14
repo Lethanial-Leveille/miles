@@ -106,13 +106,19 @@ def test_ordering_is_by_grapheme_length_not_insertion(db):
 
 def test_the_normalizer_is_only_called_from_the_speech_path():
     """The guarantee is structural, not conditional: normalization lives inside
-    speak(), which only the voice path calls. Nothing on the text path can
-    reach it, so there is no flag to get wrong."""
+    tts._prepare, reached only through start_synthesis, which only the speech
+    path calls. Nothing on the text path can reach it, so there is no flag to
+    get wrong.
+
+    The chain is checked link by link since Sep 13 2026, when synthesis was
+    split from playback and normalization moved out of speak() itself."""
     import inspect
     import brain
     import server
 
-    assert "normalize_pronunciation" in inspect.getsource(tts.speak)
+    assert "normalize_pronunciation" in inspect.getsource(tts._prepare)
+    assert "_prepare" in inspect.getsource(tts.start_synthesis)
+    assert "start_synthesis" in inspect.getsource(tts.speak)
     for module in (brain, server):
         assert "normalize_pronunciation" not in inspect.getsource(module)
 
