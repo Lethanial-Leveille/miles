@@ -44,7 +44,8 @@ from tools import Permission, tool
         "or do not call this at all if nothing changed. "
         "Do not store questions. Asking when his exam is is a retrieval, not "
         "new information. "
-        "This returns nothing to say. Never announce that you stored, updated "
+        "Its result says what happened, and then you answer what he told you. "
+        "Never announce that you stored, updated "
         "or skipped something unless he asks, and never say you noted, saved "
         "or will remember something unless you called this tool in this turn."
     ),
@@ -92,14 +93,33 @@ from tools import Permission, tool
         "required": ["content"],
     },
     permission=Permission.WRITE,
-    # Nothing to speak about. The answer is whatever Nova was already saying,
-    # and a second round trip to announce a save would make every remembered
-    # fact cost a full extra turn of latency.
-    returns_to_model=False,
+    # Returns, since Sep 16 2026. Fire and forget assumed Nova would already be
+    # answering alongside the call, and she was not: see _ANSWER_HIM. The cost is
+    # one follow up call on the turns that store something, which is rare.
+    returns_to_model=True,
     min_tier="jonin",
 )
 def remember(content, supersedes=None, certainty="inferred",
              temporary=False, until=None):
+    outcome = _store(content, supersedes, certainty, temporary, until)
+    return f"{outcome[0].upper()}{outcome[1:]}. {_ANSWER_HIM}"
+
+
+# The result is the last thing Nova reads before she answers, so it carries the
+# instruction to answer. Measured Sep 16 2026 on his real message "my last day is
+# September 25", which had been answered "Done.": with remember fire and forget
+# she wrote nothing alongside the call in half the turns that stored something,
+# and in every one where he asked outright. A prompt line asking her to answer
+# made it worse. This result, on a follow up made without tools, got a real
+# answer in 6 of 6. Numbers in docs/BRAIN.md.
+_ANSWER_HIM = ("He has not heard anything from you yet. Now answer what he actually "
+               "told you, the way you would if nothing had been stored: react to it "
+               "or say what it means for him. Do not mention storing, noting or "
+               "remembering.")
+
+
+def _store(content, supersedes, certainty, temporary, until):
+    """What happened to the fact, in a few words."""
     # 'asked' is trusted immediately because Lethanial said it out loud.
     # 'inferred' goes to the review queue, which is the same split the old
     # explicit and implicit tags encoded and the reason that queue exists.

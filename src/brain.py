@@ -657,12 +657,16 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # MAX_TOOL_ROUNDS bounds it, and the last round drops `tools` so the
             # model has nothing left to call and must answer. That is a hard
             # floor on the failure rather than a hope that it converges.
+            # A turn that only stored something has nothing left to look up.
+            # Offered tools, the follow up still ended in silence in 1 of 6
+            # measured turns; without them Nova answered in 6 of 6.
+            only_stored  = called_tools <= {"remember"}
             final_text   = ""
             second_start = time.monotonic()
             second_first = None
             for round_index in range(MAX_TOOL_ROUNDS):
                 last_round = round_index == MAX_TOOL_ROUNDS - 1
-                kwargs = {} if last_round else {"tools": registry.api_schemas()}
+                kwargs = {} if last_round or only_stored else {"tools": registry.api_schemas()}
 
                 round_text = ""
                 async with claude.messages.stream(

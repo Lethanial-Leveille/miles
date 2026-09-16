@@ -47,6 +47,63 @@ _HAS_TIME = re.compile(
     re.IGNORECASE)
 
 
+# dateparser reads a bare number as a month. Measured Sep 16 2026 against the
+# pinned version: "wednesday at 4" parsed to April 15 2027 and "5" to May, so a
+# lookup searched a day in 2027 and found nothing, and a move would have proposed
+# May 2027 at the event's old time. When he is talking about his day, a number
+# after "at", or a phrase that is nothing but a number, is a clock time. Written
+# out as one before dateparser sees it.
+_BARE_HOUR_AFTER_AT = re.compile(r"\bat\s+(\d{1,2})(?![\d:]|\s*(?:am|pm))", re.I)
+_BARE_HOUR_ALONE = re.compile(r"^\s*(\d{1,2})\s*$")
+
+# Anything that says which half of the day is meant. am and pm are matched after
+# a digit as well as after a space, since "4pm" has no word boundary before "pm".
+_MERIDIEM = re.compile(r"(?<![a-z])(am|pm|a\.m\.?|p\.m\.?)\b|"
+                       r"\b(noon|midnight|morning|afternoon|evening|tonight|night)\b", re.I)
+
+# A clock face, once bare hours are written out. "in 30 minutes" pins a time
+# too, but it has no half of the day to get wrong.
+_CLOCK = re.compile(r"\b\d{1,2}:\d\d\b")
+
+
+def _as_clock_time(phrase):
+    """Bare hours written as clock times, so dateparser cannot read one as a month."""
+    phrase = _BARE_HOUR_ALONE.sub(lambda m: f"{m.group(1)}:00", phrase)
+    return _BARE_HOUR_AFTER_AT.sub(lambda m: f"at {m.group(1)}:00", phrase)
+
+
+def _bare_clock(phrase):
+    """Whether the phrase pins a time but never says which half of the day."""
+    return bool(_CLOCK.search(_as_clock_time(phrase))) and not _MERIDIEM.search(phrase)
+
+
+def _other_reading(when):
+    """The same clock face twelve hours away, or None when there is only one reading."""
+    return when + datetime.timedelta(hours=12) if 1 <= when.hour <= 11 else None
+
+
+def _nearest_reading(when, reference):
+    """Which reading of a bare time he meant, judged by the time he is moving away
+    from: a 4 PM lesson moved to "3" is 3 PM, and a 9 AM class moved to "8" is 8 AM.
+
+    A guess rather than knowledge, which is why it is allowed: the change is
+    staged and read back word for word, so a wrong reading costs one sentence
+    instead of landing on the calendar."""
+    other = _other_reading(when)
+    if other is None:
+        return when
+    minutes = lambda dt: dt.hour * 60 + dt.minute
+    target = minutes(reference)
+    return min((when, other), key=lambda candidate: abs(minutes(candidate) - target))
+
+
+def _waking_reading(when):
+    """A new event at a bare hour. Nothing to compare against, so 1 to 6 is the
+    afternoon and 7 to 12 is the morning, which is how he says his own day. An
+    addition is read back and undone with one sentence."""
+    return when + datetime.timedelta(hours=12) if 1 <= when.hour <= 6 else when
+
+
 # Words that make a new time relative to today rather than to the event being
 # moved. Without one, "4pm" means 4pm on the event's own day.
 _RELATIVE_TO_NOW = re.compile(r"\b(today|tonight|tomorrow|now|next|this|in \d+)\b",
@@ -70,10 +127,13 @@ def parse_when(phrase, now=None):
     Naive local because every phrase he says is local; conversion to UTC
     happens once, at the API boundary."""
     now = now or datetime.datetime.now()
+    # The phrase he said is kept for the error message; dateparser gets the one
+    # with bare hours written out.
+    said, phrase = phrase, _as_clock_time(phrase)
     parsed = dateparser.parse(phrase, settings={"PREFER_DATES_FROM": "future",
                                                 "RELATIVE_BASE": now})
     if parsed is None:
-        raise WhenError(f"could not read {phrase!r} as a time; use a day and a "
+        raise WhenError(f"could not read {said!r} as a time; use a day and a "
                         f"clock time, like 'monday at 3pm'")
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone().replace(tzinfo=None)
@@ -410,13 +470,20 @@ def _label(event):
     return label
 
 
-def _find_miles_event(service, title, day, now):
+def _find_miles_event(service, title, day, now, nearby=False):
     """The one MILES calendar event matching a title on a day.
 
     Searched by title and day rather than by event id, because only what Nova
     says reaches the conversation history. The ids in a listing are gone by the
     next turn, so a tool that took an id would be asking the model to invent
-    one. A time in the day phrase narrows two events with the same title."""
+    one. A time in the day phrase narrows two events with the same title.
+
+    nearby widens the search to the week around that day when nothing matches on
+    it. Sep 15 2026: his Andrew lesson was on Thursday, he said Wednesday, and
+    the dead end became "Andrew's lessons aren't on your MILES calendar yet",
+    which sent the conversation looking for a calendar rather than a day. Only
+    changes pass it. A delete stays on the day he named, because reaching a day
+    he did not say to destroy something is a different risk from moving it."""
     when, has_time = parse_when(day, now)
     calendar_id = _miles_calendar_id(service)
     if calendar_id is None:
@@ -430,13 +497,28 @@ def _find_miles_event(service, title, day, now):
     wanted = set(_words(title))
     matches = [e for e in items if wanted and wanted <= set(_words(e.get("summary", "")))]
     if has_time:
+        # Either reading, when he never said which: "monday at 4" is as likely to
+        # mean the 4 PM lesson as a 4 AM one he does not have.
+        times = {when.time()}
+        other = _other_reading(when) if _bare_clock(day) else None
+        if other is not None:
+            times.add(other.time())
         matches = [e for e in matches
-                   if not _event_bounds(e)[2] and _event_bounds(e)[0].time() == when.time()]
+                   if not _event_bounds(e)[2] and _event_bounds(e)[0].time() in times]
 
     if len(matches) == 1:
         return calendar_id, matches[0]
 
     day_name = when.strftime("%A %B %-d")
+    if not matches and nearby:
+        near = _matching_that_week(service, calendar_id, wanted, when)
+        if len(near) == 1:
+            return calendar_id, near[0]
+        if near:
+            options = "; ".join(_label(e) for e in near)
+            raise EventLookupError(
+                f"no event matching {title!r} on {day_name}, and {len(near)} that "
+                f"week: {options}. Ask him which one, then call again with its day.")
     if not matches:
         there = "; ".join(_label(e) for e in items) or "nothing"
         raise EventLookupError(
@@ -446,6 +528,17 @@ def _find_miles_event(service, title, day, now):
     raise EventLookupError(
         f"{len(matches)} events match {title!r} on {day_name}: {options}. Ask him "
         f"which one, then call again with its time, like 'monday at 3pm'.")
+
+
+def _matching_that_week(service, calendar_id, wanted, when):
+    """Events matching the title within a week either side of the day he named."""
+    items = service.events().list(
+        calendarId=calendar_id,
+        timeMin=_utc(_start_of_day(when - datetime.timedelta(days=7))),
+        timeMax=_utc(_end_of_day(when + datetime.timedelta(days=7))),
+        singleEvents=True, orderBy="startTime",
+    ).execute().get("items", [])
+    return [e for e in items if wanted <= set(_words(e.get("summary", "")))]
 
 
 def _resolve_new_start(phrase, old_start, now):
@@ -459,6 +552,8 @@ def _resolve_new_start(phrase, old_start, now):
     when, has_time = parse_when(phrase, base)
     if not has_time:
         when = datetime.datetime.combine(when.date(), old_start.time())
+    elif _bare_clock(phrase):
+        when = _nearest_reading(when, old_start)
     return when
 
 
@@ -629,6 +724,8 @@ def create_calendar_event(summary, start_time, duration_minutes, now=None):
     start, has_time = parse_when(start_time, now)
     if not has_time:
         raise WhenError(f"{start_time!r} names a day but not a time; ask him what time")
+    if _bare_clock(start_time):
+        start = _waking_reading(start)
     if start < now:
         raise WhenError(f"{_spoken(start)} has already passed")
     if not isinstance(duration_minutes, int) or not 0 < duration_minutes <= 24 * 60:
@@ -680,7 +777,9 @@ _FIND_SCHEMA = {
               "description": "Words from the event's title, as he said them."},
     "day": {"type": "string",
             "description": "The day the event is on, like 'monday'. Add its time, "
-                           "like 'monday at 3pm', to pick between two with the same title."},
+                           "like 'monday at 3pm', to pick between two with the same title. "
+                           "When changing an event, if it turns out not to be on that day, "
+                           "the one event with that title that week is used instead."},
 }
 
 
@@ -757,7 +856,7 @@ def update_calendar_event(title, day, new_title=None, new_start_time=None,
         raise WhenError("nothing to change; give a new title, start time, or duration")
     now = now or datetime.datetime.now()
     new_title = _title(new_title) if new_title else new_title
-    calendar_id, event = _find_miles_event(_service(), title, day, now)
+    calendar_id, event = _find_miles_event(_service(), title, day, now, nearby=True)
     start, end, all_day = _event_bounds(event)
     if all_day and (new_start_time or new_duration_minutes is not None):
         raise WhenError("that is an all day event; only its title can be changed")

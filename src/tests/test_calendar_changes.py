@@ -477,3 +477,121 @@ def test_only_the_latest_addition_is_undone(google):
 def test_nothing_to_undo_is_a_failure_she_explains(google):
     with pytest.raises(LookupError):
         cal.undo_last_addition()
+
+
+# ── bare clock times and the wrong day (Sep 15 2026) ──
+# One rescheduling conversation took eight turns and four failed calls. "3:30"
+# became 3:30 AM, "wednesday at 4" became April 15 2027 because dateparser reads
+# a bare number as a month, and a lesson on Thursday said to be on Wednesday was
+# reported as not on the calendar at all.
+
+def _instant(raw):
+    return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+
+class RangedService(FakeService):
+    """Honors timeMin and timeMax. The week wide search depends on the range, and
+    the plain fake returns every event for any range, which would let that
+    search pass without doing anything."""
+
+    def events(self):
+        service, inner = self, super().events()
+
+        class _Ranged:
+            def list(self, **query):
+                service.listed.append(query)
+                low, high = _instant(query["timeMin"]), _instant(query["timeMax"])
+                items = [e for e in service.events_by_calendar.get(query["calendarId"], [])
+                         if low <= _instant(e["start"]["dateTime"]) <= high]
+                return _Call({"items": items})
+
+            def __getattr__(self, name):
+                return getattr(inner, name)
+        return _Ranged()
+
+
+@pytest.fixture
+def lessons(monkeypatch):
+    """Monday has a gym session; the Andrew lesson is on Tuesday."""
+    service = RangedService({"miles_id": [
+        _timed("g1", "Gym", _at(15), _at(16)),
+        _timed("a1", "Andrew lesson", _at(16, day=15), _at(17, day=15)),
+    ]})
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    return service
+
+
+def test_a_bare_hour_is_a_clock_time_not_a_month():
+    when, has_time = cal.parse_when("wednesday at 4", NOW)
+    assert (when.date(), has_time) == (datetime.date(2026, 9, 16), True)
+    when, _ = cal.parse_when("5", NOW)
+    assert (when.year, when.month) == (2026, 9)
+
+
+def test_saying_am_or_pm_is_never_second_guessed():
+    for phrase in ("4pm", "at 9am", "9 AM", "tomorrow morning at 8", "noon"):
+        assert not cal._bare_clock(phrase), phrase
+    assert not cal._bare_clock("in 30 minutes"), "a relative time has no half of the day"
+    assert cal._bare_clock("wednesday at 4") and cal._bare_clock("3:30")
+
+
+def test_a_bare_time_stays_in_the_same_half_of_the_day(google):
+    reply = cal.update_calendar_event("gym", "monday at 3pm", new_start_time="2:30", now=NOW)
+    assert "Move Gym tomorrow from 3 PM to 2:30 PM?" in reply
+
+
+def test_a_morning_event_moved_to_a_bare_time_stays_in_the_morning(google):
+    reply = cal.update_calendar_event("leetcode", "monday", new_start_time="9", now=NOW)
+    assert "Move LeetCode session tomorrow from 10 AM to 9 AM?" in reply
+
+
+def test_an_explicit_am_on_an_afternoon_event_is_kept(google):
+    reply = cal.update_calendar_event("gym", "monday at 3pm", new_start_time="11am", now=NOW)
+    assert "from 3 PM to 11 AM?" in reply
+
+
+def test_a_bare_time_in_the_day_finds_the_afternoon_event(google):
+    pa.begin_turn()
+    cal.delete_calendar_event("gym", "monday at 6", now=NOW)
+    _confirm()
+    assert google.deleted == [("miles_id", "e3")]
+
+
+def test_a_change_finds_the_event_on_the_day_it_is_really_on(lessons):
+    pa.begin_turn()
+    reply = cal.update_calendar_event("andrew", "monday", new_start_time="4:30", now=NOW)
+    assert "Andrew lesson" in reply and "Tuesday" in reply and "to 4:30 PM" in reply
+    assert _confirm() == "Updated Andrew lesson."
+    _, eid, body = lessons.patched[0]
+    assert eid == "a1"
+    assert body["start"]["dateTime"] == _at(16, 30, day=15)
+
+
+def test_several_matches_that_week_ask_which(monkeypatch):
+    service = RangedService({"miles_id": [
+        _timed("a1", "Andrew lesson", _at(16, day=15), _at(17, day=15)),
+        _timed("a2", "Andrew lesson", _at(16, day=17), _at(17, day=17)),
+    ]})
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    with pytest.raises(cal.EventLookupError, match="2 that week"):
+        cal.update_calendar_event("andrew", "monday", new_start_time="5", now=NOW)
+
+
+def test_a_delete_never_reaches_another_day(lessons):
+    with pytest.raises(cal.EventLookupError, match="no event matching"):
+        cal.delete_calendar_event("andrew", "monday", now=NOW)
+    assert lessons.deleted == []
+
+
+def test_a_new_event_at_a_bare_hour_is_in_the_afternoon(google):
+    pa.begin_turn()
+    reply = cal.create_calendar_event("Lesson", "wednesday at 4", 60, now=NOW)
+    assert "from 4 PM to 5 PM" in reply
+    start = _instant(google.inserted[0][1]["start"]["dateTime"]).astimezone()
+    assert (start.day, start.hour) == (16, 16)
+
+
+def test_a_new_event_at_a_bare_morning_hour_stays_in_the_morning(google):
+    pa.begin_turn()
+    reply = cal.create_calendar_event("Study", "wednesday at 9", 60, now=NOW)
+    assert "from 9 AM to 10 AM" in reply

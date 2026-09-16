@@ -66,10 +66,12 @@ def turn(monkeypatch):
     def run(channel, *streams, on_text=None):
         remaining = list(streams)
         monkeypatch.setattr(brain, "claude", SimpleNamespace(
-            messages=SimpleNamespace(stream=lambda **kwargs: remaining.pop(0))))
+            messages=SimpleNamespace(
+                stream=lambda **kwargs: (run.calls.append(kwargs), remaining.pop(0))[1])))
         result = asyncio.run(brain.ask_nova_async("hi", device="app", channel=channel,
                                                   on_text=on_text))
         return result, played
+    run.calls = []
     return run
 
 
@@ -149,3 +151,22 @@ def test_a_voice_turn_streams_nothing_and_still_speaks(turn):
     result, played = turn("voice", _FakeStream(["Twelve credits."]))
     assert played == ["Twelve credits."]
     assert result.text == "Twelve credits."
+
+
+def test_a_turn_that_only_stores_something_still_answers(turn):
+    """Sep 15 2026: "my last day is September 25" was answered "Done.", because
+    Nova called remember and wrote nothing alongside it."""
+    stored = SimpleNamespace(type="tool_use", name="remember", id="toolu_1",
+                             input={"content": "Last day is September 25."})
+    result, played = turn("text",
+                          _FakeStream([], [stored]),
+                          _FakeStream(["So you have nine shifts left."]))
+    assert result.text == "So you have nine shifts left."
+    assert played == []
+    assert "tools" not in turn.calls[1], "nothing left to look up, so no tools"
+
+
+def test_a_follow_up_after_a_lookup_still_offers_tools(turn):
+    weather = SimpleNamespace(type="tool_use", name="get_weather", id="toolu_1", input={})
+    turn("text", _FakeStream([], [weather]), _FakeStream(["It's 75 degrees."]))
+    assert "tools" in turn.calls[1]

@@ -1185,3 +1185,13 @@ picked up a digit. Whether that matters depends on how `eleven_v3` reads "62",
 which has not been tested; the old claim that the synthesizer reads digits badly
 predates v3. Measure before building anything: render one reply containing digits
 and listen.
+
+### She still does not notice anything on her own
+
+Sep 16 2026: in real use since the Sep 13 memory change, `remember` was called
+once, for a fact he stated outright, and **no memory has ever been stored as
+inferred**, so the approval queue in the app has never had anything in it. The
+Sep 13 probes said she would store passing mentions two times in three; his
+real conversations say otherwise. Start by replaying a week of his real app and
+voice turns through the current prompt and counting how many she would store,
+before changing any wording.
