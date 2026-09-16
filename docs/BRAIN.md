@@ -574,6 +574,33 @@ an established memory.
 > above is from probe runs, not from his conversations; noticing on her own has
 > not happened yet. See BACKEND_TODO.md.
 
+### A separate pass notices what he mentions
+
+**Why Nova never noticed anything.** His real messages from Sep 13 to Sep 15 were
+replayed through the prompt as it stood, against a copy of the database rolled
+back so nothing was already known: twelve messages carrying something worth
+keeping, eight plain questions as controls, two samples each. Every message
+that also asked for something got the task done and nothing stored, including
+"Charley is spelled with an EY" and "Charley is a girl". Remembering was a side
+job, and it lost to the main one every time.
+
+| Measured Sep 16 2026 | Facts stored (of 24) | Controls stored (of 16) |
+|---|---|---|
+| The prompt as it was | 4, two of them the explicit Sept 25 request | 0 |
+| A prompt line: remember alongside the task | 7 | 0 |
+| A separate pass, Haiku, first wording | 16 | 3, all facts re-stored from earlier turns |
+| The same, told to store only from the latest message | 16 | 1 |
+| The same on Sonnet 5 | 12 | 2, both empty calls |
+
+`memory_pass.notice_later` runs after the reply on its own thread, with only the
+`remember` tool. What it stores is always pending, so a wrong guess costs him a
+discard in the app; the replay produced a few ("Isaiah is a tutor"). It never
+supersedes, because a supersede in this schema activates the replacement at
+once, skipping review. At most three facts per message, empty calls dropped, and
+the pending queue is part of what it is told is already known. Only hokage turns
+that were addressed to Nova are passed. Cost is about $0.002 a turn on Haiku
+with the system prompt cached.
+
 ### A turn that stores something still answers
 
 `remember` returns to the model, since Sep 16 2026, and its result ends with an

@@ -1317,3 +1317,14 @@ was, and always backward, which fails for "move Monday's to Friday".
 **The listing still starts at now.** That rule came from Nova reading past
 sessions as upcoming, and it stays. What changed is that what is over is named
 separately, and only for the last day, so it cannot become a history dump.
+
+### Noticing is its own call (Sep 16 2026) (DONE)
+
+Measured in [BRAIN.md](BRAIN.md#a-separate-pass-notices-what-he-mentions).
+**Rejected:** a stronger prompt line, which went from 4 to 7 of 24 and still
+missed every fact said alongside a task. **Rejected:** Sonnet 5 for the pass,
+which wrote cleaner memories and caught fewer, at twice the cost. **Chosen:**
+Haiku on a background thread, pending only, never superseding. A correction he
+mentions in passing therefore arrives as a new pending memory beside the old
+one, not as a replacement; the schema change that would let an inferred
+supersede wait for review is still in BACKEND_TODO.md.

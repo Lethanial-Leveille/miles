@@ -64,6 +64,8 @@ def turn(monkeypatch):
     monkeypatch.setattr(brain, "log_tool_call", lambda *a, **k: None)
     monkeypatch.setattr(brain.alerts, "take_for_fold", lambda: [])
     monkeypatch.setattr(registry, "call", lambda name, args: "ran")
+    # The background memory pass would call Claude; these tests are about the turn.
+    monkeypatch.setattr(brain.memory_pass, "notice_later", lambda *a, **k: None)
 
     def run(channel, *streams, on_text=None):
         remaining = list(streams)

@@ -17,6 +17,7 @@ from stream_router import StreamRouter
 from tools import registry, Permission, permits
 from database import log_tool_call
 import alerts
+import memory_pass
 
 # Imported for its side effect: registering the tools. Without it the registry
 # is empty, the capability block is blank, and Nova silently has no
@@ -827,6 +828,10 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
     if final_text:
         save_message("assistant", final_text, device=device)
+    # After the reply, on its own thread. Only for him: a guest's words are not
+    # facts about Lethanial, and speech not meant for Nova is not his to keep.
+    if tier == "hokage" and not ignored:
+        memory_pass.notice_later(user_text, datetime.now())
     return TurnResult(text=final_text, dismissed=dismissed, ignored=ignored)
 
 
