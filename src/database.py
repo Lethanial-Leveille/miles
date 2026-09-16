@@ -590,6 +590,16 @@ def _migration_023_normalize_mic_names(conn):
     """)
 
 
+def _migration_024_timers_are_rows(conn):
+    """Timers live in the reminders table, told apart by kind.
+
+    A timer used to be a thread sleeping in whichever process set it. One set
+    from the app slept inside miles-server, whose alert queue nothing drains, so
+    it never went off, and neither process could list or cancel the other's.
+    A reminder had the same bug until Sep 6 2026 and the same fix."""
+    conn.execute("ALTER TABLE reminders ADD COLUMN kind TEXT NOT NULL DEFAULT 'reminder'")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -614,6 +624,7 @@ MIGRATIONS = [
     (21, _migration_021_voiceprint_samples),
     (22, _migration_022_local_intent_timing),
     (23, _migration_023_normalize_mic_names),
+    (24, _migration_024_timers_are_rows),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -694,10 +705,13 @@ def save_memory(content, source="explicit", status="active", category=None,
         (content, category, source, datetime.now().isoformat(), references_date,
          int(volatile), confidence, status)
     )
+    # The id rather than True, so the app can show the row it just added. Still
+    # truthy, which is all the other callers check.
+    new_id = c.lastrowid
     conn.commit()
     conn.close()
     print(f"Memory saved ({source}, {status}): {content}", flush=True)
-    return True
+    return new_id
 
 
 def get_shareable_memories():
@@ -1231,6 +1245,14 @@ def memory_content(memory_id: int):
     return row[0] if row else None
 
 
+def memory_status(memory_id: int):
+    """The status of one memory, or None when the id does not exist."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT status FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 def supersede_memory(old_id: int, new_content: str, **fields):
     """Replace a memory with a corrected one, keeping the link between them.
 
@@ -1571,7 +1593,7 @@ def due_reminders(now_iso):
     conn = sqlite3.connect(DB_PATH)
     try:
         return conn.execute(
-            "SELECT id, content, due_at FROM reminders "
+            "SELECT id, content, due_at, kind FROM reminders "
             "WHERE completed = 0 AND due_at IS NOT NULL AND due_at <= ? "
             "ORDER BY due_at", (now_iso,)).fetchall()
     finally:
@@ -1589,6 +1611,31 @@ def complete_reminder(reminder_id):
         cursor = conn.execute(
             "UPDATE reminders SET completed = 1 WHERE id = ? AND completed = 0",
             (reminder_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def open_reminders():
+    """Every reminder not yet delivered, soonest first. Ones saved without a
+    time are notes rather than alarms, so they come last."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT id, content, due_at, created_at, kind FROM reminders "
+            "WHERE completed = 0 ORDER BY due_at IS NULL, due_at, id").fetchall()
+    finally:
+        conn.close()
+
+
+def cancel_reminder_by_id(reminder_id):
+    """Cancel one outstanding reminder. By id, because a tap names exactly one
+    row, while cancelling by voice matches on words and can take several."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "DELETE FROM reminders WHERE id = ? AND completed = 0", (reminder_id,))
         conn.commit()
         return cursor.rowcount > 0
     finally:

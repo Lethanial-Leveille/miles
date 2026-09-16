@@ -83,6 +83,20 @@ at all", which sent the next turn looking for another calendar.
 The staged question read back the wrong time, so nothing wrong was written. The
 confirmation held; the cost was his patience.
 
+**A fourth defect, found the next morning when he said there were two Andrew
+lessons.** There were: Tuesday at 5:30 PM, the one he had missed, and Thursday
+at 4 PM. Nova's listing at 11:33 PM showed only Thursday, for two reasons.
+The listing starts at now, so a lesson that ended at 7 PM was dropped exactly
+when he was asking to move it. And it named at most ten of his events without
+saying it had stopped, so the week ended Friday morning, after bills and
+birthdays took the slots. **A fifth, found while moving them:** a Thursday event
+moved to "wednesday" resolved to the Wednesday after, because the new day was
+read forward from the event's own day. That would have put Andrew's lesson
+after the test it was for.
+
+Both lessons were moved by event id on Sep 16: Tuesday's to Wednesday at 4:30
+PM, Thursday's to Friday at 5 PM.
+
 Fixed in `calendar_tools.py`: bare hours are written out as clock times before
 dateparser sees them, a bare time is read in the half of the day nearest the
 event's current time (and 1 to 6 as afternoon on a new event), a lookup with a

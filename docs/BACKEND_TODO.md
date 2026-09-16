@@ -1195,3 +1195,27 @@ Sep 13 probes said she would store passing mentions two times in three; his
 real conversations say otherwise. Start by replaying a week of his real app and
 voice turns through the current prompt and counting how many she would store,
 before changing any wording.
+
+### A memory's end date expires it a day early
+
+`get_episodic_memories` hides a temporary memory when `references_date < now`,
+comparing ISO text. A bare date like `2026-09-19` sorts before
+`2026-09-19T08:00`, so the fact disappears at the start of the day it is about.
+The `remember` tool asks for a date, so any date Nova passes has this off by
+one. Found Sep 16 2026 while storing Andrew's test date by hand, which was
+written as end of day to avoid it. Fix: store a bare date as the end of that day
+in `memory_tool`, with a test.
+
+### Deleting a memory from the app breaks its history
+
+`DELETE /memories/{id}` removes the row, while the voice review tool marks rows
+`'deleted'`. Deleting a memory that superseded another leaves the older row's
+`superseded_by` pointing at nothing. Soft delete would match the rest of the
+memory design; not changed yet because the app already calls this route.
+
+### The app side of Sep 16
+
+Backend endpoints exist for: memories (add, edit, history), reminders and
+timers (list, cancel), status details, the calendar week with tap edits, and
+stage events on `/chat/stream`. None of it shows until the app uses it; the
+routes and their rules are in INFRASTRUCTURE.md.

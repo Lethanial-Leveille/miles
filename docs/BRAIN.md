@@ -339,6 +339,18 @@ today from 1 PM to 6 PM." `undo_last_addition` removes the most recent addition 
 a whole for thirty minutes. He found a question before every addition too much,
 and an addition is the one change undo fully reverses; a move or a delete is not.
 
+> **Correction (Sep 16 2026).** Moves, renames and deletes no longer ask either,
+> and the tool is now `undo_last_change`. The claim that a move or delete cannot
+> be fully reversed was true of the undo as it was built, not of the changes:
+> a move is reversed by patching back the old title and times, and a deleted
+> MILES event is re-inserted from a saved copy of its title, times, notes,
+> location, colour and reminders, with only Google's id changing. Everything
+> changed on one turn undoes together, newest first. Two changes still ask:
+> deleting one occurrence of a repeating event, which would come back outside
+> its series, and `rename_calendar_events`, whose spelled read back is the point.
+> The paragraph above and the confirmation rules below now apply only to those.
+> See [SESSION_START.md](SESSION_START.md#moves-and-deletes-happen-at-once-with-undo-sep-16-2026-done).
+
 - Confirming on the same turn as the proposal is refused, so the model cannot
   ask and answer itself. A human turn has to happen in between.
 - `confirm_pending_action` takes only yes or no. It runs exactly what was read
@@ -408,6 +420,19 @@ made in code and read back:
 - A new event: 1 to 6 is afternoon, 7 to 12 is morning.
 - Anything that says am, pm, noon, morning or evening is never second guessed,
   and a relative time like "in 30 minutes" is not a bare time at all.
+
+**A named day is the one in the event's own week.** "Move it to wednesday",
+for a Thursday event, is the Wednesday before it, not the one after; the
+nearest occurrence wins, and the next one if the nearest has passed. An explicit
+date beats the weekday. dateparser cannot read "next tuesday" in any form, so
+that is refused and Nova has to give a date.
+
+**A listing names what is already over.** Upcoming still starts at now, but
+his own events from earlier in the requested range, up to a day back, are
+listed first under "Already over", so a missed session can be moved. The
+listing names a capped number of his events and says when there are more.
+When several events match a change, the result tells Nova to change each one
+if he asked for each, rather than asking which.
 
 **A change reaches across the week.** When nothing with that title is on the
 day he named, `update_calendar_event` uses the one match in the week either
