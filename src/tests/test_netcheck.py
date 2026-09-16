@@ -54,43 +54,129 @@ def test_absent_interface_is_not_up(tmp_path):
     assert not netcheck.link_up("wlan9", sysfs=str(tmp_path))
 
 
-def _patch(monkeypatch, iface, up, internet, dns):
+import errno
+import socket
+
+
+def _raises(exc):
+    def fail(*a, **k):
+        raise exc
+    return fail
+
+
+def _oserror(code):
+    return OSError(code, "probe")
+
+
+def test_probe_reports_a_refusal_as_a_refusal(monkeypatch):
+    monkeypatch.setattr(socket, "create_connection",
+                        _raises(ConnectionRefusedError()))
+    assert netcheck.probe(("1.1.1.1", 443)) == netcheck.REFUSED
+
+
+def test_probe_reports_a_timeout_as_a_timeout(monkeypatch):
+    """TimeoutError is an OSError subclass, so this is really a test that the
+    generic handler does not catch it first."""
+    monkeypatch.setattr(socket, "create_connection", _raises(TimeoutError()))
+    assert netcheck.probe(("1.1.1.1", 443)) == netcheck.TIMED_OUT
+
+
+def test_probe_reports_an_unreachable_host_as_no_route(monkeypatch):
+    monkeypatch.setattr(socket, "create_connection",
+                        _raises(_oserror(errno.EHOSTUNREACH)))
+    assert netcheck.probe(("1.1.1.1", 443)) == netcheck.NO_ROUTE
+
+
+def test_probe_reports_an_unreachable_network_as_no_route(monkeypatch):
+    monkeypatch.setattr(socket, "create_connection",
+                        _raises(_oserror(errno.ENETUNREACH)))
+    assert netcheck.probe(("1.1.1.1", 443)) == netcheck.NO_ROUTE
+
+
+def test_probe_keeps_an_unnamed_errno_separate(monkeypatch):
+    """An errno nobody anticipated must not be reported as one that was. It
+    gets the general phrase, which is true, rather than a specific one that
+    might not be."""
+    monkeypatch.setattr(socket, "create_connection",
+                        _raises(_oserror(errno.EACCES)))
+    assert netcheck.probe(("1.1.1.1", 443)) == netcheck.UNREACHABLE
+
+
+def test_resolves_ignores_errors_that_are_not_the_resolver(monkeypatch):
+    """A bug on this end must not be spoken as a DNS outage, so anything that
+    is not gaierror propagates instead of being answered."""
+    monkeypatch.setattr(socket, "getaddrinfo", _raises(OSError("not dns")))
+    try:
+        netcheck.resolves("api.anthropic.com")
+    except OSError:
+        return
+    assert False, "a non resolver error was swallowed"
+
+
+def _patch(monkeypatch, iface, up, outcomes, dns=True):
+    """outcomes is consumed one per probe call, internet probe first."""
+    remaining = list(outcomes)
     monkeypatch.setattr(netcheck, "default_interface", lambda *a, **k: iface)
     monkeypatch.setattr(netcheck, "link_up", lambda *a, **k: up)
-    monkeypatch.setattr(netcheck, "reachable", lambda *a, **k: internet)
     monkeypatch.setattr(netcheck, "resolves", lambda *a, **k: dns)
+    monkeypatch.setattr(netcheck, "probe", lambda *a, **k: remaining.pop(0))
 
 
 def test_no_default_route_is_no_wifi(monkeypatch):
-    _patch(monkeypatch, None, False, False, False)
+    _patch(monkeypatch, None, False, [])
     assert netcheck.diagnose() == 'no_wifi'
 
 
 def test_route_present_but_link_down_is_no_wifi(monkeypatch):
-    _patch(monkeypatch, "wlan0", False, False, False)
+    _patch(monkeypatch, "wlan0", False, [])
     assert netcheck.diagnose() == 'no_wifi'
 
 
-def test_link_up_but_nothing_routes_out_is_no_internet(monkeypatch):
-    _patch(monkeypatch, "wlan0", True, False, False)
+def test_link_up_but_no_route_out_says_no_route(monkeypatch):
+    _patch(monkeypatch, "wlan0", True, [netcheck.NO_ROUTE])
+    assert netcheck.diagnose() == 'no_route'
+
+
+def test_link_up_but_the_probe_times_out_says_timeout(monkeypatch):
+    _patch(monkeypatch, "wlan0", True, [netcheck.TIMED_OUT])
+    assert netcheck.diagnose() == 'net_timeout'
+
+
+def test_an_unclassified_probe_failure_stays_general(monkeypatch):
+    _patch(monkeypatch, "wlan0", True, [netcheck.UNREACHABLE])
     assert netcheck.diagnose() == 'no_internet'
 
 
 def test_internet_reachable_but_name_fails_is_dns(monkeypatch):
-    _patch(monkeypatch, "wlan0", True, True, False)
+    _patch(monkeypatch, "wlan0", True, [netcheck.OK], dns=False)
     assert netcheck.diagnose() == 'no_dns'
 
 
-def test_everything_local_healthy_blames_the_api(monkeypatch):
-    _patch(monkeypatch, "wlan0", True, True, True)
+def test_the_api_refusing_is_reported_as_a_refusal(monkeypatch):
+    _patch(monkeypatch, "wlan0", True, [netcheck.OK, netcheck.REFUSED])
+    assert netcheck.diagnose() == 'api_refused'
+
+
+def test_the_api_timing_out_is_reported_as_a_timeout(monkeypatch):
+    _patch(monkeypatch, "wlan0", True, [netcheck.OK, netcheck.TIMED_OUT])
+    assert netcheck.diagnose() == 'api_timeout'
+
+
+def test_a_healthy_socket_to_a_failed_call_still_blames_the_api(monkeypatch):
+    """The socket opened and the request failed anyway, so the fault is above
+    TCP. api_down is as far as this can narrow it, and saying so is honest."""
+    _patch(monkeypatch, "wlan0", True, [netcheck.OK, netcheck.OK])
     assert netcheck.diagnose() == 'api_down'
 
 
 def test_every_diagnosis_has_phrases_to_say():
     """The whole point is that she can speak the cause. A key diagnose can
     return with no entry in PHRASES would fall through to tts.speak, which
-    needs the network that just failed."""
-    for cause in ('no_wifi', 'no_internet', 'no_dns', 'api_down'):
+    needs the network that just failed.
+
+    Iterates netcheck.CAUSES rather than a copied list, so a cause added
+    without words fails here instead of as silence in the room."""
+    for cause in netcheck.CAUSES:
         assert phrasebank.PHRASES.get(cause), cause
 
 
