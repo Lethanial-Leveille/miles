@@ -48,12 +48,21 @@ def _id_of(db, content):
 
 # ── registration ──
 
-def test_registered_as_a_write_tool_with_no_round_trip():
-    """A second Claude call to announce a save would make every remembered fact
-    cost a full extra turn of latency, for a sentence nobody asked for."""
+def test_registered_as_a_write_tool_that_returns_to_nova():
+    """It was fire and forget, on the grounds that a second call to announce a
+    save costs latency for a sentence nobody asked for. Measured Sep 16 2026,
+    Nova wrote nothing alongside the call in half the turns that stored
+    something, so "my last day is September 25" was answered "Done."."""
     spec = registry.get("remember")
     assert spec.permission is Permission.WRITE
-    assert spec.returns_to_model is False
+    assert spec.returns_to_model is True
+
+
+def test_the_result_tells_her_to_answer_and_not_to_announce(db):
+    result = _call(content="exam is Friday", certainty="asked")
+    assert result.startswith("Stored.")
+    assert "answer what he actually told you" in result
+    assert "Do not mention storing" in result
 
 
 def test_supersedes_is_in_the_schema_and_optional():
@@ -127,7 +136,7 @@ def test_a_bad_id_stores_rather_than_losing_the_fact(db):
 def test_an_exact_duplicate_is_not_stored_twice(db):
     _call(content="exam is Friday", certainty="asked")
     result = _call(content="exam is Friday", certainty="asked")
-    assert "already stored" in result
+    assert result.startswith("Already stored")
     assert _active(db) == ["exam is Friday"]
 
 
@@ -349,6 +358,6 @@ def test_superseding_with_the_same_words_changes_nothing(db):
     _call(content="Enrolled in 12 credits for Fall 2026.", certainty="asked")
     old_id = _id_of(db, "Enrolled in 12 credits for Fall 2026.")
     reply = _call(content="enrolled in 12 credits for fall 2026", supersedes=old_id, certainty="inferred")
-    assert reply == "already stored, nothing changed"
+    assert reply.startswith("Already stored, nothing changed.")
     assert _id_of(db, "Enrolled in 12 credits for Fall 2026.") == old_id
     assert _active(db) == ["Enrolled in 12 credits for Fall 2026."]

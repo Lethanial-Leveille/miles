@@ -23,7 +23,7 @@ EXPECTED = {
     "set_timer":        (Permission.WRITE,   False),
     "set_reminder":     (Permission.WRITE,   False),
     "cancel_reminder":  (Permission.WRITE,   False),
-    "remember":         (Permission.WRITE,   False),
+    "remember":         (Permission.WRITE,   True),
     "dismiss":          (Permission.CONTROL, False),
     "ignore":           (Permission.CONTROL, False),
     "lower_access":     (Permission.WRITE,   True),
@@ -61,6 +61,9 @@ HOKAGE_ONLY = {
 # The default remains that a write just happens and is not spoken about; this
 # is the list of cases where that default is wrong, kept short on purpose.
 ROUND_TRIP_WRITES = {
+    # Nothing to report, but without the round trip Nova often said nothing at
+    # all, and "my last day is September 25" was answered "Done." (Sep 15 2026).
+    "remember",
     # It can refuse: an escalation dressed as a demotion, a name that matches
     # nobody, someone already at the floor. A security control that fails
     # silently is worse than one that costs a second, and Nova cannot announce

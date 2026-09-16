@@ -397,6 +397,25 @@ Google cannot report busy time for them, and a holiday is not busy time. The
 failures behind these rules are in
 [INCIDENTS.md](INCIDENTS.md#calendar-and-sleep-tools-answered-confidently-and-wrong-sep-13-2026).
 
+**A bare number is a clock time.** dateparser reads "wednesday at 4" as April 15
+of next year, so `_as_clock_time` writes "at 4" and a phrase that is only a
+number out as `4:00` before parsing. Which half of the day is then a judgment,
+made in code and read back:
+
+- Moving an event: the reading nearest its current time. A 4 PM lesson moved to
+  "3:30" is 3:30 PM; a 9 AM class moved to "8" is 8 AM.
+- Finding an event: either reading matches, so "monday at 4" finds the 4 PM one.
+- A new event: 1 to 6 is afternoon, 7 to 12 is morning.
+- Anything that says am, pm, noon, morning or evening is never second guessed,
+  and a relative time like "in 30 minutes" is not a bare time at all.
+
+**A change reaches across the week.** When nothing with that title is on the
+day he named, `update_calendar_event` uses the one match in the week either
+side, and the read back names the day it is really on. Several matches ask
+which. A delete never does this, because reaching a day he did not name to
+destroy something is a different risk from proposing a move. What happened is in
+[INCIDENTS.md](INCIDENTS.md#moving-two-lessons-took-eight-turns-sep-15-2026).
+
 ### Edit and delete find the event in code
 
 `update_calendar_event` and `delete_calendar_event` go through the same next turn
@@ -524,6 +543,22 @@ review. Inferred memories wait in a queue he can now reach by voice through
 `list_pending_memories` and `review_pending_memory`; the review tool accepts
 only ids that are actually waiting, so a misheard "discard that" cannot delete
 an established memory.
+
+> **In real use, Sep 13 to Sep 16 2026:** `remember` was called once, when he
+> stated a fact outright, and nothing was ever stored as inferred. The table
+> above is from probe runs, not from his conversations; noticing on her own has
+> not happened yet. See BACKEND_TODO.md.
+
+### A turn that stores something still answers
+
+`remember` returns to the model, since Sep 16 2026, and its result ends with an
+instruction to answer what he said without mentioning the save. When it is the
+only tool called, the follow up is made without tools, because there is nothing
+left to look up and offering them left some turns silent. The measurements are
+in [INCIDENTS.md](INCIDENTS.md#his-news-was-answered-done-sep-15-2026). The cost
+is one follow up call on the turns that store something, measured at roughly
+0.7 to 0.9 seconds uncached; that call carries no tools, so it misses the cache
+the way the final tool round already does.
 
 ### Conflicts are found in code
 

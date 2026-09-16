@@ -51,6 +51,73 @@ session real work.
 
 ---
 
+## Moving two lessons took eight turns (Sep 15 2026)
+
+From the app, 23:27 to 23:34: move Charley's Wednesday and Friday lessons half
+an hour earlier, and move Andrew's lesson. Nine tool calls, four of them failed,
+and the Andrew lesson was never moved. Reconstructed from `tool_call_log` rows
+135 to 144 and `conversation_history` 1129 to 1144.
+
+Three separate defects, each found by running his exact phrases through the
+parser as it stood:
+
+| He said | Parsed as | What he saw |
+|---|---|---|
+| day `"wednesday at 4"` | **April 15 2027** | "no event matching 'Charley lesson' on Thursday April 15" |
+| new time `"3:30"`, for a 4 PM lesson | 3:30 AM | "Move Charley lesson on Friday from 4 PM to 3:30 AM?" |
+| day `"Wednesday"`, for a lesson on Thursday | the right day, no match | "Andrew's lessons aren't on your MILES calendar yet" |
+
+**dateparser reads a bare number as a month.** `"3"` parsed to March 2027 and
+`"5"` to May. The lookup failed before the move could run, which is the only
+reason no one heard "move it to Sunday May 16 2027". A day with a time written
+as `"wednesday at 4pm"` had always worked, which is why this survived: the model
+usually adds the pm, and last night it did not.
+
+**A bare clock time was taken at face value.** A 4 PM lesson moved to "3:30" is
+obviously 3:30 PM. The code had no notion of which half of the day was meant.
+
+**The lookup only ever searched the named day.** Its error was accurate ("no
+Andrew lesson on Wednesday") and Nova generalized it into "not on your calendar
+at all", which sent the next turn looking for another calendar.
+
+The staged question read back the wrong time, so nothing wrong was written. The
+confirmation held; the cost was his patience.
+
+Fixed in `calendar_tools.py`: bare hours are written out as clock times before
+dateparser sees them, a bare time is read in the half of the day nearest the
+event's current time (and 1 to 6 as afternoon on a new event), a lookup with a
+bare time matches either reading, and a change that finds nothing on the named
+day uses the one event with that title in the week around it. The mechanism is
+in [BRAIN.md](BRAIN.md#calendar-times-are-resolved-in-code).
+
+## His news was answered "Done." (Sep 15 2026)
+
+"I actually put in my two weeks recently so my last day is September 25", typed
+in the app at 23:22. Nova called `remember`, stored memory 311 correctly, and
+the reply was `Done.` (`conversation_history` 1126).
+
+`remember` was fire and forget, on the reasoning that she would already be
+answering alongside the call. She was not. When the model calls a tool it tends
+to stop and wait for the result, and `remember` sent none back, so the turn had
+no words and the fallback supplied "Done.". The prompt made it likelier: the
+memory instructions and the tool description both said saving "happens quietly"
+and "returns nothing to say".
+
+Measured on that message and "remember that my DSA exam got moved to October 8",
+four samples each, history cut at the turn before:
+
+| Condition | Replied in words |
+|---|---|
+| As shipped | 4/8, and 0/4 when he asked outright |
+| A prompt paragraph telling her to answer | 1/8 |
+| Result sent back, tools offered, result "stored" | 3/7 |
+| Result sent back, no tools, result that says to answer | 6/6 |
+| That, through the real `ask_nova_async` | 7/8 |
+
+The lesson is the one this repo keeps relearning in new places: **what Nova is
+handed last outweighs what she is told at the top.** The fix went into the tool
+result, not the prompt.
+
 ## One deauth cost 21 hours offline and 9 hours exposed (Sep 14 2026)
 
 At 15:37 the Alsander AP deauthenticated wlan0 in the middle of the handshake.

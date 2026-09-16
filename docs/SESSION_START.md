@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 14 2026 (25) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 15 2026 (737) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 16 2026 (751) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -1239,3 +1239,29 @@ first, then install it, and verify with the loop in
 [INFRASTRUCTURE.md](INFRASTRUCTURE.md#systemd-services). Editing under `/etc`
 and forgetting to copy back is the failure this invites, and the loop is what
 catches it.
+
+### A bare hour is a clock time, and a change reaches across the week (Sep 16 2026) (DONE)
+
+What broke is in [INCIDENTS.md](INCIDENTS.md#moving-two-lessons-took-eight-turns-sep-15-2026).
+
+**Chosen:** read which half of the day from the event being moved, because the
+staged read back catches a wrong guess in one sentence. **Rejected:** refusing
+any time without am or pm, which is how people actually talk about their week
+and would have added a turn to nearly every move.
+
+**A change uses the one matching event in the week around the named day.**
+**Rejected** for delete: a delete that lands on a day he did not name destroys
+something he may not have meant, while a move is proposed and read back first.
+
+### remember returns to Nova (Sep 16 2026) (DONE)
+
+**Supersedes** the Aug 11 reasoning that a round trip to announce a save was
+latency for a sentence nobody asked for. That assumed she would already be
+answering alongside the call; measured, she did so in half the turns and in none
+where he asked outright. See
+[INCIDENTS.md](INCIDENTS.md#his-news-was-answered-done-sep-15-2026).
+
+**He chose a prompt only fix first**, on my recommendation. It measured worse
+(1 of 8) and was dropped with his agreement. **Chosen:** the tool result carries
+the instruction to answer, and a follow up after only `remember` is made
+without tools. 7 of 8 through the real turn.
