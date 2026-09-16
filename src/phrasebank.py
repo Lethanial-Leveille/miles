@@ -57,29 +57,57 @@ PHRASES = {
         "I'm listening.",
     ],
 
-    # One exception, four causes. netcheck.diagnose picks between these, and it
-    # is worth the four sets rather than one vague apology: "I've lost wifi" is
-    # a false statement when the truth is that Anthropic is down, and being
-    # wrong about its own state is worse than saying less. Each one names only
-    # what has actually been ruled out.
+    # One exception, eight causes. netcheck.diagnose picks between these, and
+    # every set here is worth having rather than one vague apology: "I've lost
+    # wifi" is a false statement when the truth is that Anthropic is down, and
+    # being wrong about its own state is worse than saying less. Each one names
+    # only what has actually been observed, never what was left over.
+    #
+    # Precise rather than plain on purpose, all the way down. He is the only
+    # person who hears these, he is a computer engineer, and "something is
+    # wrong" would send him to power cycle a router that is working fine.
     #
     # Nothing follows any of these, so each has to close the exchange on its own
     # rather than leave him waiting for more.
+    #
+    # netcheck.CAUSES is the list these have to cover, and a test enforces it.
     'no_wifi': [
         "I've lost the wifi connection.",
         "I'm not on the network right now, so that will have to wait.",
         "The wifi is down. Try me again once it's back.",
     ],
+    # The kernel never put a packet on the wire. Named separately from a
+    # timeout because they point at different halves of the house: no route is
+    # this machine's routing table, a timeout is everything past the door.
+    'no_route': [
+        "I'm on the wifi, but there's no route out of here.",
+        "The link is up and there's nowhere for it to send anything. No route.",
+    ],
+    'net_timeout': [
+        "I'm on the network, but nothing is coming back. It's all timing out.",
+        "Packets are going out and nothing is answering. That's a timeout.",
+    ],
+    # Kept for the failures that are real and did not name themselves. Its
+    # wording was already the general case, so it needed no rewrite when the
+    # specific causes moved out above it.
     'no_internet': [
         "I'm on the wifi, but nothing is getting out to the internet.",
         "The network is up and the connection isn't going anywhere.",
     ],
-    # Precise rather than plain on purpose. He is the only person who hears
-    # this, he is a computer engineer, and "something is wrong" would send him
-    # to check the router when the router is fine.
     'no_dns': [
         "The network is up, but DNS isn't resolving.",
         "I can route out, but nothing is resolving. That's DNS.",
+    ],
+    # A refusal is the most informative failure of the set: something was
+    # listening and said no. Worth its own sentence, because it is the one that
+    # means the network is entirely fine.
+    'api_refused': [
+        "I can reach Anthropic, and it's refusing the connection.",
+        "The route and the name both work. Anthropic is refusing me.",
+    ],
+    'api_timeout': [
+        "I can resolve Anthropic, but the connection just times out.",
+        "Anthropic has an address and nothing behind it is answering.",
     ],
     'api_down': [
         "My connection is fine. It's the model I can't reach.",
