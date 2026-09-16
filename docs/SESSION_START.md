@@ -1342,11 +1342,21 @@ shipped and measured on its own:
    numbers). Pre rendered, played from disk, timed as its own column so the
    perceived series is not broken. Reverses the Aug 11 "no acknowledgment
    during tool execution", which was waiting on exactly this data.
-3. **Ending the recording early on a finished sentence.** The Sep 13 entry
-   rejected cutting on timing alone, because he speaks through long pauses in
-   18% of turns. To be validated against archived recordings before shipping.
-4. **Starting Claude during the endpoint wait.** Tools must never run on a
-   guess; calendar changes now happen at once.
+3. **Ending the recording early on a finished sentence** (REJECTED). Simulated
+   on 285 archived recordings it was close to safe, but the transcript it
+   depends on arrives after today's cutoff, so it cannot save anything.
+   **Replaced by starting the speculation sooner** (DONE, 450 to 210ms), which
+   takes the transcription wait instead and never moves the end of a recording.
+4. **Starting Claude during the endpoint wait** (DROPPED). The same wall: no
+   transcript exists during the wait. Warming the prompt cache at the wake word
+   was considered instead and dropped too: since Sep 13, cache misses were not
+   slower (time to first token 850ms on 10 misses, 1121ms on 38 hits).
+
+**Where that leaves a plain turn:** roughly 1.2s of endpoint, a few tens of ms
+of transcription and verification, about 1.1s to Claude's first token, 0.2s to
+a sentence, and 0.6s to eleven_v3's first audio, so about 3.1 to 3.3s. The
+remaining levers are his: the voice model, and how long a pause means he is
+done.
 
 **Not changed:** flash_v2 would save about 250ms to first audio, but eleven_v3
 was chosen by ear, and that is his call.

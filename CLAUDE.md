@@ -218,7 +218,7 @@ of the value itself.
 
 ### Speculative transcription — why:
 [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#speculative-transcription)
-- `SPECULATIVE_TRANSCRIBE = True`, `SPECULATIVE_SILENCE_MS = 450`,
+- `SPECULATIVE_TRANSCRIBE = True`, `SPECULATIVE_SILENCE_MS = 210`,
   `SPECULATIVE_THREADS = 3`
 
 ### Model and prompt — why: [BRAIN.md](docs/BRAIN.md)

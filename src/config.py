@@ -455,11 +455,18 @@ SPECULATIVE_TRANSCRIBE = True
 # overlap but more discarded work, and the overlap can never exceed
 # SILENCE_LIMIT minus this.
 #
-# Set from the p75 of max_pause_ms over 66 turns (p50 270, p75 450, p90 630,
-# p99 840). At 450ms about a quarter of turns speculate on a pause he then
-# speaks through, and the surviving three quarters overlap 450ms of the 900ms
-# wait. Re-read that distribution before changing this; it is the whole basis.
-SPECULATIVE_SILENCE_MS = 450
+# Was 450, the p75 of max_pause_ms over 66 turns (p50 270, p75 450, p90 630,
+# p99 840), chosen to limit discarded work. Lowered Sep 16 2026 because the
+# discarded work turned out not to be the cost that matters: Whisper takes about
+# a second, so the transcript arrived a median 287ms after the recording ended.
+# Starting sooner closes that gap without changing when the recording ends.
+#
+# Re-read over 280 turns: p50 330, p75 600, p90 900, p99 1140; 38% of turns
+# already discarded a speculation at 450, and 60% will at 210. Simulated on 283
+# archived recordings, speculations per recording go from a mean of 1.5 to 2.3.
+# Each discarded run is killed at once; the voice embedding beside it may finish
+# one stale run first, at most about 200ms.
+SPECULATIVE_SILENCE_MS = 210
 
 # One core left for capture. Whisper defaults to all four, and starving the
 # PyAudio read loop drops frames, which matters precisely when speech resumes
