@@ -39,9 +39,10 @@ def test_durations_parse(text, amount, unit, confident):
     "stop the timer",
     "forget the ten minute timer",
 ])
-def test_cancelling_is_not_setting(text, confident):
+def test_cancelling_is_not_setting(text, confident, monkeypatch):
     """Semantically these sit right next to setting a timer, which is why the
     lexical gate carries the distinction rather than the embedding."""
+    monkeypatch.setattr(li, "active_reminder_count", lambda kind=None: 0)
     assert li.classify(text) is None
 
 
@@ -218,7 +219,7 @@ def test_clock_rounds_to_nearest_five_and_rolls_the_hour():
 
 
 def test_cancel_fires_when_exactly_one_reminder_is_outstanding(confident, monkeypatch):
-    monkeypatch.setattr(li, "active_reminder_count", lambda: 1)
+    monkeypatch.setattr(li, "active_reminder_count", lambda kind=None: 1)
     match = li.classify("cancel that reminder")
     assert match is not None and match.name == "cancel_reminder"
 
@@ -227,12 +228,12 @@ def test_cancel_fires_when_exactly_one_reminder_is_outstanding(confident, monkey
 def test_cancel_defers_when_ambiguous(count, confident, monkeypatch):
     """Cancelling the wrong reminder is worse than spending four seconds
     cancelling the right one, so anything but exactly one goes to Claude."""
-    monkeypatch.setattr(li, "active_reminder_count", lambda: count)
+    monkeypatch.setattr(li, "active_reminder_count", lambda kind=None: count)
     assert li.classify("cancel that reminder") is None
 
 
 def test_cancel_defers_when_the_count_query_fails(confident, monkeypatch):
-    def boom():
+    def boom(kind=None):
         raise RuntimeError("database locked")
     monkeypatch.setattr(li, "active_reminder_count", boom)
     assert li.classify("cancel that reminder") is None
@@ -354,3 +355,30 @@ def test_a_bug_is_not_reported_as_a_network_problem(confident, monkeypatch):
     monkeypatch.setattr(li.actions, "fetch_weather", boom)
     with pytest.raises(AttributeError):
         li.execute(li.classify("what's the weather"))
+
+
+# ── timers cancel locally too (Sep 16 2026) ──
+
+def _counts(monkeypatch, timers, reminders):
+    monkeypatch.setattr(li, "active_reminder_count",
+                        lambda kind=None: {"timer": timers, "reminder": reminders}[kind])
+
+
+@pytest.mark.parametrize("text", ["cancel the timer", "stop the timer", "never mind the timer",
+                                  "kill the timer"])
+def test_the_one_running_timer_is_cancelled_locally(text, confident, monkeypatch):
+    _counts(monkeypatch, timers=1, reminders=0)
+    match = li.classify(text)
+    assert match is not None and match.name == "cancel_reminder"
+    assert match.slots == {"kind": "timer"}
+
+
+def test_cancelling_a_timer_never_touches_the_one_reminder(confident, monkeypatch):
+    _counts(monkeypatch, timers=0, reminders=1)
+    assert li.classify("cancel the timer") is None
+
+
+def test_naming_neither_goes_to_claude(confident, monkeypatch):
+    _counts(monkeypatch, timers=1, reminders=1)
+    assert li.classify("cancel that") is None
+    assert li.classify("cancel the timer and the reminder") is None

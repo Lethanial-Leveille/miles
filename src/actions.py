@@ -410,13 +410,19 @@ def start_reminder_poller(interval=REMINDER_POLL_S):
     return True
 
 
-def cancel_reminder(content):
+def cancel_reminder(content, kind=None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute(
-        "DELETE FROM reminders WHERE content LIKE ? AND completed = 0",
-        (f"%{content}%",)
-    )
+    if kind is None:
+        c.execute(
+            "DELETE FROM reminders WHERE content LIKE ? AND completed = 0",
+            (f"%{content}%",)
+        )
+    else:
+        c.execute(
+            "DELETE FROM reminders WHERE content LIKE ? AND completed = 0 AND kind = ?",
+            (f"%{content}%", kind)
+        )
     deleted = c.rowcount
     conn.commit()
     conn.close()
@@ -455,6 +461,12 @@ def cancel_reminder(content):
     returns_to_model=False,
 )
 def set_timer_tool(amount, unit):
+    # Sep 16 2026: asked to cancel a timer, with no tool that said it could,
+    # Nova set a zero second timer instead, which rang at once. A timer of
+    # nothing is never what he asked for, so it is refused out loud.
+    if not isinstance(amount, int) or amount < 1:
+        raise ValueError("a timer needs a length of at least one; to stop a "
+                         "timer, use cancel_reminder")
     # Reuses the string parser rather than duplicating the threading, and a
     # structured amount plus unit always satisfies it, so the word number
     # fallback inside it is now dead weight the tag path still needs.
@@ -493,9 +505,12 @@ def set_reminder_tool(content, due=None):
 @tool(
     name="cancel_reminder",
     description=(
-        "Delete saved reminders matching a phrase. Call this when Lethanial "
-        "cancels, removes, or says never mind about a reminder. Match on the "
-        "distinctive words of the reminder rather than the whole sentence."
+        "Cancel running timers or saved reminders matching a phrase. Call "
+        "this when Lethanial cancels, stops, removes, or says never mind about a "
+        "timer or a reminder. A timer's saved text reads like '10 minute timer', "
+        "so 'timer' matches every running timer and '10 minute' matches that "
+        "one. For a reminder, match on its distinctive words rather than the "
+        "whole sentence. Never set a new timer to cancel one."
     ),
     input_schema={
         "type": "object",

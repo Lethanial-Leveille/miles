@@ -1399,6 +1399,21 @@ def save_message(role, content, device="pi"):
         "INSERT INTO conversation_history (role, content, created_at, source_device) VALUES (?, ?, ?, ?)",
         (role, content, datetime.now().isoformat(), device)
     )
+    message_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return message_id
+
+
+def delete_message(message_id):
+    """Remove one message from the history Nova reads back.
+
+    For speech she decided was not meant for her. Kept, it sat in the
+    transcript as his words, and consecutive user messages are sent as one
+    turn: on Sep 16 2026 "Ain't no one." and two ignored "cancel the timer."
+    arrived merged, and she answered the fragment instead of the request."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("DELETE FROM conversation_history WHERE id = ?", (message_id,))
     conn.commit()
     conn.close()
 
@@ -1652,7 +1667,7 @@ def cancel_reminder_by_id(reminder_id):
         conn.close()
 
 
-def active_reminder_count():
+def active_reminder_count(kind=None):
     """How many reminders are outstanding.
 
     Local intent uses this to decide whether "cancel that" is unambiguous.
@@ -1661,7 +1676,13 @@ def active_reminder_count():
     one is worse than taking four seconds to pick the right one."""
     conn = sqlite3.connect(DB_PATH)
     try:
+        if kind is None:
+            return conn.execute(
+                "SELECT COUNT(*) FROM reminders WHERE completed = 0").fetchone()[0]
+        # By kind since timers became rows: "cancel the timer" with one reminder
+        # outstanding must not cancel the reminder.
         return conn.execute(
-            "SELECT COUNT(*) FROM reminders WHERE completed = 0").fetchone()[0]
+            "SELECT COUNT(*) FROM reminders WHERE completed = 0 AND kind = ?",
+            (kind,)).fetchone()[0]
     finally:
         conn.close()

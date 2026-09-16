@@ -223,3 +223,24 @@ def test_a_timer_can_be_cancelled_by_voice(reminders):
 
 def test_the_poller_is_quick_enough_for_a_timer():
     assert actions.REMINDER_POLL_S <= 5
+
+
+def test_a_zero_second_timer_is_refused(reminders):
+    """Asked to cancel a timer, Nova once set a zero second timer instead."""
+    with pytest.raises(ValueError, match="cancel_reminder"):
+        actions.set_timer_tool(0, "seconds")
+    assert database.open_reminders() == []
+
+
+def test_cancelling_by_kind_leaves_the_other_kind(reminders):
+    actions.set_timer("5 minutes")
+    actions.set_reminder("call the timer repair guy", _iso(hours=2))
+    assert database.active_reminder_count("timer") == 1
+    actions.cancel_reminder("", kind="timer")
+    assert [row[4] for row in database.open_reminders()] == ["reminder"]
+
+
+def test_nova_is_told_timers_can_be_cancelled():
+    from tools import registry
+    description = registry.get("cancel_reminder").description
+    assert "timer" in description and "Never set a new timer to cancel one" in description

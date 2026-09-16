@@ -55,7 +55,8 @@ def turn(monkeypatch):
     monkeypatch.setattr(brain, "start_synthesis", lambda text, *a, **k: text)
     monkeypatch.setattr(brain, "_play_with_barge_in",
                         lambda synthesis: (played.append(synthesis), (False, 0.0))[1])
-    monkeypatch.setattr(brain, "save_message", lambda *a, **k: None)
+    monkeypatch.setattr(brain, "save_message", lambda *a, **k: 7)
+    monkeypatch.setattr(brain, "delete_message", lambda message_id: played.append(f"deleted:{message_id}"))
     monkeypatch.setattr(brain, "get_recent_messages",
                         lambda limit=20: [{"role": "user", "content": "hi"}])
     monkeypatch.setattr(brain, "get_seed_memories", lambda: [])
@@ -230,3 +231,16 @@ def test_no_bridge_for_a_quick_tool(turn):
 def test_every_bridge_is_a_real_tool_with_rendered_words():
     assert set(brain._BRIDGES) <= set(registry.names())
     assert all(key in brain.phrasebank.PHRASES for key in brain._BRIDGES.values())
+
+
+def test_speech_not_meant_for_nova_leaves_no_trace(turn):
+    """Kept, it merged with his next request and she answered the fragment."""
+    ignore = SimpleNamespace(type="tool_use", name="ignore", id="toolu_1", input={})
+    result, played = turn("voice", _FakeStream([], [ignore]))
+    assert result.ignored and result.text == ""
+    assert played == ["deleted:7"]
+
+
+def test_an_answered_turn_is_kept(turn):
+    _, played = turn("text", _FakeStream(["Sure."]))
+    assert not any(p.startswith("deleted:") for p in played)

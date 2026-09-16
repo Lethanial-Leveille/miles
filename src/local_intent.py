@@ -84,6 +84,9 @@ EXAMPLES = {
         "never mind that reminder",
         "forget the reminder",
         "cancel my reminder",
+        "cancel the timer",
+        "stop my timer",
+        "never mind the timer",
     ],
     'dismiss': [
         "that's all thanks",
@@ -273,25 +276,34 @@ def _gate_time_of_day(text):
 
 
 _REMINDER_WORD = re.compile(r'\b(reminder|reminders)\b')
+# Timers are rows too since Sep 16 2026, so they cancel the same way.
+_TIMER_WORD = re.compile(r'\b(timer|timers|alarm|countdown)\b')
 
 # Wider than _CANCELS, which guards set_timer and must not treat "never mind"
-# as cancelling. Aimed at a reminder, "never mind" plainly does.
+# as cancelling. Aimed at a reminder, "never mind" plainly does. "stop" is here
+# for timers: "stop the timer" is the commonest way to say it.
 _CANCEL_REMINDER_WORD = re.compile(
-    r'\b(cancel|forget|delete|remove|scrap|drop|never mind|nevermind)\b')
+    r'\b(cancel|forget|delete|remove|scrap|drop|stop|kill|clear|never mind|nevermind)\b')
 
 
 def _gate_cancel_reminder(text):
-    if not _CANCEL_REMINDER_WORD.search(text) or not _REMINDER_WORD.search(text):
+    if not _CANCEL_REMINDER_WORD.search(text):
         return None
-    # Only when there is nothing to disambiguate. Zero or several outstanding
-    # reminders both go to Claude, because cancelling the wrong one is worse
-    # than spending four seconds cancelling the right one.
+    timer, reminder = bool(_TIMER_WORD.search(text)), bool(_REMINDER_WORD.search(text))
+    if timer == reminder:
+        # Neither named, or both: nothing says which to cancel.
+        return None
+    kind = "timer" if timer else "reminder"
+    # Only when there is nothing to disambiguate, counted within that kind, so
+    # "cancel the timer" with one reminder outstanding never cancels the
+    # reminder. Zero or several both go to Claude, because cancelling the wrong
+    # one is worse than spending four seconds cancelling the right one.
     try:
-        if active_reminder_count() != 1:
+        if active_reminder_count(kind) != 1:
             return None
     except Exception:
         return None
-    return {}
+    return {"kind": kind}
 
 
 _WEATHER_WORD = re.compile(
@@ -494,7 +506,8 @@ def execute(match):
         return phrasebank.PHRASES[key][0], key, False
 
     if match.name == 'cancel_reminder':
-        actions.cancel_reminder('')     # empty matches the single outstanding one
+        # Empty text matches the single outstanding one of that kind.
+        actions.cancel_reminder('', kind=match.slots["kind"])
         return phrasebank.PHRASES['cancelled'][0], 'cancelled', False
 
     if match.name == 'dismiss':
