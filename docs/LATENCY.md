@@ -56,6 +56,13 @@ Changes made against this baseline, one at a time so each shows up on its own:
   keeps meaning the wait for the answer, so it stays comparable with every row
   above; the first sound on a tool turn is the smaller of the two. Expected
   around 2.9s; not yet measured live.
+- Sep 16: speculative transcription starts after 210ms of silence rather than
+  450ms
+  ([AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#speculative-transcription)).
+  Expected to take most of the 287ms `transcribe_ms`; not yet measured live.
+
+Early reading, five turns only, not a figure to quote: `verify_ms` 3 to 22ms
+where the speculation held.
 
 ## The turn budget, measured Aug 12 2026
 

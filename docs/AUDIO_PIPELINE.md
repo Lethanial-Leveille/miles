@@ -388,6 +388,23 @@ speaks through and are discarded; the rest overlap 450ms of the 900ms wait. The
 overlap can never exceed `SILENCE_LIMIT` minus this value. **Re-read that
 distribution before changing it.**
 
+> **Changed Sep 16 2026, after re-reading it.** Over 280 turns the pauses are
+> longer: p50 330, p75 600, p90 900, p99 1140. The value was set to limit
+> discarded work, and that was the wrong cost to minimise. Whisper takes about a
+> second, so a speculation started 450ms into the pause finished a median 287ms
+> after the recording ended, and that 287ms sat on the path to the Claude call.
+> Starting earlier removes it without moving the end of the recording, so there
+> is no new risk of cutting him off. Simulated on 283 archived recordings:
+> speculations per recording rise from a mean of 1.5 to 2.3 at 210ms, and 60% of
+> turns discard at least one, against 38% before.
+>
+> **Ending the recording early on a finished sentence was tested and rejected
+> the same day.** On the same recordings, "the speculative transcript ends in a
+> question mark" fired at 45% of real endings and would have cut real words in
+> 5 of 285, four of them room chatter. It cannot be built: the transcript that
+> rule needs is not ready until after today's cutoff. The same limit is why the
+> p99 above leaves no room to lower `SILENCE_LIMIT`.
+
 That same distribution says **`SILENCE_LIMIT = 0.9` has no headroom left**: p99
 of pauses spoken through is 840ms against a 900ms limit. Lowering it cuts him
 off mid thought.
