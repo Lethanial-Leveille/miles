@@ -51,6 +51,38 @@ session real work.
 
 ---
 
+## Cancelling a timer set a new one (Sep 16 2026)
+
+He set a one minute timer by voice, the first timer stored as a row, then tried
+to cancel it three times in forty seconds. From the journal and
+`conversation_history` 1145 to 1154:
+
+| He said | What happened |
+|---|---|
+| (a fragment) "Ain't no one." | correctly ignored |
+| "cancel the timer." | ignored as not addressed to Nova |
+| "cancel the timer." | "I only caught 'ain't no one.'" |
+| "Cancel the timer." | `set_timer(0 seconds)`, "Done.", and a timer that rang at once |
+
+His real timer went off at the end, because nothing cancelled it.
+
+Four causes, none of them in the new timer rows, which worked:
+
+- **Local intent could not cancel a timer.** Its gate required the word
+  "reminder", so the turn went to Claude.
+- **Claude was never told timers could be cancelled.** `cancel_reminder` said
+  reminders. With no tool that fit, she reached for `set_timer` and passed zero,
+  which the tool accepted.
+- **Ignored speech stayed in history.** The fragment and the first ignored
+  request sat there as three consecutive user messages, which are sent as one
+  turn, and she answered the fragment. That merged turn is also the likeliest
+  reason the first request was ignored at all.
+
+Fixed: local intent cancels the one outstanding timer, counted by kind so a
+reminder is never cancelled by "cancel the timer"; `cancel_reminder` says it
+cancels timers and never to set one to cancel; `set_timer` refuses anything
+under one; and an ignored turn's message is deleted from history.
+
 ## Moving two lessons took eight turns (Sep 15 2026)
 
 From the app, 23:27 to 23:34: move Charley's Wednesday and Friday lessons half

@@ -105,7 +105,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (822 passing, 6 skipped, Sep 16 2026)
+│   └── tests/                 # pytest suite (833 passing, 6 skipped, Sep 16 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -309,7 +309,7 @@ Landed since v0.7.1, unreleased:
 - Clock injected into the last user turn (`_with_current_time`)
 - Offline resilience: `run_turn` exception boundary in voice_main, phrase bank,
   `netcheck` cause diagnosis, spoken wake acks
-- Local intent for `set_timer`, `time_of_day`, `cancel_reminder`, `dismiss`
+- Local intent for `set_timer`, `time_of_day`, `cancel_reminder` (timers too), `dismiss`
 - Speculative transcription during the endpoint wait
 - Native tool use: the registry in `tools.py` and the tool loop in `brain.py`,
   replacing bracket action tags

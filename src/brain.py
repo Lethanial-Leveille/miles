@@ -9,7 +9,7 @@ import anthropic
 import timing
 from tts import join_for_speech, play, speak, start_synthesis
 from prompts import build_enhanced_prompt, TEXT_TURN_NOTE
-from database import (save_message, get_seed_memories, get_episodic_memories,
+from database import (save_message, delete_message, get_seed_memories, get_episodic_memories,
                       get_recent_messages, search_memories, memory_manifest,
                       get_shareable_memories, effective_tier)
 from parsing import extract_memories, strip_leading_bracket_cue
@@ -557,7 +557,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     # on this turn can only be approved on the next one.
     pending_action.begin_turn()
 
-    save_message("user", user_text, device=device)
+    user_message_id = save_message("user", user_text, device=device)
     # Everything personal is gated on tier here rather than asked for in the
     # prompt. Below hokage the corpus is never assembled, so no phrasing,
     # insistence, or injection can reach it. Today the only path to hokage is
@@ -869,6 +869,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         print(f"Claimed to remember without calling remember: {final_text[:120]!r}",
               flush=True)
 
+    if ignored and not final_text:
+        delete_message(user_message_id)
     if final_text:
         save_message("assistant", final_text, device=device)
     # After the reply, on its own thread. Only for him: a guest's words are not
