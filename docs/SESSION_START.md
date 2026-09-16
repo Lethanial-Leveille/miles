@@ -1107,3 +1107,135 @@ is already writing to the database.
 speech recognition output, which is false when he types. Out of scope for a
 numbers fix and it changes how she treats a strange looking message, so it is in
 BACKEND_TODO.md rather than in this change.
+
+### Services bind loopback, so exposure is not the network's to decide (Sep 15 2026) (DONE)
+
+Forced by the Sep 14 incident:
+[INCIDENTS.md](INCIDENTS.md#one-deauth-cost-21-hours-offline-and-9-hours-exposed-sep-14-2026).
+Ethernet recovery handed the Pi a routable public address with no NAT, and
+sshd, n8n and uvicorn became internet facing without a single config change.
+CGNAT had been acting as a firewall that nobody chose, configured or checked.
+
+**Chosen:** every service that does not need to be reachable off the box binds
+loopback. n8n to `127.0.0.1:5678` in the compose port mapping, uvicorn to
+`localhost` in `miles-server.service`.
+
+**A firewall was rejected as the primary control.** nftables or ufw would have
+worked, and on the day it mattered `iptables -P INPUT` was `ACCEPT`. A firewall
+is a second thing that has to be correct, installed and running, and it fails
+open. A bind address is a property of the process itself and cannot stop being
+true because a cable changed. Rate limiting and a firewall are still worth
+having, but as depth, not as the thing being relied on.
+
+**`localhost`, not `127.0.0.1`, and the difference is load bearing.** asyncio
+resolves the hostname and creates one socket per `getaddrinfo` result, so
+`localhost` binds both `127.0.0.1:8000` and `[::1]:8000` while the literal
+address binds only the first. cloudflared routes to `http://localhost:8000` and
+may present either family, so the literal address is a coin flip that happens to
+be landing right. Verify both listeners after any change to that line.
+
+**Accepted cost:** nothing off the Pi reaches the API directly any more. The
+Nova iOS app must go through miles.lethanial.com; `miles.local:8000` now
+refuses. That is the intent rather than a regression, and it is the part a
+future session is most likely to want to undo. Do not undo it by widening the
+bind.
+
+**Tailscale closes the half of this that binding does not touch**, namely that
+recovery required a publicly addressable machine at all. Installed on the Pi
+Sep 15 2026 and joined as `miles` at `100.99.248.127`. It was reported as
+applied several hours before it was true, because the install had been done on
+the MacBook; see
+[INCIDENTS.md](INCIDENTS.md#one-deauth-cost-21-hours-offline-and-9-hours-exposed-sep-14-2026).
+
+**Tailscale SSH was deliberately not enabled.** `tailscale up` ran without
+`--ssh`, so SSH remains governed by the sshd config hardened above rather than
+by tailnet ACLs. Two doors with different locks is worse than one, and the
+sshd side is the one with `AllowUsers` and password auth off. Turning it on
+later is a decision, not a default.
+
+### sshd hardening wins on sort order, not by editing the generated file (Sep 15 2026) (DONE)
+
+`PasswordAuthentication` was `yes` with no rate limiting and no user allowlist
+while port 22 faced the internet for nine hours. Roughly 13,000 attempts, all
+failed. Root survived on `PermitRootLogin without-password`; `theycallmelee`
+survived because no botnet guessed the username, which is luck rather than
+defence.
+
+**Chosen:** `/etc/ssh/sshd_config.d/00-hardening.conf` containing
+`PasswordAuthentication no`.
+
+**Editing `50-cloud-init.conf` to say `no` was rejected.** It sets
+`PasswordAuthentication yes`, and it is generated. cloud-init may rewrite it,
+and the revert would be silent, at an arbitrary future date, on the setting that
+matters most. Winning on sort order is durable in a way that editing a generated
+file is not.
+
+**Putting it in `sshd_config` itself was also rejected**, and this is the part
+that reads backwards until the rule is known. The `Include` sits at **line 12**,
+the top of the file, and **sshd takes the first value it finds and ignores every
+later one**. There is no last write wins. A value in the main file would look
+authoritative and be dead, beaten by the drop in directory that is read before
+it.
+
+**`AllowUsers theycallmelee` is the exception**, and it lives in
+`/etc/ssh/sshd_config` line 59. That works only because nothing in the drop in
+directory sets it, so first occurrence still finds it. Someone will eventually
+read those two facts side by side and think one of them is wrong. Both are true.
+
+**Read the effective config with `sudo sshd -T`, never by reading a file**, and
+validate with `sudo sshd -t` before reloading, keeping a second session open.
+The full rule and the verification command are in
+[INFRASTRUCTURE.md](INFRASTRUCTURE.md#ssh-configuration).
+
+### wlan0 recovery is an external timer, not NetworkManager's own retry (Sep 15 2026) (DONE)
+
+NetworkManager did not fail. It read a deauth arriving mid handshake as a
+rejected pre shared key, entered `no-secrets`, found no agent to ask on a
+headless machine, marked the connection failed and stopped. The logic was sound
+and the premise was false, and it never retried across 21 hours.
+
+**Chosen:** `miles-wifi.timer` every two minutes, running a script that checks
+carrier and a global scope IPv4 address and runs `nmcli connection up Alsander`
+when either is missing.
+
+**Relying on NetworkManager autoconnect was rejected**, because a wrong password
+is not a condition that retrying fixes and NM was correct to stop. The recovery
+has to come from something that does not care *why* the link is down. That is
+the whole design: the watchdog never diagnoses.
+
+**A dispatcher script was rejected** for the same reason in a different shape.
+Dispatcher scripts fire on state changes, and the failure here was the absence
+of any further state change. Nothing would have triggered it.
+
+**It checks link state, not reachability, deliberately.** Adding an internet
+probe would make it bounce a perfectly good link during an upstream or ISP
+outage, turning someone else's problem into a dropped connection of our own.
+Reachability is `netcheck`'s question and it answers it on the turn that failed.
+Two components, two questions, no overlap.
+
+**Shell rather than Python**, unlike everything else in `scripts/`, because the
+boot where this matters most may be the boot where the Python environment is
+itself broken. **Root rather than `theycallmelee`**, unlike `miles-health`,
+because `nmcli connection up` is polkit protected and a non root caller is
+refused on the one occasion it has to work. **Silent on a healthy link**,
+because systemd already writes a Starting and a Finished line per run and seven
+hundred daily lines saying nothing happened would bury the ones that matter.
+
+### Every systemd unit is versioned, and the copy is checked rather than trusted (Sep 15 2026) (DONE)
+
+`miles-server`, `miles-voice` and `miles-tunnel` existed nowhere but `/etc`,
+so a reinstall would have rebuilt three production services from memory. All
+five units are now in `systemd/`.
+
+**Symlinking `/etc/systemd/system/*.service` into the repo was rejected.**
+systemd resolves symlinks and it would have kept the two identical by
+construction, which is exactly the appeal. It also means a checkout, a rebase or
+a permissions change silently alters production, and the repo is not root owned.
+A copy that can drift and is checked beats a link that cannot drift and can be
+moved by `git`.
+
+**So the drift is accepted and made visible instead.** Change the repo copy
+first, then install it, and verify with the loop in
+[INFRASTRUCTURE.md](INFRASTRUCTURE.md#systemd-services). Editing under `/etc`
+and forgetting to copy back is the failure this invites, and the loop is what
+catches it.

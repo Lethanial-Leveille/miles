@@ -187,6 +187,22 @@ All live in production as of Aug 10 2026. All mic independent unless noted.
 
 ---
 
+## Done since the Sep 14 2026 network incident
+
+### Tailscale, installed Sep 15 2026
+
+Was deferred here for part of a day because it had been reported as applied
+when it had only been installed on the MacBook. Now real on the Pi: tailscale
+1.102.4, `tailscaled` enabled and active, joined as `miles` at
+`100.99.248.127` on the tailnet.
+
+Full reasoning is in the decision log in
+[SESSION_START.md](SESSION_START.md). Kept here only as a pointer, because the
+same item was listed as deferred and a future session searching this file for
+Tailscale should not find a stale "not done".
+
+---
+
 ## Blocked on hardware
 
 Moving to main campus in a few weeks. **Every acoustic measurement in this

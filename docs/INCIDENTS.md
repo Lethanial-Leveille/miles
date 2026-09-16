@@ -33,6 +33,7 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 14 2026 | One deauth took the Pi off the network for 21 hours, and the recovery exposed it to the internet for 9 | [below](#one-deauth-cost-21-hours-offline-and-9-hours-exposed-sep-14-2026) |
 | Sep 14 2026 | Fixing one name on three lessons took five read backs and three yeses | [below](#fixing-one-name-took-five-read-backs-sep-14-2026) |
 | Sep 14 2026 | His yes created a career fair on a date Nova never said | [below](#his-yes-created-a-date-he-did-not-hear-sep-14-2026) |
 | Sep 13 2026 | A busy room held the microphone for up to a minute while he said the wake word | [below](#a-busy-room-held-the-microphone-sep-13-2026) |
@@ -47,6 +48,118 @@ session real work.
 | Sep 6 2026 | One capsule recorded itself as three microphones; enrollment threw away its audio | [below](#two-guards-that-could-not-do-their-jobs-sep-6-2026) |
 | Aug 13 2026 | Nova confabulated a security tool call that never happened | [BRAIN.md](BRAIN.md#nova-knows-the-transcript-is-not-his-words) |
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
+
+---
+
+## One deauth cost 21 hours offline and 9 hours exposed (Sep 14 2026)
+
+At 15:37 the Alsander AP deauthenticated wlan0 in the middle of the handshake.
+That part is unremarkable. Access points deauth clients constantly, and the
+supplicant is built to retry.
+
+What followed was not a wifi failure. It was a recovery path that gave up
+permanently after one wrong guess, and then a recovery that was more dangerous
+than the outage it fixed.
+
+### NetworkManager diagnosed it as a wrong password
+
+A deauth arriving mid handshake is indistinguishable, from where NetworkManager
+sits, from an AP rejecting the pre shared key. It made the reasonable guess and
+asked for the secret again, entering `no-secrets`.
+
+On a desktop that is a dialog box. There is no desktop. Headless, there is no
+secret agent registered to answer, so the request had nowhere to go, and
+NetworkManager did the only thing left: it marked the connection failed and
+stopped.
+
+**It never retried.** Not once in 21 hours. The connection was not down because
+the radio was broken or the AP was gone; it was down because something had
+concluded the password was wrong, and a wrong password is not a condition that
+retrying fixes. The logic was sound. The premise was false.
+
+This is a failure class that only exists headless, which is exactly why it went
+unnoticed for months of development on a Pi that always had a screen or a
+session attached to notice. The bug needs nobody watching in order to happen.
+
+### The recovery was worse than the fault
+
+Recovery was a cable. Plugging in ethernet worked immediately, and that is where
+the real incident starts.
+
+The wlan0 lease is CGNAT, `100.70.16.218/25`, which is not routable from the
+internet. It had been acting as a firewall that nobody had chosen, configured or
+checked. The ethernet port handed out a **routable public address with no NAT in
+front of it**.
+
+Nothing about any service changed. No config was edited, no port was opened, no
+firewall rule was removed. The network moved underneath three daemons that were
+all binding the way they always had:
+
+| Service | Bound to | Became |
+|---|---|---|
+| sshd | `0.0.0.0:22` | open to the internet |
+| n8n (docker) | `0.0.0.0:5678` | open to the internet |
+| uvicorn | `0.0.0.0:8000` | open to the internet |
+
+That lasted roughly nine hours.
+
+### What found it
+
+Roughly **13,000 SSH authentication attempts from 35 distinct addresses**, which
+is simply what the internet does to a fresh port 22 and says nothing about
+anyone targeting this Pi. Every username was generic botnet stock: `root`,
+`admin`, and a long tail of unknown users. The heaviest three were
+`109.160.32.31`, `77.239.124.214` and `43.226.62.221`.
+
+**Every attempt failed. There was no successful login, and no evidence of
+compromise.** Two things happened to be standing in the way. `PermitRootLogin
+without-password` meant the thousands of root password guesses could not
+succeed no matter how long they ran. And no attacker guessed `theycallmelee`,
+which was the account that could in principle have been reached, because
+`PasswordAuthentication` was `yes` with no rate limiting and no user allowlist.
+
+That second one is luck, not defence. The only reason this entry is not about a
+compromise is that a botnet spraying stock usernames never tried the one that
+would have worked.
+
+### The lesson
+
+The wifi drop is the least interesting part.
+
+**A service's exposure was a property of the network, not of the service.**
+Every daemon here was written to bind `0.0.0.0` on the reasonable assumption
+that the LAN was a boundary. It was, right up until the moment a cable changed
+what the LAN meant. Binding to loopback is not defence in depth against an
+attacker so much as refusing to let the network's shape be load bearing.
+
+The corollary is that an incident's blast radius is decided long before the
+incident. Nothing was done wrong during those nine hours. The exposure was
+already sitting there in three `ExecStart` lines and a compose file, waiting for
+the day the address changed.
+
+### Fixes applied
+
+| Fix | Why | Where |
+|---|---|---|
+| `miles-wifi` watchdog every two minutes | The gap was never retrying, so the fix is something that retries on a schedule and does not care why the link went | [INFRASTRUCTURE.md](INFRASTRUCTURE.md#systemd-services) |
+| wifi powersave disabled | Reduces the deauths that start this | `powersave=2` in `Alsander.nmconnection`, so it reapplies on every activation |
+| n8n bound to `127.0.0.1:5678` | Exposure should not depend on the network's shape | `docker-compose.yaml` port mapping |
+| uvicorn bound to `localhost` | Same, and `localhost` rather than the literal address so both loopback families are covered | [INFRASTRUCTURE.md](INFRASTRUCTURE.md#systemd-services) |
+| `PasswordAuthentication no` | Removes the entire surface those 13,000 attempts were aimed at | `00-hardening.conf`, which sorts ahead of the cloud-init file. See [INFRASTRUCTURE.md](INFRASTRUCTURE.md#ssh-configuration) |
+| `AllowUsers theycallmelee` | Ends the unknown user probes at the door | `/etc/ssh/sshd_config` line 59 |
+| Tailscale | Recovery no longer requires a publicly addressable anything | `miles` at `100.99.248.127` on the tailnet |
+
+**Tailscale was reported as applied before it was, and is now real.** On
+Sep 15 2026 it was listed among these fixes while `command -v tailscale` found
+nothing and no `tailscaled` unit existed. The install had been done on the
+MacBook, and the tailnet showed one machine. It was installed on the Pi later
+the same day: tailscale 1.102.4, `tailscaled` enabled and active, joined as
+`miles` at `100.99.248.127`, verified by a round trip to the MacBook.
+
+Worth keeping rather than quietly deleting, because the gap between "I applied
+that fix" and "that fix is running on the machine that needed it" is exactly
+the drift this file exists to catch, and it happened to the fix list for an
+incident about drift.
 
 ---
 

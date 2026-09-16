@@ -27,8 +27,26 @@ piece of scheduled work the system owns.
 ## systemd services
 
 - `miles-voice.service` runs voice_main.py (room mic pipeline)
-- `miles-server.service` runs uvicorn server:app on port 8000 (FastAPI)
+- `miles-server.service` runs uvicorn server:app on port 8000 (FastAPI),
+  bound to `localhost` rather than to an address
 - `miles-tunnel.service` runs cloudflared tunnel (Cloudflare Tunnel)
+
+`--host localhost` rather than `--host 127.0.0.1`, and the difference is not
+cosmetic. asyncio resolves a hostname and binds a socket per result, so
+`localhost` yields two listeners, `127.0.0.1:8000` and `[::1]:8000`, while the
+literal address yields only the first. cloudflared routes to
+`http://localhost:8000` and so may present either family. Confirm both after
+any change to that line, because a single listener here fails only for whichever
+family cloudflared happens to pick:
+
+```bash
+ss -ltnp | grep 8000        # expect a 127.0.0.1 line AND a [::1] line
+```
+
+It was `0.0.0.0` until Sep 15 2026. **The consequence is that nothing off the Pi
+reaches the API directly any more.** The Nova iOS app must go through
+miles.lethanial.com; talking to `miles.local:8000` or the Pi's LAN address now
+gets a refused connection, and that is the intent rather than a fault.
 
 Timer driven, not long running:
 
@@ -48,8 +66,22 @@ systemctl list-timers miles-wifi.timer
 journalctl -u miles-wifi.service -n 50
 ```
 
-Both units are versioned under `systemd/` and installed by copying to
-`/etc/systemd/system/`. The other three are not versioned.
+**Every unit is versioned under `systemd/`** and installed by copying to
+`/etc/systemd/system/`. That became true on Sep 15 2026; before then only the
+`miles-health` pair was in the repo and the three long running services existed
+nowhere but `/etc`, which meant a reinstall rebuilt them from memory.
+
+`systemd/` is a copy, not the running configuration, so the two can still
+diverge. What keeps them honest is checking, not hoping:
+
+```bash
+for u in miles-voice miles-server miles-tunnel miles-health miles-wifi; do
+    diff -q "/etc/systemd/system/$u.service" ~/miles/systemd/"$u.service"
+done
+```
+
+Editing under `/etc` and forgetting to copy back is the drift this invites.
+Change the repo copy first, then install it.
 
 ```bash
 sudo systemctl status miles-voice miles-server miles-tunnel
@@ -71,6 +103,115 @@ Active routes:
 - api.lethanial.com to http://localhost:8000 (legacy fallback)
 
 Domain lethanial.com registered through Cloudflare. Free Zero Trust tier.
+
+## SSH configuration
+
+**Read the effective config with `sudo sshd -T`. Never by reading a file.**
+
+```bash
+sudo sshd -T | grep -iE "^(passwordauthentication|permitrootlogin|allowusers|pubkeyauthentication)\b"
+```
+
+Expected on this Pi, as of Sep 15 2026:
+
+```
+passwordauthentication no
+permitrootlogin without-password
+allowusers theycallmelee
+pubkeyauthentication yes
+```
+
+The reason a file is not good enough is that the config is assembled from
+several, and the assembly rule is the opposite of what almost everyone assumes.
+
+`/etc/ssh/sshd_config` line 12 is:
+
+```
+Include /etc/ssh/sshd_config.d/*.conf
+```
+
+That include is at the **top** of the file, not the bottom, and **sshd takes
+the first value it finds for any keyword and ignores every later one**. There is
+no last write wins here and no override semantics. First occurrence is the
+value, so:
+
+- The drop in directory beats the main file, because it is included first.
+- Within the directory, files are read in lexical order, so a **lower numbered
+  file wins**.
+
+Which makes the current state read backwards until you know the rule:
+
+| File | Sets | Wins? |
+|---|---|---|
+| `00-hardening.conf` | `PasswordAuthentication no` | **yes**, it sorts first |
+| `50-cloud-init.conf` | `PasswordAuthentication yes` | no, sshd already has a value |
+
+`00-hardening.conf` is numbered the way it is for exactly one reason: to sort
+ahead of `50-cloud-init.conf`. That file is **managed by cloud-init and may be
+regenerated**, so editing it to say `no` is not a fix, it is a change waiting to
+be reverted by something that does not know why it mattered. Winning on sort
+order is durable in a way that editing a generated file is not.
+
+`AllowUsers theycallmelee` is the exception to all of this: it lives in
+`/etc/ssh/sshd_config` itself, at line 59, because nothing in the drop in
+directory sets it and first occurrence therefore still finds it.
+
+After any change, test before reloading, because a config that fails to parse
+takes sshd down and this is a headless machine:
+
+```bash
+sudo sshd -t && sudo systemctl reload ssh     # -t validates, reload applies
+sudo sshd -T | grep -i passwordauthentication # confirm what actually took
+```
+
+Keep a second session open while doing it. Why this is not a theoretical
+concern is in [INCIDENTS.md](INCIDENTS.md#one-deauth-cost-21-hours-offline-and-9-hours-exposed-sep-14-2026).
+
+## Tailscale
+
+Third way to reach the Pi, added Sep 15 2026 after the incident below. The
+other two are the LAN and the Cloudflare tunnel.
+
+| Path | Reaches | Requires |
+|---|---|---|
+| LAN | `miles.local`, port 22 only | being on the same network |
+| Cloudflare tunnel | miles.lethanial.com, the FastAPI app | nothing, it is public |
+| Tailnet | `miles` at `100.99.248.127`, any port | being on the tailnet |
+
+```bash
+tailscale status          # who is on the tailnet
+tailscale ip -4           # this node's address
+tailscale ping <machine>  # round trip, and whether it is direct or relayed
+```
+
+**Why it is here.** The Sep 14 incident's recovery required a publicly
+addressable machine, which is how three services ended up facing the internet
+for nine hours. The tailnet makes the Pi reachable without any listener facing
+the internet at all, so the next recovery does not have to trade an outage for
+an exposure.
+
+**Tailscale SSH is deliberately off.** `tailscale up` ran without `--ssh`, so
+SSH is still governed by the hardened sshd config above rather than by tailnet
+ACLs. Reaching the Pi over the tailnet still uses your key and still obeys
+`AllowUsers`.
+
+**MagicDNS rewrites `/etc/resolv.conf`** to `100.100.100.100` and adds your
+tailnet's search domain. Name resolution was verified working through
+it for the Anthropic, ElevenLabs and OpenWeatherMap hosts. If anything ever
+starts reporting `no_dns`, this is the first place to look rather than the
+router.
+
+**The CGNAT ranges overlap, and today they do not collide.** Tailscale assigns
+from `100.64.0.0/10` and this Pi's wlan0 lease is `100.70.16.218/25`, inside
+that same range, with a link scope route for `100.70.16.128/25` out `wlan0`.
+Both current nodes are clear of it, `miles` at `100.99.248.127` and the MacBook
+at `100.103.30.91`. The failure to watch for is narrow and specific: a future
+node assigned between `100.70.16.128` and `100.70.16.255` would be routed out
+wlan0 from this Pi and be unreachable from here, and nowhere else.
+
+```bash
+ip route | grep 100.      # the local /25 that tailnet traffic must not land in
+```
 
 ## FastAPI endpoints
 

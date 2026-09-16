@@ -1,0 +1,18 @@
+[Unit]
+Description=Check wlan0 every two minutes
+
+[Timer]
+# Two minutes after boot as well, because the window right after a reboot is
+# exactly where the link most often fails to come up on its own.
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+# Tight for a timer, loose for a watchdog. The default AccuracySec is one
+# minute, which on a two minute period is enough slack to matter.
+AccuracySec=10s
+
+# No Persistent. A missed run of a two minute check is not worth catching up
+# on; by the time the Pi is back, the next fire is already seconds away.
+
+[Install]
+WantedBy=timers.target
