@@ -128,6 +128,27 @@ PHRASES = {
     # tell that nobody is home.
     # Index 0 is night only, see NIGHT_ONLY. The rest carry any hour, which is
     # why there are five of them: outside night they are the whole set.
+    # Said the moment a slow tool starts, on a voice turn where Nova wrote no
+    # lead in of her own; see brain._BRIDGES. Tool turns were half of all turns
+    # on Sep 16 2026, with a median 5258ms before any sound and 8022ms to finish.
+    # Short, because the answer waits for the line to end, and committing to
+    # nothing, because the result is not known yet.
+    'bridge_calendar': [
+        "Checking your calendar.",
+        "Let me look at your calendar.",
+        "One sec, pulling up your calendar.",
+    ],
+    'bridge_health': [
+        "Checking your Oura numbers.",
+        "Let me pull up your ring data.",
+        "One sec, looking at your Oura.",
+    ],
+    'bridge_weather': [
+        "Checking the weather.",
+        "Let me check the forecast.",
+        "One sec, looking at the weather.",
+    ],
+
     'dismiss': [
         "Goodnight, Lethanial.",
         "Anytime.",
@@ -261,7 +282,7 @@ def rendered(key, hour=None, thanked=False):
     return found
 
 
-def play(key, hour=None, thanked=False):
+def play(key, hour=None, thanked=False, bridge=False):
     """Play one eligible variant at random.
 
     Returns the text of what was played, or None if nothing is rendered. The
@@ -288,7 +309,10 @@ def play(key, hour=None, thanked=False):
         # Ignored unless a turn is open, so the wake ack and the offline
         # apologies cost nothing here: the ack plays before begin_turn, and
         # _say_cached runs after abandon_turn.
-        timing.note_local_audio((time.monotonic() - started) * 1000.0)
+        if bridge:
+            timing.note_bridge()
+        else:
+            timing.note_local_audio((time.monotonic() - started) * 1000.0)
         subprocess.run(
             ["aplay", "-D", tts.SPEAKER_DEVICE, path],
             stdout=subprocess.DEVNULL,

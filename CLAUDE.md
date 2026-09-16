@@ -105,7 +105,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (814 passing, 6 skipped, Sep 16 2026)
+│   └── tests/                 # pytest suite (822 passing, 6 skipped, Sep 16 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -277,7 +277,7 @@ audio context).
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: Resemblyzer (256 dim cosine similarity).
-Memory: SQLite WAL mode, schema migrations to version 24.
+Memory: SQLite WAL mode, schema migrations to version 25.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.

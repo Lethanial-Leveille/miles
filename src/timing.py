@@ -175,6 +175,19 @@ def note_tts(ttfb_ms, first_audio_ms):
             ) * 1000.0
 
 
+def note_bridge():
+    """Record when the spoken bridge on a tool turn started, from speech end.
+
+    Not note_local_audio: that would mark the turn as answered locally, and the
+    answer that follows would still close out total_perceived_ms, so the bridge
+    would never show up anywhere."""
+    with _lock:
+        if (_turn is None or _turn["speech_end"] is None
+                or "bridge_ms" in _turn["stages"]):
+            return
+        _turn["stages"]["bridge_ms"] = (time.monotonic() - _turn["speech_end"]) * 1000.0
+
+
 def note_local_audio(first_audio_ms):
     """Close out perceived latency for a turn answered from the phrase bank.
 
@@ -233,6 +246,7 @@ def end_turn(transcript=None, response=None):
         tool_ms=stages.get("tool_ms"),
         second_ttft_ms=stages.get("second_ttft_ms"),
         local_intent=turn["local_intent"],
+        bridge_ms=stages.get("bridge_ms"),
     )
 
     total = stages.get("total_perceived_ms")

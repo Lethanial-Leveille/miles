@@ -170,6 +170,21 @@ retraction, and answering it with "Any time at all" reads as not having
 listened. Same index filter mechanism as `NIGHT_ONLY`, chosen so already
 rendered files keep their numbering.
 
+### Bridges on slow tool turns, Sep 16 2026
+
+`bridge_calendar`, `bridge_health` and `bridge_weather` are said the moment a
+mapped tool starts on a voice turn, when Nova wrote no lead in of her own
+(`brain._BRIDGES`). They play under `speak_lock`, so the answer waits for the
+line to end, which is why they are short: rendered at 0.96s to 1.66s, against a
+gap of about two seconds between a tool starting and its answer being ready.
+They commit to nothing, because the result is not known yet. Timed as
+`bridge_ms`, never as local audio; see
+[LATENCY.md](LATENCY.md#the-turn-budget-measured-sep-16-2026).
+
+This reverses the Aug 11 decision to add no acknowledgment during tool
+execution, which was deferred until `tool_ms` could be read. It can now: tool
+turns were half of all turns, 5258ms before any sound and 8022ms to finish.
+
 ## Pronunciation
 
 `pronunciations` table, one row per grapheme, seeded with Lethanial to

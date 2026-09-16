@@ -600,6 +600,15 @@ def _migration_024_timers_are_rows(conn):
     conn.execute("ALTER TABLE reminders ADD COLUMN kind TEXT NOT NULL DEFAULT 'reminder'")
 
 
+def _migration_025_bridge_timing(conn):
+    """When the spoken bridge started, on turns that called a slow tool.
+
+    Its own column rather than folded into total_perceived_ms, which keeps
+    meaning the wait for the answer so it stays comparable with every row since
+    August. The first sound he hears on a tool turn is the smaller of the two."""
+    conn.execute("ALTER TABLE timing_log ADD COLUMN bridge_ms REAL")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -625,6 +634,7 @@ MIGRATIONS = [
     (22, _migration_022_local_intent_timing),
     (23, _migration_023_normalize_mic_names),
     (24, _migration_024_timers_are_rows),
+    (25, _migration_025_bridge_timing),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -1431,7 +1441,7 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
                model=None, response=None, cache_read_tokens=None,
                cache_creation_tokens=None, first_sentence_ms=None,
                max_pause_ms=None, tool_ms=None, second_ttft_ms=None,
-               local_intent=False):
+               local_intent=False, bridge_ms=None):
     # Derived here rather than at every call site so the count and the text it
     # describes can never drift apart.
     response_words = len(response.split()) if response else None
@@ -1445,14 +1455,14 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
             claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
             action_ms, total_perceived_ms, model, response, response_words,
             cache_read_tokens, cache_creation_tokens, first_sentence_ms, max_pause_ms,
-            tool_ms, second_ttft_ms, local_intent)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            tool_ms, second_ttft_ms, local_intent, bridge_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (datetime.now().isoformat(), turn_type, int(action_fired), transcript,
          speech_end_to_endpoint_ms, transcribe_ms, verify_ms,
          claude_ttft_ms, claude_total_ms, tts_ttfb_ms, tts_first_audio_ms,
          action_ms, total_perceived_ms, model, response, response_words,
          cache_read_tokens, cache_creation_tokens, first_sentence_ms,
-         max_pause_ms, tool_ms, second_ttft_ms, int(local_intent))
+         max_pause_ms, tool_ms, second_ttft_ms, int(local_intent), bridge_ms)
     )
     conn.commit()
     conn.close()
