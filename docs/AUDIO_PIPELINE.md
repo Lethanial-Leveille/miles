@@ -431,6 +431,28 @@ Note the coupling before touching either dial: lowering `SILENCE_LIMIT` shrinks
 the head start and makes transcription worse by exactly as much as it makes
 endpointing better.
 
+### Verification starts with the speculation (Sep 16 2026)
+
+Verification ran after transcription, and it never needed the transcript,
+which it only logs. Each speculation now also embeds the voice, on the same
+frames, on one worker thread (`early_verify.py`); `verify_voice` uses that
+embedding when the speculation held and computes it as before when it did not.
+
+Measured before building, six archived recordings: whisper alone 1019ms, the
+encoder alone 150ms; together, 1055ms and 212ms. The encoder fits inside
+whisper's time at a cost of about 36ms to whisper.
+
+**The audio is prepared in one place**, `early_verify.prepare`, from samples
+rather than a file path, because the speculative file can be overwritten while
+the early run is still reading it. Checked against the old path based version
+on four real recordings: identical samples, embedding cosine 1.0. Checked end to
+end with the service stopped: the same recording scored the same late and
+early (0.612 and 0.688).
+
+The wake word is prepended on a first turn exactly as before, read from the
+wake buffer when the speculation starts rather than after transcription; the
+buffer does not change in between.
+
 ## Speaker verification and enrollment
 
 Resemblyzer, 256 dimensional cosine similarity against the stored voiceprint.

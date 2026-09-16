@@ -69,6 +69,7 @@ with silence_stderr():
     import webrtcvad
 
 import speaker_encoder
+import early_verify
 
 from config import (
     CHUNK, CHANNELS, RATE,
@@ -277,7 +278,7 @@ def record_command(on_wake=None):
             # Start Whisper on what is captured so far, while endpointing keeps
             # waiting out the rest of SILENCE_LIMIT.
             maybe_speculate(frames, silent_chunks, spec_chunks,
-                            total_chunks > min_chunks)
+                            total_chunks > min_chunks, turn_type='initial')
 
         if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
             break
@@ -366,7 +367,7 @@ def listen_for_followup(timeout=10, on_wake=None):
         else:
             silent_chunks += 1
             maybe_speculate(frames, silent_chunks, spec_chunks,
-                            total_chunks > min_chunks)
+                            total_chunks > min_chunks, turn_type='followup')
 
         if total_chunks > min_chunks and silent_chunks >= int(SILENCE_LIMIT / 0.03):
             break
@@ -495,16 +496,26 @@ class _Speculation:
     still waiting out, and silence carries no words, so the transcript is the
     one the full clip would have produced."""
 
-    def __init__(self, frames):
+    def __init__(self, frames, turn_type='initial'):
         _write_wav(frames, SPECULATIVE_WAV)
         self.stale = False
         self.proc = subprocess.Popen(
             _whisper_cmd(SPECULATIVE_WAV, threads=SPECULATIVE_THREADS),
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        # The voice embedding starts beside it, on the same frames; see
+        # early_verify.py. A failure here only loses the head start.
+        try:
+            prepended = wake_word_audio() if turn_type == 'initial' else None
+            self.early = early_verify.start(frames, prepended)
+        except Exception as exc:
+            print(f"Early verification unavailable: {exc}", flush=True)
+            self.early = None
 
     def cancel(self):
         """He spoke again, so this covers only part of the turn."""
         self.stale = True
+        if self.early is not None:
+            self.early.cancel()
         try:
             self.proc.terminate()
         except Exception:
@@ -526,16 +537,22 @@ class _Speculation:
 # the signature every caller already uses.
 _pending_speculation = None
 
+# The early embedding of a speculation that held, handed from transcribe to
+# verify_voice the same way. None whenever the speculation did not hold.
+_early_verification = None
+
 
 def cancel_speculation():
     """Drop any pending run. Safe to call when there is nothing pending."""
-    global _pending_speculation
+    global _pending_speculation, _early_verification
+    _early_verification = None
     if _pending_speculation is not None:
         _pending_speculation.cancel()
         _pending_speculation = None
 
 
-def maybe_speculate(frames, silent_chunks, spec_chunks, past_minimum):
+def maybe_speculate(frames, silent_chunks, spec_chunks, past_minimum,
+                    turn_type='initial'):
     """Start Whisper on what is captured so far, mid pause.
 
     Called from both capture loops rather than inlined in each, because it was
@@ -557,7 +574,7 @@ def maybe_speculate(frames, silent_chunks, spec_chunks, past_minimum):
     if len(frames) * 0.03 > WHISPER_SEGMENT_SECONDS:
         return
     try:
-        _pending_speculation = _Speculation(list(frames))
+        _pending_speculation = _Speculation(list(frames), turn_type)
     except Exception as exc:
         print(f"Speculative transcribe unavailable: {exc}", flush=True)
 
@@ -579,8 +596,12 @@ def transcribe(wav_path):
     already partly or wholly done, so the stopwatch records only what was left.
     Anything that failed or went stale falls back to a full run, which is
     exactly today's behaviour."""
-    global _pending_speculation
+    global _pending_speculation, _early_verification
     speculation, _pending_speculation = _pending_speculation, None
+    # Valid whenever the speculation is, whatever whisper made of it: the
+    # frames are the turn's, less trailing silence, which trimming removes.
+    _early_verification = (speculation.early if speculation is not None
+                           and not speculation.stale else None)
 
     with timing.stopwatch('transcribe_ms'):
         if speculation is not None and not speculation.stale:
@@ -822,23 +843,31 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
                         VOICEPRINT_LEARN_MIN_SIMILARITY,
                         VOICEPRINT_LEARN_MIN_SECONDS)
 
+    global _early_verification
     verify_started = time.monotonic()
 
-    # Prepend the wake word for initial turns. A follow up has no wake word,
-    # and the buffer would be stale from the turn before, so this is scoped to
-    # the only case where the audio genuinely belongs to this utterance.
-    prepended = None
-    if turn_type == 'initial':
-        prepended = wake_word_audio()
+    # Started during the endpoint wait, if the speculation held. Its wav and
+    # embedding are the ones this function would compute, so the rest of the
+    # decision is unchanged.
+    early, _early_verification = _early_verification, None
+    wav = embedding = None
+    if early is not None:
+        try:
+            wav, embedding = early.result(timeout=10)
+            print("(early verification hit)", flush=True)
+        except Exception as exc:
+            print(f"Early verification failed, verifying now: {exc}", flush=True)
+            wav = embedding = None
 
-    if prepended is not None:
+    if wav is None:
+        # Prepend the wake word for initial turns. A follow up has no wake
+        # word, and the buffer would be stale from the turn before, so this is
+        # scoped to the only case where the audio genuinely belongs to this
+        # utterance.
+        prepended = wake_word_audio() if turn_type == 'initial' else None
         with wave.open(wav_path, 'rb') as wf:
             command = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
-        wav = speaker_encoder.trim(
-            np.concatenate([prepended, command]).astype(np.float32) / 32768.0,
-            source_sr=RATE)
-    else:
-        wav = speaker_encoder.trim(wav_path)
+        wav = early_verify.prepare(command, prepended)
 
     with wave.open(wav_path, 'rb') as wf:
         duration_seconds = wf.getnframes() / wf.getframerate()
@@ -892,7 +921,8 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
         timing.mark('verify_ms', (time.monotonic() - verify_started) * 1000.0)
         return VERIFIED
 
-    embedding = embed_voice(wav)
+    if embedding is None:
+        embedding = embed_voice(wav)
     if embedding is None:
         # The encoder declined the clip as too short. The guard above normally
         # catches this; reaching here means the two disagree by a hair, and

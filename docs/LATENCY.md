@@ -25,6 +25,32 @@ Up: [CLAUDE.md](../CLAUDE.md) · [SESSION_START.md](SESSION_START.md) ·
 rule is the reason this file exists as a single place rather than as numbers
 scattered through prose.
 
+## The turn budget, measured Sep 16 2026
+
+From `timing_log`, voice turns since Sep 13 (eleven_v3, calendar tools, 100
+turns). **The app is not timed at all**; only voice turns reach `timing_log`.
+
+| Stage | All turns | No tool | With a tool |
+|---|---|---|---|
+| endpoint | 1200ms | 1200ms | 1200ms |
+| transcribe | 287ms | 316ms | 266ms |
+| verify | 264ms | 289ms | 246ms |
+| claude_ttft | 1179ms | 1075ms | 1405ms |
+| first_sentence | 230ms | 217ms | 258ms |
+| tts_ttfb | 606ms | 567ms | 647ms |
+| tool | | | 606ms |
+| second_ttft | | | 631ms |
+| action, the whole tool turn | | | 8022ms |
+| **perceived** | **4251ms** (n=92) | **3857ms** (n=46) | **5258ms** (n=45) |
+
+Tool turns were 53 of 100. The Aug 12 table below is kept as history.
+
+Changes made against this baseline, one at a time so each shows up on its own:
+
+- Sep 16: verification starts with the speculative transcript
+  ([AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#verification-starts-with-the-speculation-sep-16-2026)).
+  Expected to remove most of `verify_ms`; not yet measured live.
+
 ## The turn budget, measured Aug 12 2026
 
 | Stage | Median |
