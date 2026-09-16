@@ -1328,3 +1328,23 @@ Haiku on a background thread, pending only, never superseding. A correction he
 mentions in passing therefore arrives as a new pending memory beside the old
 one, not as a replacement; the schema change that would let an inferred
 supersede wait for review is still in BACKEND_TODO.md.
+
+### Latency toward two to three seconds, one change at a time (Sep 16 2026) (IN PROGRESS)
+
+He wants two to three seconds, at least perceived. Baseline in
+[LATENCY.md](LATENCY.md#the-turn-budget-measured-sep-16-2026): 3857ms on plain
+turns, 5258ms on tool turns, which are half of all turns. Four changes, each
+shipped and measured on its own:
+
+1. **Verification beside the speculative transcript** (DONE, awaiting live
+   numbers). Benchmarked first: running both costs whisper about 36ms.
+2. **An instant spoken bridge when a tool starts** (NEXT). Pre rendered, played
+   from disk.
+3. **Ending the recording early on a finished sentence.** The Sep 13 entry
+   rejected cutting on timing alone, because he speaks through long pauses in
+   18% of turns. To be validated against archived recordings before shipping.
+4. **Starting Claude during the endpoint wait.** Tools must never run on a
+   guess; calendar changes now happen at once.
+
+**Not changed:** flash_v2 would save about 250ms to first audio, but eleven_v3
+was chosen by ear, and that is his call.

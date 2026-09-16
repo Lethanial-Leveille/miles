@@ -150,8 +150,9 @@ def spy(monkeypatch):
     started, cancelled = [], []
 
     class FakeSpeculation:
-        def __init__(self, frames):
+        def __init__(self, frames, turn_type=None):
             self.stale = False
+            self.turn_type = turn_type
             self.frames = frames
             started.append(frames)
 
