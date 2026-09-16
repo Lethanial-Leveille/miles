@@ -718,6 +718,13 @@ HISTORY_ASSISTANT_WORDS = 30
 # 2x on writes instead of 1.25x and would only cover another 10%.
 PROMPT_CACHING = True
 
+# The background pass that notices facts worth remembering; see memory_pass.py.
+# Haiku, measured Sep 16 2026 on his real messages: 16 of 24 facts against 12
+# for Sonnet 5, at about half the cost. It runs after the reply, so its speed
+# is not on the path he waits for.
+MEMORY_PASS = True
+MEMORY_PASS_MODEL = "claude-haiku-4-5"
+
 
 # ── Conversation loop ──
 # Hard ceiling on consecutive follow up turns before the loop returns to wake

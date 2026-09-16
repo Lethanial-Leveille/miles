@@ -1188,6 +1188,10 @@ and listen.
 
 ### She still does not notice anything on her own
 
+> **Addressed Sep 16 2026** by the background memory pass; see
+> [BRAIN.md](BRAIN.md#a-separate-pass-notices-what-he-mentions). The replay this
+> entry asked for is what chose the fix. Left here for the history.
+
 Sep 16 2026: in real use since the Sep 13 memory change, `remember` was called
 once, for a fact he stated outright, and **no memory has ever been stored as
 inferred**, so the approval queue in the app has never had anything in it. The

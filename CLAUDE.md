@@ -92,6 +92,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── stream_router.py       # Delta buffering, sentence flush
 │   ├── tools.py               # Tool registry, @tool decorator, schema generation
 │   ├── memory_tool.py         # remember tool, with supersede and expiry
+│   ├── memory_pass.py         # notices facts after each turn, queued for review
 │   ├── system_state.py        # get_system_state tool: uptime, temp, latency, commit
 │   ├── tier_tool.py           # lower_access tool: demotion by voice, never escalation
 │   ├── calendar_tools.py      # Google Calendar reads, freebusy, changes with undo, app view
@@ -103,7 +104,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (796 passing, 6 skipped, Sep 16 2026)
+│   └── tests/                 # pytest suite (806 passing, 6 skipped, Sep 16 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -224,6 +225,8 @@ of the value itself.
 - `MODEL_B = "claude-sonnet-4-5-20250929"`
 - `MODEL_AB_TEST = False`
 - `PROMPT_CACHING = True`
+- `MEMORY_PASS = True`, `MEMORY_PASS_MODEL = "claude-haiku-4-5"` (background
+  noticing, after the reply; `MAX_PER_MESSAGE = 3` in `memory_pass.py`)
 - `HISTORY_ASSISTANT_WORDS = 30`
 
 ### Conversation loop — why: [BRAIN.md](docs/BRAIN.md#local-intent)
