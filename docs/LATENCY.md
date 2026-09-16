@@ -50,6 +50,12 @@ Changes made against this baseline, one at a time so each shows up on its own:
 - Sep 16: verification starts with the speculative transcript
   ([AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#verification-starts-with-the-speculation-sep-16-2026)).
   Expected to remove most of `verify_ms`; not yet measured live.
+- Sep 16: a pre rendered bridge line when a slow tool starts on a voice turn
+  ([VOICE_OUTPUT.md](VOICE_OUTPUT.md#bridges-on-slow-tool-turns-sep-16-2026)).
+  **Timed separately, as `bridge_ms`** (migration 25). `total_perceived_ms`
+  keeps meaning the wait for the answer, so it stays comparable with every row
+  above; the first sound on a tool turn is the smaller of the two. Expected
+  around 2.9s; not yet measured live.
 
 ## The turn budget, measured Aug 12 2026
 

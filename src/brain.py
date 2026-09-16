@@ -18,6 +18,7 @@ from tools import registry, Permission, permits
 from database import log_tool_call
 import alerts
 import memory_pass
+import phrasebank
 
 # Imported for its side effect: registering the tools. Without it the registry
 # is empty, the capability block is blank, and Nova silently has no
@@ -253,6 +254,34 @@ _STAGE_WORDS = {
     "undo_last_change":        "Undoing that",
     "update_calendar_event":   "Changing the event",
 }
+
+
+# The pre rendered line said when one of these tools starts on a voice turn.
+# Not every tool: remember and the control tools finish at once, and a timer
+# answers itself. A test requires every entry to be a registered tool and every
+# key to be in the phrase bank.
+_BRIDGES = {
+    "get_upcoming_events":     "bridge_calendar",
+    "check_calendar_freebusy": "bridge_calendar",
+    "find_schedule_conflicts": "bridge_calendar",
+    "plan_sessions":           "bridge_calendar",
+    "create_calendar_event":   "bridge_calendar",
+    "update_calendar_event":   "bridge_calendar",
+    "delete_calendar_event":   "bridge_calendar",
+    "rename_calendar_events":  "bridge_calendar",
+    "get_oura_sleep":          "bridge_health",
+    "get_oura_readiness":      "bridge_health",
+    "get_oura_activity":       "bridge_health",
+    "get_oura_heartrate":      "bridge_health",
+    "get_weather":             "bridge_weather",
+}
+
+
+def _bridge_for(event):
+    """The bridge key for a tool call starting, or None."""
+    if event.type != "content_block_start" or event.content_block.type != "tool_use":
+        return None
+    return _BRIDGES.get(event.content_block.name)
 
 
 def _stage_for(event):
@@ -566,6 +595,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     )
 
     accumulated   = ""
+    bridge        = None
     claude_start  = time.monotonic()
     first_token   = None
     sentence_seen = False
@@ -588,6 +618,14 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # written argument has no path to TTS by construction.
         async for event in stream:
             _emit(on_text, "stage", _stage_for(event))
+            # Spoken the moment a slow tool starts, so the room is not silent for
+            # the five seconds a tool turn used to take before any sound. Only
+            # when Nova wrote no lead in of her own, and only once. It plays
+            # under speak_lock, so the answer waits for it to finish.
+            key = _bridge_for(event) if channel != "text" and bridge is None else None
+            if key is not None and not accumulated.strip():
+                bridge = loop.run_in_executor(
+                    None, lambda k=key: phrasebank.play(k, bridge=True))
             if event.type != "content_block_delta":
                 continue
             if event.delta.type != "text_delta":
@@ -805,6 +843,11 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                 await _say(final_text, channel)
                 _emit(on_text, "delta", final_text)
 
+        if bridge is not None:
+            try:
+                await bridge
+            except Exception as exc:
+                print(f"Bridge line failed: {exc}", flush=True)
         timing.note_action((time.monotonic() - action_start) * 1000.0)
     else:
         dismissed = False

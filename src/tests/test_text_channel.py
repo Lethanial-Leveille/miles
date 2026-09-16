@@ -50,6 +50,8 @@ def turn(monkeypatch):
     """Runs one whole turn against fakes and records everything played."""
     played = []
     monkeypatch.setattr(brain, "speak", lambda text, *a, **k: played.append(text))
+    monkeypatch.setattr(brain.phrasebank, "play",
+                        lambda key, **k: played.append(f"bridge:{key}") or key)
     monkeypatch.setattr(brain, "start_synthesis", lambda text, *a, **k: text)
     monkeypatch.setattr(brain, "_play_with_barge_in",
                         lambda synthesis: (played.append(synthesis), (False, 0.0))[1])
@@ -196,3 +198,35 @@ def test_dismissing_shows_no_stage(turn):
     turn("text", _FakeStream(["Talk later."], [goodbye]),
          on_text=lambda kind, text: events.append((kind, text)))
     assert [kind for kind, _ in events] == ["delta"]
+
+
+# ── the spoken bridge on slow tool turns (Sep 16 2026) ──
+
+def test_a_slow_tool_on_voice_is_bridged_before_the_answer(turn):
+    weather = SimpleNamespace(type="tool_use", name="get_weather", id="toolu_1", input={})
+    result, played = turn("voice", _FakeStream([], [weather]), _FakeStream(["It's 75 degrees."]))
+    assert played == ["bridge:bridge_weather", "It's 75 degrees."]
+    assert result.text == "It's 75 degrees.", "the bridge is filler, not part of the answer"
+
+
+def test_no_bridge_when_nova_wrote_her_own_lead_in(turn):
+    weather = SimpleNamespace(type="tool_use", name="get_weather", id="toolu_1", input={})
+    _, played = turn("voice", _FakeStream(["Let me see."], [weather]), _FakeStream(["It's 75."]))
+    assert not any(p.startswith("bridge:") for p in played)
+
+
+def test_no_bridge_on_a_typed_turn(turn):
+    weather = SimpleNamespace(type="tool_use", name="get_weather", id="toolu_1", input={})
+    _, played = turn("text", _FakeStream([], [weather]), _FakeStream(["It's 75."]))
+    assert played == []
+
+
+def test_no_bridge_for_a_quick_tool(turn):
+    timer = SimpleNamespace(type="tool_use", name="set_timer", id="toolu_1", input={})
+    _, played = turn("voice", _FakeStream(["Timer set."], [timer]))
+    assert not any(p.startswith("bridge:") for p in played)
+
+
+def test_every_bridge_is_a_real_tool_with_rendered_words():
+    assert set(brain._BRIDGES) <= set(registry.names())
+    assert all(key in brain.phrasebank.PHRASES for key in brain._BRIDGES.values())

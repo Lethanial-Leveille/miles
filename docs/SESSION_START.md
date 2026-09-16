@@ -1338,8 +1338,10 @@ shipped and measured on its own:
 
 1. **Verification beside the speculative transcript** (DONE, awaiting live
    numbers). Benchmarked first: running both costs whisper about 36ms.
-2. **An instant spoken bridge when a tool starts** (NEXT). Pre rendered, played
-   from disk.
+2. **An instant spoken bridge when a tool starts** (DONE, awaiting live
+   numbers). Pre rendered, played from disk, timed as its own column so the
+   perceived series is not broken. Reverses the Aug 11 "no acknowledgment
+   during tool execution", which was waiting on exactly this data.
 3. **Ending the recording early on a finished sentence.** The Sep 13 entry
    rejected cutting on timing alone, because he speaks through long pauses in
    18% of turns. To be validated against archived recordings before shipping.
