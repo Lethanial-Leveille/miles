@@ -77,10 +77,10 @@ def fresh_calendar_list():
     """The calendar list is remembered for minutes, so each test's fake service
     has to start from an empty memory."""
     cal._calendar_cache.clear()
-    cal._recent_additions.clear()
+    cal._recent_changes.clear()
     yield
     cal._calendar_cache.clear()
-    cal._recent_additions.clear()
+    cal._recent_changes.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -111,13 +111,14 @@ def _confirm():
 
 # ── delete ──
 
-def test_delete_waits_for_the_next_turn(google):
+def test_a_delete_happens_at_once_and_is_read_back(google):
+    """Since Sep 16 2026. It waited for a yes on the next turn, and he found a
+    question before every change too much; undo now covers it."""
     pa.begin_turn()
     reply = cal.delete_calendar_event("leetcode", "monday", now=NOW)
-    assert "Delete LeetCode session tomorrow at 10 AM?" in reply
-    assert google.deleted == []
-    assert _confirm().startswith("Deleted")
+    assert reply.startswith("Deleted LeetCode session tomorrow at 10 AM.")
     assert google.deleted == [("miles_id", "e1")]
+    assert pa.words_for_turn() == "Deleted LeetCode session tomorrow at 10 AM."
 
 
 def test_only_the_miles_calendar_is_searched(google):
@@ -135,7 +136,6 @@ def test_two_matches_ask_which(google):
 def test_a_time_picks_between_two(google):
     pa.begin_turn()
     cal.delete_calendar_event("gym", "monday at 6pm", now=NOW)
-    _confirm()
     assert google.deleted == [("miles_id", "e3")]
 
 
@@ -157,6 +157,7 @@ def test_a_repeating_event_says_only_one_occurrence(monkeypatch):
     monkeypatch.setattr(cal, "_service", lambda: service)
     reply = cal.delete_calendar_event("gym", "monday", now=NOW)
     assert "Delete Gym tomorrow at 3 PM, just that one time?" in reply
+    assert service.deleted == [], "undo could not put it back into its series, so it still asks"
 
 
 # ── update ──
@@ -164,9 +165,7 @@ def test_a_repeating_event_says_only_one_occurrence(monkeypatch):
 def test_a_bare_time_stays_on_the_events_day(google):
     pa.begin_turn()
     reply = cal.update_calendar_event("leetcode", "monday", new_start_time="4pm", now=NOW)
-    assert "Move LeetCode session tomorrow from 10 AM to 4 PM?" in reply
-    assert google.patched == []
-    assert _confirm() == "Updated LeetCode session."
+    assert reply.startswith("Moved LeetCode session tomorrow from 10 AM to 4 PM.")
     _, eid, body = google.patched[0]
     assert eid == "e1"
     assert body["start"]["dateTime"] == _at(16)
@@ -175,20 +174,19 @@ def test_a_bare_time_stays_on_the_events_day(google):
 
 def test_a_bare_day_keeps_the_time(google):
     reply = cal.update_calendar_event("leetcode", "monday", new_start_time="tuesday", now=NOW)
-    assert "Move LeetCode session from tomorrow at 10 AM to Tuesday at 10 AM?" in reply
+    assert reply.startswith("Moved LeetCode session from tomorrow at 10 AM to Tuesday at 10 AM.")
 
 
 def test_tomorrow_counts_from_today_not_from_the_event(google):
     """Said on Sunday, tomorrow is Monday, even though the event is on Monday."""
     reply = cal.update_calendar_event("leetcode", "monday",
                                       new_start_time="tomorrow at 2pm", now=NOW)
-    assert "Move LeetCode session tomorrow from 10 AM to 2 PM?" in reply
+    assert reply.startswith("Moved LeetCode session tomorrow from 10 AM to 2 PM.")
 
 
 def test_a_new_length_moves_only_the_end(google):
     reply = cal.update_calendar_event("leetcode", "monday", new_duration_minutes=30, now=NOW)
-    assert "Make LeetCode session tomorrow 30 minutes long?" in reply
-    _confirm()
+    assert reply.startswith("Made LeetCode session tomorrow 30 minutes long.")
     body = google.patched[0][2]
     assert body["start"]["dateTime"] == _at(10)
     assert body["end"]["dateTime"] == _at(10, 30)
@@ -197,8 +195,7 @@ def test_a_new_length_moves_only_the_end(google):
 def test_a_rename_sends_only_the_title(google):
     pa.begin_turn()
     reply = cal.update_calendar_event("leetcode", "monday", new_title="LeetCode grind", now=NOW)
-    assert "Rename LeetCode session tomorrow to LeetCode grind?" in reply
-    _confirm()
+    assert reply.startswith("Renamed LeetCode session tomorrow to LeetCode grind.")
     assert google.patched[0][2] == {"summary": "LeetCode grind"}
 
 
@@ -221,18 +218,19 @@ def test_an_all_day_event_can_only_be_renamed(monkeypatch):
         cal.update_calendar_event("hackathon", "monday", new_start_time="4pm", now=NOW)
 
 
-def test_several_changes_make_one_question(google):
+def test_several_changes_make_one_sentence(google):
     reply = cal.update_calendar_event("leetcode", "monday", new_start_time="4pm",
                                       new_title="LeetCode grind", now=NOW)
-    assert "Move LeetCode session tomorrow from 10 AM to 4 PM, and rename it to LeetCode grind?" in reply
+    assert reply.startswith(
+        "Moved LeetCode session tomorrow from 10 AM to 4 PM, and renamed it to LeetCode grind.")
 
 
-def test_the_spoken_question_stays_short(google):
+def test_the_spoken_read_back_stays_short(google):
     """The regression this exists for: a read back of both versions with full
-    dates, sixty words before the question mark."""
-    reply = cal.update_calendar_event("leetcode", "monday", new_start_time="4pm", now=NOW)
-    question = reply.split("before or after: ")[1].split("?")[0]
-    assert len(question.split()) <= 12
+    dates, sixty words long."""
+    pa.begin_turn()
+    cal.update_calendar_event("leetcode", "monday", new_start_time="4pm", now=NOW)
+    assert len(pa.words_for_turn().split()) <= 12
 
 
 
@@ -262,8 +260,13 @@ def test_upcoming_never_starts_before_now(monkeypatch):
     service = _listing_service()
     monkeypatch.setattr(cal, "_service", lambda: service)
     cal.get_upcoming_events("today", "sunday september 20", now=NOW)
-    started = {datetime.datetime.fromisoformat(q["timeMin"].replace("Z", "+00:00")) for q in service.listed}
-    assert started == {NOW.astimezone().astimezone(datetime.timezone.utc)}
+    now_utc = NOW.astimezone().astimezone(datetime.timezone.utc)
+    instant = lambda raw: datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    upcoming = [q for q in service.listed if instant(q.get("timeMax", "9999-01-01T00:00:00Z")) != now_utc]
+    assert {instant(q["timeMin"]) for q in upcoming} == {now_utc}
+    # What is already over is looked up separately, and only up to now.
+    assert all(instant(q["timeMax"]) == now_utc
+               for q in service.listed if q not in upcoming)
 
 
 def test_a_range_entirely_in_the_past_says_so(monkeypatch):
@@ -411,7 +414,7 @@ def test_the_difference_is_said_as_briefly_as_possible(old, new, said):
 def test_renaming_one_event_spells_a_homophone(google):
     google.events_by_calendar["miles_id"].append(_timed("c1", "Charlie lesson", _at(12), _at(13)))
     reply = cal.update_calendar_event("charlie", "monday", new_title="Charley lesson", now=NOW)
-    assert "Rename Charlie lesson tomorrow to Charley lesson, E Y instead of I E?" in reply
+    assert reply.startswith("Renamed Charlie lesson tomorrow to Charley lesson, E Y instead of I E.")
 
 
 def test_every_event_with_the_name_is_renamed_in_one_question(monkeypatch):
@@ -448,7 +451,7 @@ def test_undo_removes_what_was_just_added(google):
     cal.create_calendar_event("career fair", "tomorrow at 1pm", 300, now=NOW)
     assert len(google.inserted) == 1
     pa.begin_turn()
-    cal.undo_last_addition()
+    cal.undo_last_change()
     assert google.deleted == [("miles_id", "new1")]
     assert pa.words_for_turn() == "Removed Career Fair."
 
@@ -459,7 +462,7 @@ def test_undo_takes_back_a_whole_plan_at_once(google):
                       time_min="tuesday", time_max="friday", now=NOW)
     assert len(google.inserted) == 3
     pa.begin_turn()
-    cal.undo_last_addition()
+    cal.undo_last_change()
     assert len(google.deleted) == 3
     assert pa.words_for_turn() == "Removed 3 events."
 
@@ -470,13 +473,62 @@ def test_only_the_latest_addition_is_undone(google):
     pa.begin_turn()
     cal.create_calendar_event("Study", "tomorrow at 8pm", 60, now=NOW)
     pa.begin_turn()
-    cal.undo_last_addition()
+    cal.undo_last_change()
     assert google.deleted == [("miles_id", "new2")]
 
 
 def test_nothing_to_undo_is_a_failure_she_explains(google):
     with pytest.raises(LookupError):
-        cal.undo_last_addition()
+        cal.undo_last_change()
+
+
+def test_undo_puts_a_moved_event_back(google):
+    pa.begin_turn()
+    cal.update_calendar_event("leetcode", "monday", new_start_time="4pm",
+                              new_title="LeetCode grind", now=NOW)
+    pa.begin_turn()
+    cal.undo_last_change()
+    assert google.patched[-1] == ("miles_id", "e1", {
+        "summary": "LeetCode session",
+        "start": {"dateTime": _at(10)}, "end": {"dateTime": _at(11, 30)}})
+    assert pa.words_for_turn() == "Put back LeetCode session."
+
+
+def test_undo_restores_a_deleted_event_as_it_was(monkeypatch):
+    service = FakeService({"miles_id": [_timed(
+        "e1", "Dentist", _at(10), _at(11), location="Archer Rd",
+        description="bring insurance card", htmlLink="https://calendar/x")]})
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    pa.begin_turn()
+    cal.delete_calendar_event("dentist", "monday", now=NOW)
+    pa.begin_turn()
+    cal.undo_last_change()
+    assert service.inserted == [("miles_id", {
+        "summary": "Dentist", "description": "bring insurance card",
+        "location": "Archer Rd", "start": {"dateTime": _at(10)},
+        "end": {"dateTime": _at(11)}})]
+    assert pa.words_for_turn() == "Restored Dentist."
+
+
+def test_several_moves_on_one_turn_undo_together(google):
+    pa.begin_turn()
+    cal.update_calendar_event("gym", "monday at 3pm", new_start_time="2pm", now=NOW)
+    cal.update_calendar_event("gym", "monday at 6pm", new_start_time="7pm", now=NOW)
+    assert pa.words_for_turn() == (
+        "Moved Gym tomorrow from 3 PM to 2 PM. Moved Gym tomorrow from 6 PM to 7 PM.")
+    pa.begin_turn()
+    cal.undo_last_change()
+    assert [eid for _, eid, _ in google.patched[2:]] == ["e3", "e2"], "newest first"
+    assert pa.words_for_turn() == "Put back Gym and Gym."
+
+
+def test_undo_says_each_kind_of_change(google):
+    pa.begin_turn()
+    cal.create_calendar_event("Study", "tomorrow at 8pm", 60, now=NOW)
+    cal.delete_calendar_event("leetcode", "monday", now=NOW)
+    pa.begin_turn()
+    cal.undo_last_change()
+    assert pa.words_for_turn() == "Restored LeetCode session. Removed Study."
 
 
 # ── bare clock times and the wrong day (Sep 15 2026) ──
@@ -537,23 +589,22 @@ def test_saying_am_or_pm_is_never_second_guessed():
 
 def test_a_bare_time_stays_in_the_same_half_of_the_day(google):
     reply = cal.update_calendar_event("gym", "monday at 3pm", new_start_time="2:30", now=NOW)
-    assert "Move Gym tomorrow from 3 PM to 2:30 PM?" in reply
+    assert reply.startswith("Moved Gym tomorrow from 3 PM to 2:30 PM.")
 
 
 def test_a_morning_event_moved_to_a_bare_time_stays_in_the_morning(google):
     reply = cal.update_calendar_event("leetcode", "monday", new_start_time="9", now=NOW)
-    assert "Move LeetCode session tomorrow from 10 AM to 9 AM?" in reply
+    assert reply.startswith("Moved LeetCode session tomorrow from 10 AM to 9 AM.")
 
 
 def test_an_explicit_am_on_an_afternoon_event_is_kept(google):
     reply = cal.update_calendar_event("gym", "monday at 3pm", new_start_time="11am", now=NOW)
-    assert "from 3 PM to 11 AM?" in reply
+    assert "from 3 PM to 11 AM." in reply
 
 
 def test_a_bare_time_in_the_day_finds_the_afternoon_event(google):
     pa.begin_turn()
     cal.delete_calendar_event("gym", "monday at 6", now=NOW)
-    _confirm()
     assert google.deleted == [("miles_id", "e3")]
 
 
@@ -561,7 +612,6 @@ def test_a_change_finds_the_event_on_the_day_it_is_really_on(lessons):
     pa.begin_turn()
     reply = cal.update_calendar_event("andrew", "monday", new_start_time="4:30", now=NOW)
     assert "Andrew lesson" in reply and "Tuesday" in reply and "to 4:30 PM" in reply
-    assert _confirm() == "Updated Andrew lesson."
     _, eid, body = lessons.patched[0]
     assert eid == "a1"
     assert body["start"]["dateTime"] == _at(16, 30, day=15)
@@ -595,3 +645,99 @@ def test_a_new_event_at_a_bare_morning_hour_stays_in_the_morning(google):
     pa.begin_turn()
     reply = cal.create_calendar_event("Study", "wednesday at 9", 60, now=NOW)
     assert "from 9 AM to 10 AM" in reply
+
+
+# ── a named weekday is the one in the event's own week (Sep 16 2026) ──
+
+def _wednesday_lesson(monkeypatch):
+    service = FakeService({"miles_id": [
+        _timed("w1", "Andrew lesson", _at(16, day=16), _at(17, day=16))]})
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    return service
+
+
+def test_a_weekday_before_the_event_stays_in_its_week(monkeypatch):
+    """A Thursday lesson moved to "wednesday" went to the Wednesday after."""
+    service = _wednesday_lesson(monkeypatch)
+    cal.update_calendar_event("andrew", "wednesday", new_start_time="tuesday at 4:30pm", now=NOW)
+    assert service.patched[0][2]["start"]["dateTime"] == _at(16, 30, day=15)
+
+
+def test_a_weekday_after_the_event_stays_in_its_week(monkeypatch):
+    service = _wednesday_lesson(monkeypatch)
+    cal.update_calendar_event("andrew", "wednesday", new_start_time="friday at 5", now=NOW)
+    assert service.patched[0][2]["start"]["dateTime"] == _at(17, day=18)
+
+
+def test_a_nearest_day_already_gone_means_the_next_one(monkeypatch):
+    """Said on Sunday the 13th, "saturday" for a Wednesday lesson is not the
+    12th, which has passed."""
+    service = _wednesday_lesson(monkeypatch)
+    cal.update_calendar_event("andrew", "wednesday", new_start_time="saturday", now=NOW)
+    assert service.patched[0][2]["start"]["dateTime"] == _at(16, day=19)
+
+
+def test_an_explicit_date_beats_the_weekday(monkeypatch):
+    service = _wednesday_lesson(monkeypatch)
+    cal.update_calendar_event("andrew", "wednesday",
+                              new_start_time="tuesday september 22 at 4pm", now=NOW)
+    assert service.patched[0][2]["start"]["dateTime"] == _at(16, day=22)
+
+
+def test_next_weekday_is_refused_rather_than_guessed(monkeypatch):
+    """dateparser cannot read "next tuesday" in any form, so Nova is told to
+    give a date. A guess here would be the wrong week half the time."""
+    service = _wednesday_lesson(monkeypatch)
+    with pytest.raises(cal.WhenError):
+        cal.update_calendar_event("andrew", "wednesday", new_start_time="next tuesday", now=NOW)
+    assert service.patched == []
+
+
+# ── a listing names what is already over, and says when it stopped (Sep 15 2026) ──
+
+def test_a_lesson_already_missed_today_is_listed_as_over(monkeypatch):
+    """At 11:33 PM he asked to move the lesson he had missed that evening, and
+    the listing, starting at now, told Nova there was only one that week."""
+    service = RangedService({"miles_id": [
+        _timed("a1", "Andrew lesson", _at(17, 30, day=15), _at(19, day=15)),
+        _timed("a2", "Andrew lesson", _at(16, day=17), _at(17, 30, day=17)),
+    ]}, calendars=[{"id": "miles_id", "summary": "MILES", "selected": True,
+                    "accessRole": "owner"}])
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    late = datetime.datetime(2026, 9, 15, 23, 33)
+    out = cal.get_upcoming_events("today", "sunday", now=late)
+    over, upcoming = out.split("His events:")
+    assert "Already over" in over and "Andrew lesson" in over and "5:30 PM" in over
+    assert "Thursday" in upcoming and "5:30 PM" not in upcoming
+
+
+def test_nothing_over_adds_nothing(monkeypatch):
+    service = RangedService({"miles_id": [
+        _timed("a2", "Andrew lesson", _at(16, day=17), _at(17, 30, day=17))]},
+        calendars=[{"id": "miles_id", "summary": "MILES", "selected": True, "accessRole": "owner"}])
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    out = cal.get_upcoming_events("today", "sunday", now=datetime.datetime(2026, 9, 15, 23, 33))
+    assert out.startswith("His events:")
+
+
+def test_a_long_listing_says_it_stopped_short(monkeypatch):
+    many = [_timed(f"e{i}", f"Thing {i}", _at(8 + i % 12, day=14 + i // 12), _at(8 + i % 12, 30, day=14 + i // 12))
+            for i in range(cal._MAX_EVENTS + 3)]
+    service = FakeService({"miles_id": many}, calendars=[
+        {"id": "miles_id", "summary": "MILES", "selected": True, "accessRole": "owner"}])
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    out = cal.get_upcoming_events(now=NOW)
+    assert "There are more of his events in this range than listed" in out
+    assert out.count("Thing ") == cal._MAX_EVENTS
+
+
+def test_several_matches_let_nova_change_each_without_asking(google, monkeypatch):
+    """He had said which lesson went where; the result made her ask anyway."""
+    with pytest.raises(cal.EventLookupError, match="If he asked for each of them to change"):
+        cal.update_calendar_event("gym", "monday", new_start_time="5pm", now=NOW)
+    service = RangedService({"miles_id": [
+        _timed("a1", "Andrew lesson", _at(16, day=15), _at(17, day=15)),
+        _timed("a2", "Andrew lesson", _at(16, day=17), _at(17, day=17))]})
+    monkeypatch.setattr(cal, "_service", lambda: service)
+    with pytest.raises(cal.EventLookupError, match="If he asked for each of them to change"):
+        cal.update_calendar_event("andrew", "monday", new_start_time="5pm", now=NOW)

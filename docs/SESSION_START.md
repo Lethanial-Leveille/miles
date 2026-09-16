@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 14 2026 (25) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 16 2026 (751) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 16 2026 (796) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -1265,3 +1265,55 @@ where he asked outright. See
 (1 of 8) and was dropped with his agreement. **Chosen:** the tool result carries
 the instruction to answer, and a follow up after only `remember` is made
 without tools. 7 of 8 through the real turn.
+
+### Moves and deletes happen at once, with undo (Sep 16 2026) (DONE)
+
+**Supersedes** "Additions happen at once, with undo; changes still ask" (Sep 14).
+He said moving and deleting still took too much work.
+
+**The reason for the old line was an undo that only knew how to delete.** A
+move is fully reversible by patching back what it changed, and a deleted MILES
+event can be re-inserted from a saved copy; only Google's id changes. So the
+question before each one protected nothing undo does not, and cost a turn.
+
+**Still asked:** one occurrence of a repeating event, which undo would bring
+back as a standalone event; and renaming every event that shares a word, where
+the spelled read back is what he wanted.
+
+**Worth being honest about:** most of the Sep 15 pain was not confirmation. Of
+eight turns, one was his yes; the rest were the parsing defects fixed the same
+day.
+
+### Timers are rows (Sep 16 2026) (DONE)
+
+A timer set from the app never went off, because it slept in `miles-server`,
+the same bug reminders had until Sep 6. **Chosen:** the reminders table with a
+`kind` column, fired by the same poller, rather than a second table and a second
+poller. **The poll interval dropped** because a timer is set to the second;
+each pass is one indexed query on a small local file.
+
+### App endpoints (Sep 16 2026) (DONE)
+
+Memory edits supersede, so history survives an edit made with a thumb. Calendar
+tap edits are MILES only, enforced by where the event is fetched from, and stay
+out of Nova's undo, which is grouped by conversation turn. Typed titles are kept
+as typed; `_title` exists because transcripts arrive lowercase.
+
+**Not a people tab.** He asked how people work. The `people` table is for
+tiers and birthdays, filled by hand with `scripts/people.py`; Nova cannot write
+to it and no endpoint exposes it, so mentioning someone never adds them. Facts
+about people, like a student's pronouns, are memories, and a temporary one can
+carry an end date.
+
+### A named weekday stays in the event's week; a listing shows what is over (Sep 16 2026) (DONE)
+
+Found while fixing the two Andrew lessons; see
+[INCIDENTS.md](INCIDENTS.md#moving-two-lessons-took-eight-turns-sep-15-2026).
+
+**Chosen:** the nearest occurrence of the named day, because that is what a
+person moving an event means. **Rejected:** always forward, which is how it
+was, and always backward, which fails for "move Monday's to Friday".
+
+**The listing still starts at now.** That rule came from Nova reading past
+sessions as upcoming, and it stays. What changed is that what is over is named
+separately, and only for the last day, so it cannot become a history dump.

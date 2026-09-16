@@ -36,7 +36,7 @@ EXPECTED = {
     "find_schedule_conflicts": (Permission.READ,           True),
     "plan_sessions":           (Permission.EXTERNAL_WRITE, True),
     "rename_calendar_events":  (Permission.EXTERNAL_WRITE, True),
-    "undo_last_addition":      (Permission.EXTERNAL_WRITE, True),
+    "undo_last_change":        (Permission.EXTERNAL_WRITE, True),
     "review_pending_memory":   (Permission.WRITE,          True),
     "delete_calendar_event":   (Permission.EXTERNAL_WRITE, True),
     "get_oura_readiness":      (Permission.READ,           True),
@@ -54,7 +54,7 @@ HOKAGE_ONLY = {
     "update_calendar_event", "delete_calendar_event",
     "list_pending_memories", "review_pending_memory",
     "find_schedule_conflicts", "plan_sessions", "rename_calendar_events",
-    "undo_last_addition",
+    "undo_last_change",
 }
 
 # WRITE tools that legitimately cost a second round trip, with the reason.
@@ -69,10 +69,9 @@ ROUND_TRIP_WRITES = {
     # silently is worse than one that costs a second, and Nova cannot announce
     # the outcome before the call because she does not know it yet.
     "lower_access",
-    # A proposal, not a write. Nova has to read the resolved time back and
-    # ask, and she cannot before the call because the code resolves the time.
+    # Changes made at once, read back in code with the time the code resolved.
+    # The follow up is where Nova learns what happened, or why it could not.
     "create_calendar_event",
-    # Proposals too, for the same reason: the read back is the point.
     "update_calendar_event",
     "delete_calendar_event",
     # The write itself can fail at Google, and a confirmation nobody hears
@@ -85,8 +84,8 @@ ROUND_TRIP_WRITES = {
     "plan_sessions",
     # A proposal to rename many events; one question for all of them.
     "rename_calendar_events",
-    # What was removed is read back word for word.
-    "undo_last_addition",
+    # What was undone is read back word for word.
+    "undo_last_change",
 }
 
 
@@ -209,9 +208,9 @@ def test_units_singularize_at_one(amount, unit, expected):
     assert actions._plural(amount, unit) == expected
 
 
-def test_one_minute_timer_reads_correctly(monkeypatch):
-    monkeypatch.setattr(actions.threading, "Thread", lambda **kw: type(
-        "T", (), {"start": lambda self: None})())
+def test_one_minute_timer_reads_correctly(db, monkeypatch):
+    # A timer is a row now, so it has to be written somewhere throwaway.
+    monkeypatch.setattr(actions, "DB_PATH", db.DB_PATH)
     assert actions.set_timer("1 minutes") == "Timer set for 1 minute (60 seconds)."
     assert actions.set_timer("5 minutes") == "Timer set for 5 minutes (300 seconds)."
 

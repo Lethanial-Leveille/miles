@@ -2,7 +2,7 @@ import time
 import threading
 import requests
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import DEFAULT_LOCATION, WEATHER_API_KEY, DB_PATH
 from tools import Permission, tool
 from parsing import words_for_number
@@ -230,29 +230,43 @@ def set_timer(duration_str):
 
     spoken_unit = _plural(amount, unit)
 
-    def timer_thread():
-        time.sleep(seconds)
-        print(f"\n*** TIMER DONE: {amount} {spoken_unit} ***")
-        # Queued, never spoken from here. A background thread cannot tell an
-        # open mic from an idle room, and this used to fire straight into a
-        # question being asked. alerts.py explains the mechanism.
-        alerts.fire(
-            kind="timer",
-            text=(f"[calmly] Lethanial, your {_spoken_amount(amount)} "
-                  f"{_attributive(unit)} timer is up."),
-            summary=f"the {amount} {_attributive(unit)} timer just finished",
-        )
-
-    threading.Thread(target=timer_thread, daemon=True).start()
+    # A row, fired by the poller, since Sep 16 2026. It was a thread sleeping in
+    # whichever process set it, so a timer set from the app slept in
+    # miles-server, whose alert queue nothing drains, and never went off; and a
+    # restart dropped every running timer. The same bug reminders had until
+    # Sep 6, with the same fix: the row is the only state.
+    due = datetime.now() + timedelta(seconds=seconds)
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT INTO reminders (content, due_at, created_at, kind) VALUES (?, ?, ?, 'timer')",
+        (f"{amount} {_attributive(unit)} timer", due.isoformat(), datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
     return f"Timer set for {amount} {spoken_unit} ({seconds} seconds)."
+
+
+def _timer_alert(content, late):
+    """(text, summary) for a timer row, whose content reads like "10 minute timer".
+
+    The amount is spelled out for speech, which is why it is parsed back rather
+    than stored as a sentence."""
+    amount, rest = content.split(" ", 1)
+    spoken = f"{_spoken_amount(int(amount))} {rest}"
+    if late:
+        return (f"[calmly] Lethanial, your {spoken} went off while you were away.",
+                f"the {content} went off while he was away")
+    return (f"[calmly] Lethanial, your {spoken} is up.",
+            f"the {content} just finished")
 
 
 # ── Reminders ──
 
-# How often the poller asks the table what is due. Reminders are set to the
-# minute in practice, so twenty seconds is well inside tolerance and costs one
-# indexed count query against a local SQLite file.
-REMINDER_POLL_S = 20
+# How often the poller asks the table what is due. Twenty seconds was chosen
+# for reminders, which are set to the minute. Timers moved into the same table
+# on Sep 16 2026 and are set to the second, so a ten second timer could have
+# rung thirty seconds in. Five keeps a timer within five seconds, and each pass
+# is still one indexed query against a small local SQLite file.
+REMINDER_POLL_S = 5
 
 # Past this much lateness, the announcement says so. A reminder delivered four
 # hours after it was due is still worth hearing, but presenting it as though it
@@ -327,7 +341,7 @@ def poll_reminders(now=None):
     now = now or datetime.now()
     fired = 0
 
-    for reminder_id, content, due_at in due_reminders(now.isoformat()):
+    for reminder_id, content, due_at, kind in due_reminders(now.isoformat()):
         if not complete_reminder(reminder_id):
             continue                    # another pass already claimed it
 
@@ -335,6 +349,15 @@ def poll_reminders(now=None):
             late_seconds = (now - datetime.fromisoformat(due_at)).total_seconds()
         except (TypeError, ValueError):
             late_seconds = 0
+
+        if kind == "timer":
+            # Queued, never spoken from here, like every alert: the poller
+            # cannot tell an open mic from an idle room. alerts.py explains.
+            text, summary = _timer_alert(content, late_seconds > REMINDER_LATE_S)
+            print(f"\n*** TIMER DONE: {content} ***", flush=True)
+            alerts.fire(kind="timer", text=text, summary=summary)
+            fired += 1
+            continue
 
         if late_seconds > REMINDER_LATE_S:
             text = (f"[calmly] Lethanial, a reminder that came due while you "

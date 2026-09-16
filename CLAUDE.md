@@ -94,16 +94,16 @@ warnings it cost before Sep 6 2026, is in
 │   ├── memory_tool.py         # remember tool, with supersede and expiry
 │   ├── system_state.py        # get_system_state tool: uptime, temp, latency, commit
 │   ├── tier_tool.py           # lower_access tool: demotion by voice, never escalation
-│   ├── calendar_tools.py      # Google Calendar reads, freebusy, confirmed create/edit/delete
+│   ├── calendar_tools.py      # Google Calendar reads, freebusy, changes with undo, app view
 │   ├── oura_tools.py          # Oura readiness, sleep, heart rate, activity
-│   ├── pending_action.py      # confirm_pending_action: outside writes wait a turn
+│   ├── pending_action.py      # code spoken read backs; the few changes that still ask
 │   ├── timing.py              # Per turn latency instrumentation
 │   ├── brain.py               # ask_nova orchestrator
 │   ├── auth.py                # JWT + bcrypt password hashing
-│   ├── server.py              # FastAPI REST + WebSocket
+│   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (751 passing, 6 skipped, Sep 16 2026)
+│   └── tests/                 # pytest suite (796 passing, 6 skipped, Sep 16 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -259,7 +259,7 @@ of the value itself.
 - `ARCHIVE_RECORDINGS = True`, `ARCHIVE_DIR = ~/miles/data/recordings`,
   `ARCHIVE_MAX_FILES = 600` (~150MB, a few weeks of normal use, oldest pruned first)
 - `DEFAULT_LOCATION = "Gainesville"`
-- `REMINDER_POLL_S = 20`, `REMINDER_LATE_S = 3600` (both in `actions.py`, not
+- `REMINDER_POLL_S = 5`, `REMINDER_LATE_S = 3600` (both in `actions.py`, not
   `config.py`)
 
 Recordings are of a real person in a real room. Treat them accordingly.
@@ -273,7 +273,7 @@ audio context).
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: Resemblyzer (256 dim cosine similarity).
-Memory: SQLite WAL mode, schema migrations to version 21.
+Memory: SQLite WAL mode, schema migrations to version 24.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.
@@ -310,10 +310,14 @@ Landed since v0.7.1, unreleased:
 - Native tool use: the registry in `tools.py` and the tool loop in `brain.py`,
   replacing bracket action tags
 - Permission gate enforced in the executor, one tier per turn
-- Google Calendar and Oura tools; calendar create, edit and delete confirmed
-  on the next turn
+- Google Calendar and Oura tools; calendar additions, moves and deletes happen
+  at once with a thirty minute undo
+- Timers are rows fired by the reminder poller, so they survive restarts and
+  fire wherever they were set
 - A text turn is silent, answers in numerals, and can be streamed to the app
-  over `/chat/stream`
+  over `/chat/stream`, with stage events while tools run
+- App endpoints: memories (add, edit, history), reminders and timers, status
+  details, and a calendar week view with tap edits on the MILES calendar
 
 ## What Is Next
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -8,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
-from typing import Literal
+from datetime import datetime, timedelta
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 from jose import JWTError
@@ -18,7 +20,11 @@ from brain import ask_nova
 from database import (
     init_db, get_active_memories, get_pending_memories,
     approve_memory, delete_memory, get_history,
+    save_memory, supersede_memory, get_memory_chain, memory_status, memory_content,
+    open_reminders, cancel_reminder_by_id,
 )
+from system_state import get_system_state
+import calendar_tools
 
 app = FastAPI(title="M.I.L.E.S. API", version="0.7")
 init_db()
@@ -55,6 +61,14 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
+
+class MemoryText(BaseModel):
+    content: str
+
+class EventChange(BaseModel):
+    title: Optional[str] = None
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
 
 
 # ── Auth endpoints ──
@@ -160,6 +174,54 @@ def approve_pending_memory(memory_id: int, user: str = Depends(get_current_user)
     return {"approved": True}
 
 
+@app.post("/memories", status_code=201)
+def add_memory(body: MemoryText, user: str = Depends(get_current_user)):
+    """A memory he typed himself: explicit and active, like one he asked Nova to
+    keep, since there is nothing for him to review in his own words."""
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="A memory needs some text")
+    new_id = save_memory(content, source="explicit", status="active")
+    if not new_id:
+        raise HTTPException(status_code=409, detail="That memory is already stored")
+    return {"id": new_id}
+
+
+@app.patch("/memories/{memory_id}")
+def edit_memory(memory_id: int, body: MemoryText, user: str = Depends(get_current_user)):
+    """Change what a memory says by superseding it, not by rewriting the row.
+
+    The old wording is kept and linked, which is how every correction in this
+    repo works: an exam that moved is different information from one that was
+    always on the new day. The replacement is explicit and active, because he
+    wrote it, so editing a pending memory also approves it.
+
+    Only active and pending rows can be edited. Superseding a row that was
+    already replaced would fork its history into two current answers."""
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="A memory needs some text")
+    if memory_status(memory_id) not in ("active", "pending"):
+        raise HTTPException(status_code=404, detail="No current memory with that id")
+    if memory_content(memory_id) == content:
+        return {"id": memory_id, "changed": False}
+    new_id = supersede_memory(memory_id, content, source="explicit")
+    return {"id": new_id, "replaced": memory_id, "changed": True}
+
+
+@app.get("/memories/{memory_id}/history")
+def memory_history(memory_id: int, user: str = Depends(get_current_user)):
+    """What this memory says now and everything it replaced, newest first."""
+    chain = get_memory_chain(memory_id)
+    if not chain:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return [
+        {"id": r[0], "content": r[1], "status": r[2], "created_at": r[3],
+         "superseded_by": r[4], "superseded_at": r[5]}
+        for r in chain
+    ]
+
+
 @app.delete("/memories/{memory_id}")
 def remove_memory(memory_id: int, user: str = Depends(get_current_user)):
     if not delete_memory(memory_id):
@@ -170,6 +232,78 @@ def remove_memory(memory_id: int, user: str = Depends(get_current_user)):
 @app.get("/history")
 def history(limit: int = 50, offset: int = 0, user: str = Depends(get_current_user)):
     return get_history(limit=limit, offset=offset)
+
+
+@app.get("/reminders")
+def list_reminders(user: str = Depends(get_current_user)):
+    return [{"id": r[0], "content": r[1], "due_at": r[2], "created_at": r[3],
+             "kind": r[4]}
+            for r in open_reminders()]
+
+
+@app.delete("/reminders/{reminder_id}")
+def cancel_reminder(reminder_id: int, user: str = Depends(get_current_user)):
+    if not cancel_reminder_by_id(reminder_id):
+        raise HTTPException(status_code=404, detail="No outstanding reminder with that id")
+    return {"cancelled": True}
+
+
+def _calendar_call(fn, *args, **kwargs):
+    """Run a calendar function, turning its refusals into HTTP answers. A lookup
+    miss is 404, a bad time is 400, and anything from Google itself is 502 with
+    its message, because an expired token has to read as that and not as an
+    empty week."""
+    try:
+        return fn(*args, **kwargs)
+    except calendar_tools.EventLookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except calendar_tools.WhenError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Google Calendar: {exc}")
+
+
+@app.get("/calendar/events")
+def calendar_events(days: int = 7, user: str = Depends(get_current_user)):
+    """From the start of today, so this morning's class still shows."""
+    days = max(1, min(days, 31))
+    start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return _calendar_call(calendar_tools.events_for_app, start, start + timedelta(days=days))
+
+
+@app.patch("/calendar/events/{event_id}")
+def change_calendar_event(event_id: str, body: EventChange, user: str = Depends(get_current_user)):
+    said = _calendar_call(calendar_tools.change_event_for_app, event_id,
+                          title=body.title, start=body.start, end=body.end)
+    return {"result": said}
+
+
+@app.delete("/calendar/events/{event_id}")
+def delete_calendar_event(event_id: str, user: str = Depends(get_current_user)):
+    return {"result": _calendar_call(calendar_tools.delete_event_for_app, event_id)}
+
+
+_SERVICES = ("miles-voice", "miles-server", "miles-tunnel")
+
+
+def _services_active():
+    """Whether each long running service is up. Kept out of get_system_state,
+    whose output Nova reads aloud, so the app view cannot change what she says."""
+    result = subprocess.run(["systemctl", "is-active", *_SERVICES],
+                            capture_output=True, text=True, timeout=5)
+    states = result.stdout.split()
+    return {name: state == "active" for name, state in zip(_SERVICES, states)}
+
+
+@app.get("/status/details")
+def status_details(user: str = Depends(get_current_user)):
+    """What get_system_state tells Nova, plus which services are running."""
+    try:
+        services = _services_active()
+    except Exception:
+        # An unknown is not a failure of the page; the other facts still stand.
+        services = {name: None for name in _SERVICES}
+    return {**get_system_state(), "services": services}
 
 
 @app.get("/status")

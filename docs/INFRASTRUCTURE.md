@@ -215,14 +215,23 @@ ip route | grep 100.      # the local /25 that tailnet traffic must not land in
 
 ## FastAPI endpoints
 
-REST: /auth/login, /auth/refresh, /chat, /chat/stream, /memories,
-/memories/pending, /memories/{id}/approve, /memories/{id} (DELETE),
-/history, /status, /docs
+REST: /auth/login, /auth/refresh, /chat, /chat/stream, /history, /status,
+/status/details, /docs
+
+Memories: GET and POST /memories, GET /memories/pending,
+POST /memories/{id}/approve, PATCH /memories/{id}, GET /memories/{id}/history,
+DELETE /memories/{id}
+
+Reminders and timers: GET /reminders, DELETE /reminders/{id}
+
+Calendar: GET /calendar/events?days=, PATCH and DELETE /calendar/events/{id}
 WebSocket: /ws
 
 `/chat/stream` is the same turn as `/chat`, sent as Server Sent Events while it
-is written: `event: delta` per piece, `event: reset` when what was streamed is
-being dropped, then `event: done` with the finished reply, or `event: error`.
+is written: `event: delta` per piece, `event: stage` with what Nova is doing
+while a tool runs ("Checking your calendar"), `event: reset` when what was
+streamed is being dropped, then `event: done` with the finished reply, or
+`event: error`.
 The turn runs on a worker thread, because `ask_nova` starts its own event loop,
 and it finishes whether or not the client is still listening. A comment line
 goes out every 15 seconds of silence so the tunnel does not close a connection
@@ -236,6 +245,25 @@ Found Sep 14 2026, left alone rather than fixed blind; see BACKEND_TODO.md.
 Auth: JWT, HS256, Authorization Bearer header. Access tokens expire after 60
 minutes (`ACCESS_TOKEN_EXPIRE_MINUTES` in `auth.py`). No refresh token is issued;
 `/auth/refresh` needs a token that has not expired yet.
+
+**App endpoints, added Sep 16 2026.** Rules that are not obvious from the routes:
+
+- `PATCH /memories/{id}` supersedes rather than rewrites, so the old wording is
+  kept and linked, and the replacement is explicit and active. Editing a pending
+  memory therefore approves it. Only active and pending rows can be edited;
+  superseding a replaced row would fork its history. `DELETE /memories/{id}`
+  still removes the row outright, which breaks the chain of anything it
+  superseded. Left as it was; see BACKEND_TODO.md.
+- `POST /memories` stores text as typed, explicit and active; a duplicate is 409.
+- `GET /reminders` lists timers too, told apart by `kind`.
+- `GET /status/details` is `get_system_state` plus whether each service is
+  active. The service check lives in `server.py` so it cannot change what Nova
+  reads aloud.
+- Calendar edits are MILES calendar only, enforced by fetching the event by id
+  from that calendar. They happen at once, titles are kept exactly as typed, and
+  they are **not** added to Nova's spoken undo, which groups changes by
+  conversation turn. Google failures return 502 with Google's message, so an
+  expired token never reads as an empty week.
 
 ## Environment variables
 
@@ -291,7 +319,7 @@ nothing to distinguish it from one still waiting.
 It had not bitten yet only because every reminder ever set was a one minute
 test that fired before anything restarted.
 
-`actions.poll_reminders` now reads `reminders` every `REMINDER_POLL_S` (20s) and
+`actions.poll_reminders` now reads `reminders` every `REMINDER_POLL_S` and
 fires whatever is due. **There is no boot rearm, which is the point:** nothing is
 held in memory, so a restart is just the next poll. `start_reminder_poller` is
 called once from `voice_main.py`.
@@ -331,6 +359,15 @@ the clock look broken.
 **Timers are still in memory threads and do not survive a restart.** They are
 not persisted at all, so there is no table and no record one ever existed.
 Making them durable is a separate decision, not an oversight.
+
+> **Correction (Sep 16 2026).** That decision is now made: timers are rows in
+> `reminders` with `kind = 'timer'` (migration 24), fired by the same poller.
+> The in memory version had a second cost this paragraph did not name: a timer
+> set from the app slept in `miles-server`, whose alert queue nothing drains, so
+> it never went off at all, the exact bug reminders had until Sep 6. The poll
+> interval was lowered for timers, which are set to the second; the value is in
+> CLAUDE.md. "Cancel the timer" now works by voice, because the row's text says
+> timer.
 
 `REMINDER_POLL_S` and `REMINDER_LATE_S` are defined in `src/actions.py`, not
 in `config.py`.

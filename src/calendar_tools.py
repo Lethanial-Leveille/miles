@@ -32,6 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 import dateparser
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 import pending_action
 from tools import Permission, tool
@@ -39,7 +40,15 @@ from tools import Permission, tool
 TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "token.json")
 _SCOPES = ["https://www.googleapis.com/auth/calendar"]
 _WRITE_CALENDAR = "MILES"
-_MAX_EVENTS = 10
+# How many of his own events a listing names, and of events on calendars he
+# follows. Ten of his own cut a week off at Friday morning on Sep 15 2026, after
+# bills and birthdays took the slots, and said nothing about stopping.
+_MAX_EVENTS = 25
+_MAX_FOLLOWED = 10
+
+# How far back a listing looks for events in the requested range that are
+# already over. A day covers "the lesson I missed today" asked late at night.
+_PASSED_LOOKBACK = datetime.timedelta(hours=24)
 
 # Anything that pins a time of day. A phrase with none of these names a day.
 _HAS_TIME = re.compile(
@@ -442,6 +451,106 @@ def _fetch_events(queries):
         return list(pool.map(run, queries))
 
 
+# ── the app's view ──
+# Structured versions of what Nova reads, for the app's calendar screen. Edits
+# made by tapping happen at once and only on the MILES calendar, the same rule
+# Nova follows. They are not added to Nova's undo, which groups changes by
+# conversation turn: a tap is not a turn, and a spoken undo would otherwise take
+# back whatever Nova last did alongside it.
+
+def events_for_app(start, end):
+    """Every selected calendar's events in a window, soonest first, as data.
+
+    editable is true only for the MILES calendar. unreadable names calendars
+    that failed, so the app can say so rather than show a quietly short week."""
+    service = _service()
+    miles_id = _miles_calendar_id(service)
+    calendars = {cid: (name, owned) for cid, (name, selected, owned)
+                 in _calendars(service).items() if selected}
+    queries = [{"calendarId": cid, "timeMin": _utc(start), "timeMax": _utc(end),
+                "singleEvents": True, "orderBy": "startTime", "maxResults": 250}
+               for cid in calendars]
+    events, unreadable = [], []
+    for cid, items, error in _fetch_events(queries):
+        name, owned = calendars[cid]
+        if error is not None:
+            unreadable.append(name)
+            continue
+        for event in items:
+            first, last, all_day = _event_bounds(event)
+            events.append({
+                "id": event["id"],
+                "calendar": name,
+                "title": event.get("summary", "Untitled"),
+                # An all day event is a date, not a moment; a timed one carries
+                # its offset so the phone never guesses a timezone.
+                "start": first.date().isoformat() if all_day else first.astimezone().isoformat(),
+                "end": last.date().isoformat() if all_day else last.astimezone().isoformat(),
+                "all_day": all_day,
+                "mine": owned,
+                "editable": cid == miles_id,
+                "repeating": bool(event.get("recurringEventId")),
+            })
+    events.sort(key=lambda e: (e["start"][:10], not e["all_day"], e["start"]))
+    return {"events": events, "unreadable": unreadable}
+
+
+def _miles_event(service, event_id):
+    """(calendar id, event) for an id on the MILES calendar, or a lookup error.
+
+    Fetched from the MILES calendar by id, so an id from any other calendar is
+    simply not found there. The write rule is enforced by where this looks."""
+    miles_id = _miles_calendar_id(service)
+    if miles_id is None:
+        raise EventLookupError("there is no MILES calendar, so there is nothing to change")
+    try:
+        return miles_id, service.events().get(calendarId=miles_id, eventId=event_id).execute()
+    except HttpError as exc:
+        if exc.status_code in (404, 410):
+            raise EventLookupError("that event is not on the MILES calendar") from exc
+        raise
+
+
+def _local(moment):
+    """A datetime from the app as naive local time, which is what every other
+    time in this module is."""
+    return moment.astimezone().replace(tzinfo=None) if moment.tzinfo else moment
+
+
+def change_event_for_app(event_id, title=None, start=None, end=None):
+    """A tap edit: a new title, start or end, at once. A new start alone keeps
+    the length, the same as "move it to 4" does by voice."""
+    service = _service()
+    calendar_id, event = _miles_event(service, event_id)
+    old_start, old_end, all_day = _event_bounds(event)
+    body = {}
+    if title is not None:
+        if not title.strip():
+            raise WhenError("a title cannot be empty")
+        # As typed. _title capitalizes because transcripts arrive lowercase; a
+        # title he typed is already the way he wants it.
+        body["summary"] = title.strip()
+    if start is not None or end is not None:
+        if all_day:
+            raise WhenError("that is an all day event; only its title can be changed")
+        new_start = _local(start) if start is not None else old_start
+        new_end = _local(end) if end is not None else new_start + (old_end - old_start)
+        if new_end <= new_start:
+            raise WhenError("an event has to end after it starts")
+        body["start"] = {"dateTime": new_start.astimezone().isoformat()}
+        body["end"] = {"dateTime": new_end.astimezone().isoformat()}
+    if not body:
+        raise WhenError("nothing to change; give a title, start or end")
+    return _patch_event(calendar_id, event_id, body, body.get("summary", event.get("summary", "Untitled")))
+
+
+def delete_event_for_app(event_id):
+    """A tap delete, at once. The app asks first, so there is no second question."""
+    service = _service()
+    calendar_id, event = _miles_event(service, event_id)
+    return _delete_event(calendar_id, event_id, event.get("summary", "Untitled"))
+
+
 def _words(text):
     return re.findall(r"[a-z0-9]+", text.casefold())
 
@@ -518,7 +627,8 @@ def _find_miles_event(service, title, day, now, nearby=False):
             options = "; ".join(_label(e) for e in near)
             raise EventLookupError(
                 f"no event matching {title!r} on {day_name}, and {len(near)} that "
-                f"week: {options}. Ask him which one, then call again with its day.")
+                f"week: {options}. If he asked for each of them to change, call again "
+                f"once for each, with its day and time. Otherwise ask him which one.")
     if not matches:
         there = "; ".join(_label(e) for e in items) or "nothing"
         raise EventLookupError(
@@ -526,8 +636,9 @@ def _find_miles_event(service, title, day, now, nearby=False):
             f"That day it has: {there}. Only MILES calendar events can be changed.")
     options = "; ".join(_label(e) for e in matches)
     raise EventLookupError(
-        f"{len(matches)} events match {title!r} on {day_name}: {options}. Ask him "
-        f"which one, then call again with its time, like 'monday at 3pm'.")
+        f"{len(matches)} events match {title!r} on {day_name}: {options}. If he "
+        f"asked for each of them to change, call again once for each, with its time, "
+        f"like 'monday at 3pm'. Otherwise ask him which one.")
 
 
 def _matching_that_week(service, calendar_id, wanted, when):
@@ -541,6 +652,38 @@ def _matching_that_week(service, calendar_id, wanted, when):
     return [e for e in items if wanted <= set(_words(e.get("summary", "")))]
 
 
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday",
+             "saturday", "sunday")
+
+# An explicit date wins over a weekday: "tuesday september 22" means the 22nd.
+_HAS_DATE = re.compile(
+    r"\b(jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d"
+    r"|\bmay\s+\d|\d{1,2}/\d{1,2}|\d{4}-\d{2}-\d{2}", re.I)
+
+
+def _named_weekday(phrase):
+    for index, name in enumerate(_WEEKDAYS):
+        if re.search(rf"\b{name}\b", phrase, re.I):
+            return index
+    return None
+
+
+def _same_week_day(weekday, old_start, clock, now):
+    """The named weekday nearest the event, which is the one in its own week.
+
+    Read from the event's day, dateparser's "prefer the future" sent a Thursday
+    lesson moved to "wednesday" six days forward, to the Wednesday after, on
+    Sep 16 2026 the day after the test the lesson was for. A person moving an
+    event to "wednesday" means the one beside it. If that one has already
+    passed, the next is meant."""
+    ahead = (weekday - old_start.weekday()) % 7
+    after = old_start.date() + datetime.timedelta(days=ahead)
+    before = after - datetime.timedelta(days=7)
+    nearest, other = (before, after) if 7 - ahead < ahead else (after, before)
+    chosen = datetime.datetime.combine(nearest, clock)
+    return chosen if chosen >= now else datetime.datetime.combine(other, clock)
+
+
 def _resolve_new_start(phrase, old_start, now):
     """Where a moved event lands.
 
@@ -548,12 +691,16 @@ def _resolve_new_start(phrase, old_start, now):
     tomorrow and the like, so "4pm" stays on that day instead of meaning the
     next 4pm from now. A day with no time keeps the event's time, so "move it
     to tuesday" does not land at midnight."""
-    base = now if _RELATIVE_TO_NOW.search(phrase) else _start_of_day(old_start)
+    relative = _RELATIVE_TO_NOW.search(phrase)
+    base = now if relative else _start_of_day(old_start)
     when, has_time = parse_when(phrase, base)
     if not has_time:
         when = datetime.datetime.combine(when.date(), old_start.time())
     elif _bare_clock(phrase):
         when = _nearest_reading(when, old_start)
+    weekday = _named_weekday(phrase)
+    if weekday is not None and not relative and not _HAS_DATE.search(phrase):
+        when = _same_week_day(weekday, old_start, when.time(), now)
     return when
 
 
@@ -594,6 +741,7 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
     # 4:30 PM sessions he had already been to as if they were still ahead.
     # Google still returns an all day event that is under way, so today's
     # birthday survives the clamp.
+    asked_from = start
     start = max(start, now)
     if end is not None and end <= start:
         return "That whole range has already passed."
@@ -604,7 +752,8 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
                  in _calendars(service).items() if selected}
     queries = []
     for cid in calendars:
-        query = {"calendarId": cid, "timeMin": _utc(start), "maxResults": _MAX_EVENTS,
+        # One more than the cap, so a listing can tell that it stopped short.
+        query = {"calendarId": cid, "timeMin": _utc(start), "maxResults": _MAX_EVENTS + 1,
                  "singleEvents": True, "orderBy": "startTime"}
         if end is not None:
             query["timeMax"] = _utc(end)
@@ -627,17 +776,50 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
 
     mine.sort(key=lambda pair: pair[0])
     followed.sort(key=lambda pair: pair[0])
-    lines = ["His events:"]
+    lines = _already_over(calendars, asked_from, now)
+    lines += ["His events:"]
     lines += [line for _, line in mine[:_MAX_EVENTS]] or ["Nothing on his own calendar."]
+    if len(mine) > _MAX_EVENTS:
+        lines.append(f"There are more of his events in this range than listed; "
+                     f"ask again from {_spoken(mine[_MAX_EVENTS][0].replace(tzinfo=None))} "
+                     f"to see the rest.")
     if followed:
         # Separated rather than dropped. He keeps club calendars so there is
         # something to go to when he wants it, not as a schedule to be read.
         lines += ["", "On calendars he follows, not commitments. Mention these only "
                       "if he asks what is going on or what he could do:"]
-        lines += [line for _, line in followed[:_MAX_EVENTS]]
+        lines += [line for _, line in followed[:_MAX_FOLLOWED]]
     if unreadable:
         lines.append(f"Could not read: {', '.join(unreadable)}.")
     return "\n".join(lines)
+
+
+def _already_over(calendars, asked_from, now):
+    """His own events in the requested range that ended before now, as lines.
+
+    The listing starts at now so a session he already went to is never read as
+    ahead of him. On Sep 15 2026 that same rule hid the lesson he was asking to
+    reschedule, because he had missed it earlier that evening, and Nova told him
+    there was only one lesson that week. So what is over is listed, separately
+    and said to be over, for at most the last day."""
+    since = max(asked_from, now - _PASSED_LOOKBACK)
+    if since >= now:
+        return []
+    queries = [{"calendarId": cid, "timeMin": _utc(since), "timeMax": _utc(now),
+                "singleEvents": True, "orderBy": "startTime", "maxResults": _MAX_EVENTS}
+               for cid, (_, owned) in calendars.items() if owned]
+    over = []
+    for _, items, error in _fetch_events(queries):
+        for event in items or []:
+            _, finish, all_day = _event_bounds(event)
+            if not all_day and finish <= now:
+                over.append((_event_start(event), _event_line(event)))
+    if not over:
+        return []
+    over.sort(key=lambda pair: pair[0])
+    return (["Already over, earlier in the range he asked about (he may want to "
+             "move one he missed):"]
+            + [line for _, line in over] + [""])
 
 
 @tool(
@@ -745,19 +927,29 @@ def create_calendar_event(summary, start_time, duration_minutes, now=None):
     return f"{said} This was read back to him word for word; he can say undo."
 
 
-# What the most recent addition put on the calendar, so "undo that" can take it
-# back as a whole: one event, or every session of one plan.
+# What the most recent change did, so "undo that" can take it back as a whole:
+# one event, every session of a plan, or several moves made at once. Each step is
+# ((verb, title), reverse), the verb being what undo says it did. Additions went
+# through here from Sep 14 2026; moves and deletes joined on Sep 16, when he said
+# a question before each one was too much.
 _UNDO_WINDOW_S = 30 * 60
-_recent_additions = {}
+_recent_changes = {}
 
 
-def _record_addition(calendar_id, event_id, title):
-    """Everything added on one turn is one addition, so a whole plan undoes
-    together while an earlier, separate addition is left alone."""
+def _record_change(verb, title, reverse):
+    """Everything changed on one turn is one change, so a whole plan or batch
+    undoes together while an earlier, separate change is left alone."""
     turn = pending_action.current_turn()
-    if _recent_additions.get("turn") != turn:
-        _recent_additions.update(turn=turn, at=time.monotonic(), events=[])
-    _recent_additions["events"].append((calendar_id, event_id, title))
+    if _recent_changes.get("turn") != turn:
+        _recent_changes.update(turn=turn, at=time.monotonic(), steps=[])
+    _recent_changes["steps"].append(((verb, title), reverse))
+
+
+# What a deleted event needs to come back as itself. Not attendees or
+# conference details: re-inserting those can send invitations or needs extra
+# API flags, and MILES events are his own.
+_RESTORABLE = ("summary", "description", "location", "start", "end",
+               "colorId", "reminders", "transparency", "visibility")
 
 
 def _insert_event(summary, start, end):
@@ -768,7 +960,9 @@ def _insert_event(summary, start, end):
             "end": {"dateTime": end.astimezone().isoformat()}}
     calendar_id = _write_calendar_id(service)
     created = service.events().insert(calendarId=calendar_id, body=body).execute()
-    _record_addition(calendar_id, created.get("id"), summary)
+    event_id = created.get("id")
+    _record_change("Removed", summary, lambda: _service().events().delete(
+        calendarId=calendar_id, eventId=event_id).execute())
     return f"Added {summary}."
 
 
@@ -786,13 +980,15 @@ _FIND_SCHEMA = {
 @tool(
     name="delete_calendar_event",
     description=(
-        "Propose deleting one event from Lethanial's MILES calendar, the one you "
-        "create events on. This does not delete it. It finds the event by title "
-        "and day and returns one short question to ask him. Say nothing before "
+        "Delete one event from Lethanial's MILES calendar, the one you create "
+        "events on. It finds the event by title and day and deletes it at once; "
+        "what was deleted is read back to him word for word and he can say undo. "
+        "One occurrence of a repeating event is the exception: that returns a "
+        "question instead, also asked for you. Say nothing before or after "
         "calling this. Call this when he asks you to delete or remove an event. "
         "Events on his other calendars cannot be changed; tell him so. If he did "
         "not say the day, find it with get_upcoming_events first. If he has "
-        "already been asked about the deletion and agrees, call "
+        "already been asked about a deletion and agrees, call "
         "confirm_pending_action instead."
     ),
     input_schema={"type": "object", "properties": _FIND_SCHEMA,
@@ -806,12 +1002,23 @@ def delete_calendar_event(title, day, now=None):
     calendar_id, event = _find_miles_event(_service(), title, day, now)
     start, _, all_day = _event_bounds(event)
     name = event.get("summary", "Untitled")
-    if all_day:
-        question = f"Delete the all day event {name} {_on_day(start, now)}{_once(event)}?"
-    else:
-        question = f"Delete {name} {_on_day(start, now)} at {_clock(start)}{_once(event)}?"
-    return _ask(pending_action.propose(question.rstrip("?"),
-                                       lambda: _delete_event(calendar_id, event["id"], name)))
+    when = _on_day(start, now) if all_day else f"{_on_day(start, now)} at {_clock(start)}"
+    what = f"the all day event {name}" if all_day else name
+
+    if event.get("recurringEventId"):
+        # Still asked. Undo would re-insert it as a standalone event, outside
+        # its series, so this is the one delete that cannot be fully taken back.
+        question = f"Delete {what} {when}{_once(event)}?"
+        return _ask(pending_action.propose(question.rstrip("?"),
+                                           lambda: _delete_event(calendar_id, event["id"], name)))
+
+    _delete_event(calendar_id, event["id"], name)
+    copy = {key: event[key] for key in _RESTORABLE if key in event}
+    _record_change("Restored", name, lambda: _service().events().insert(
+        calendarId=calendar_id, body=copy).execute())
+    said = f"Deleted {what} {when}."
+    pending_action.announce(said)
+    return f"{said} This was read back to him word for word; he can say undo."
 
 
 def _once(event):
@@ -823,16 +1030,14 @@ def _once(event):
 @tool(
     name="update_calendar_event",
     description=(
-        "Propose changing one event on Lethanial's MILES calendar: its title, its "
-        "start time, its length, or any of those. This does not change it. It "
-        "returns one short question to ask him. Say nothing before calling this. "
-        "Call this when he asks you to "
+        "Change one event on Lethanial's MILES calendar: its title, its start "
+        "time, its length, or any of those. It happens at once; what changed is "
+        "read back to him word for word and he can say undo. Say nothing before "
+        "or after calling this. Call this when he asks you to "
         "move, reschedule, rename, shorten or lengthen one event. To fix a name on "
         "every event that has it, use rename_calendar_events instead. A new time alone, "
         "like '4pm', stays on the event's day; a new day alone, like 'tuesday', "
-        "keeps its time. Events on his other calendars cannot be changed. If he "
-        "has already been asked about the change and agrees, call "
-        "confirm_pending_action instead."
+        "keeps its time. Events on his other calendars cannot be changed."
     ),
     input_schema={
         "type": "object",
@@ -884,40 +1089,47 @@ def update_calendar_event(title, day, new_title=None, new_start_time=None,
 
     name = event.get("summary", "Untitled")
     clauses = []
-    # Only what changes is said. "Move it to 4" does not need the date read back
+    # Only what changed is said. "Move it to 4" does not need the date read back
     # twice, and a rename does not need the time at all.
     if new_start != start:
         if new_start.date() == start.date():
-            clauses.append(f"move {name} {_on_day(start, now)} from {_clock(start)} "
+            clauses.append(f"moved {name} {_on_day(start, now)} from {_clock(start)} "
                            f"to {_clock(new_start)}")
         else:
-            clauses.append(f"move {name} from {_day_words(start, now)} at {_clock(start)} "
+            clauses.append(f"moved {name} from {_day_words(start, now)} at {_clock(start)} "
                            f"to {_day_words(new_start, now)} at {_clock(new_start)}")
     if new_end - new_start != end - start:
         minutes = int((new_end - new_start).total_seconds() // 60)
-        clauses.append(f"make it {minutes} minutes long" if clauses
-                       else f"make {name} {_on_day(start, now)} {minutes} minutes long")
+        clauses.append(f"made it {minutes} minutes long" if clauses
+                       else f"made {name} {_on_day(start, now)} {minutes} minutes long")
     if "summary" in body:
         spelled = _spelling_note(name, new_title)
-        clauses.append(f"rename it to {new_title}{spelled}" if clauses
-                       else f"rename {name} {_on_day(start, now)} to {new_title}{spelled}")
+        clauses.append(f"renamed it to {new_title}{spelled}" if clauses
+                       else f"renamed {name} {_on_day(start, now)} to {new_title}{spelled}")
 
+    # At once since Sep 16 2026: a move is fully reversible, so the question
+    # before it cost a turn and protected nothing undo does not. What changed is
+    # read back in code, so he hears the real day and time.
+    _patch_event(calendar_id, event["id"], body, new_title or name)
+    restore = {key: event[key] for key in body if key in event}
+    _record_change("Put back", name, lambda: _service().events().patch(
+        calendarId=calendar_id, eventId=event["id"], body=restore).execute())
     sentence = ", and ".join(clauses) + _once(event)
-    question = sentence[0].upper() + sentence[1:] + "?"
-    return _ask(pending_action.propose(question.rstrip("?"),
-                                       lambda: _patch_event(calendar_id, event["id"], body, new_title or name)))
+    said = sentence[0].upper() + sentence[1:] + "."
+    pending_action.announce(said)
+    return f"{said} This was read back to him word for word; he can say undo."
 
 
 def _delete_event(calendar_id, event_id, name):
-    """The actual delete, reached only through confirm_pending_action."""
+    """The actual delete: at once, or through confirm_pending_action for one
+    occurrence of a repeating event."""
     _service().events().delete(calendarId=calendar_id, eventId=event_id).execute()
     return f"Deleted {name}."
 
 
 def _patch_event(calendar_id, event_id, body, name):
-    """The actual edit, reached only through confirm_pending_action. patch, not
-    update, so fields this tool never touches, like attendees and reminders, are
-    left exactly as they were."""
+    """The actual edit. patch, not update, so fields this tool never touches,
+    like attendees and reminders, are left exactly as they were."""
     _service().events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
     return f"Updated {name}."
 
@@ -1387,36 +1599,38 @@ def rename_calendar_events(find, replace_with, time_min=None, time_max=None, now
 
 
 @tool(
-    name="undo_last_addition",
+    name="undo_last_change",
     description=(
-        "Take back the most recent addition to Lethanial's calendar as a whole: "
-        "the one event, or every session of the plan. Call this when he says undo "
-        "that, take that off, or that was wrong, right after something was added. "
-        "It works for thirty minutes; anything older, delete it by name instead. "
-        "What was removed is read back to him word for word, so say nothing after."
+        "Take back the most recent change to Lethanial's calendar as a whole: an "
+        "added event, every session of a plan, a move, a rename, a deletion, or "
+        "several of those made at once. Call this when he says undo that, put it "
+        "back, or that was wrong, right after a change. It works for thirty "
+        "minutes; anything older, change it by name instead. What was undone is "
+        "read back to him word for word, so say nothing after."
     ),
     input_schema={"type": "object", "properties": {}, "required": []},
     permission=Permission.EXTERNAL_WRITE,
     returns_to_model=True,
     min_tier="hokage",
 )
-def undo_last_addition():
-    events = _recent_additions.get("events") or []
-    if not events or time.monotonic() - _recent_additions.get("at", 0) > _UNDO_WINDOW_S:
-        raise LookupError("nothing was added in the last thirty minutes to undo")
-    removed, failed = [], []
-    for calendar_id, event_id, title in events:
+def undo_last_change():
+    steps = _recent_changes.get("steps") or []
+    if not steps or time.monotonic() - _recent_changes.get("at", 0) > _UNDO_WINDOW_S:
+        raise LookupError("nothing was changed in the last thirty minutes to undo")
+    done, failed = {}, []
+    # Newest first, so two changes to the same event unwind in the right order.
+    for (verb, title), reverse in reversed(steps):
         try:
-            _service().events().delete(calendarId=calendar_id, eventId=event_id).execute()
-            removed.append(title)
+            reverse()
+            done.setdefault(verb, []).insert(0, title)
         except Exception as exc:
             failed.append(f"{title} ({exc})")
-    _recent_additions.clear()
-    said = ""
-    if removed:
-        said = f"Removed {len(removed)} events." if len(removed) > 2 else f"Removed {_names(removed)}."
+    _recent_changes.clear()
+    sentences = [f"{verb} {len(titles)} events." if len(titles) > 2
+                 else f"{verb} {_names(titles)}."
+                 for verb, titles in done.items()]
     if failed:
-        said += f" Could not remove: {'; '.join(failed)}."
-    said = said.strip()
+        sentences.append(f"Could not undo: {'; '.join(failed)}.")
+    said = " ".join(sentences)
     pending_action.announce(said)
     return said

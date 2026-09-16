@@ -80,7 +80,7 @@ def test_completion_is_the_claim(reminders):
     """complete_reminder reporting whether it changed a row is what makes the
     UPDATE double as a lock. Two passes cannot both win the same reminder."""
     actions.set_reminder("drink water", _iso(seconds=-5))
-    (reminder_id, _, _), = database.due_reminders(datetime.now().isoformat())
+    (reminder_id, _, _, _), = database.due_reminders(datetime.now().isoformat())
 
     assert database.complete_reminder(reminder_id) is True
     assert database.complete_reminder(reminder_id) is False
@@ -179,3 +179,47 @@ def test_a_failing_poll_does_not_kill_the_thread(reminders, monkeypatch, capsys)
 
     assert calls, "the poll was never attempted"
     assert "Reminder poll failed" in capsys.readouterr().out
+
+
+# ── timers are rows too (Sep 16 2026) ──
+# A timer was a thread sleeping in whichever process set it. Set from the app,
+# it slept in miles-server, whose alert queue nothing drains, so it never went
+# off; and a restart dropped every running timer.
+
+def test_a_timer_is_a_row_that_outlives_the_process(reminders):
+    actions.set_timer("10 minutes")
+    (_, content, due_at, _, kind), = database.open_reminders()
+    assert (content, kind) == ("10 minute timer", "timer")
+    remaining = (datetime.fromisoformat(due_at) - datetime.now()).total_seconds()
+    assert 590 < remaining <= 600
+
+
+def test_a_timer_does_not_ring_early(reminders):
+    actions.set_timer("10 minutes")
+    assert actions.poll_reminders() == 0
+
+
+def test_a_due_timer_rings_in_its_own_words(reminders):
+    actions.set_timer("10 minutes")
+    assert actions.poll_reminders(now=datetime.now() + timedelta(minutes=11)) == 1
+    fired, = alerts.take_for_speech()
+    assert fired.text == "[calmly] Lethanial, your ten minute timer is up."
+    assert database.open_reminders() == []
+
+
+def test_a_timer_set_long_ago_says_it_went_off_while_he_was_away(reminders):
+    actions.set_timer("1 minutes")
+    actions.poll_reminders(now=datetime.now() + timedelta(hours=3))
+    fired, = alerts.take_for_speech()
+    assert fired.text == "[calmly] Lethanial, your one minute timer went off while you were away."
+
+
+def test_a_timer_can_be_cancelled_by_voice(reminders):
+    """It could not be cancelled at all while it was a thread."""
+    actions.set_timer("5 minutes")
+    assert actions.cancel_reminder("timer").startswith("Removed 1")
+    assert database.open_reminders() == []
+
+
+def test_the_poller_is_quick_enough_for_a_timer():
+    assert actions.REMINDER_POLL_S <= 5

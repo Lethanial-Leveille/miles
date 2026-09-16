@@ -38,6 +38,8 @@ class _FakeStream:
         for text in self._texts:
             yield SimpleNamespace(type="content_block_delta",
                                   delta=SimpleNamespace(type="text_delta", text=text))
+        for block in self._final.content:
+            yield SimpleNamespace(type="content_block_start", content_block=block)
 
     async def get_final_message(self):
         return self._final
@@ -170,3 +172,25 @@ def test_a_follow_up_after_a_lookup_still_offers_tools(turn):
     weather = SimpleNamespace(type="tool_use", name="get_weather", id="toolu_1", input={})
     turn("text", _FakeStream([], [weather]), _FakeStream(["It's 75 degrees."]))
     assert "tools" in turn.calls[1]
+
+
+def test_every_tool_says_what_it_is_doing():
+    """A tool added without an entry would leave the app showing nothing."""
+    assert set(brain._STAGE_WORDS) == set(registry.names())
+
+
+def test_a_tool_call_is_announced_before_the_answer(turn):
+    weather = SimpleNamespace(type="tool_use", name="get_weather", id="toolu_1", input={})
+    events = []
+    turn("text", _FakeStream([], [weather]), _FakeStream(["It's 75 degrees."]),
+         on_text=lambda kind, text: events.append((kind, text)))
+    assert events[0] == ("stage", "Checking the weather")
+    assert events.index(("stage", "Checking the weather")) < events.index(("delta", "It's 75 degrees."))
+
+
+def test_dismissing_shows_no_stage(turn):
+    goodbye = SimpleNamespace(type="tool_use", name="dismiss", id="toolu_1", input={})
+    events = []
+    turn("text", _FakeStream(["Talk later."], [goodbye]),
+         on_text=lambda kind, text: events.append((kind, text)))
+    assert [kind for kind, _ in events] == ["delta"]

@@ -221,17 +221,61 @@ async def _say(text, channel):
     await asyncio.get_running_loop().run_in_executor(None, speak, text)
 
 
+# What the app shows while a tool works, in place of a flat "thinking". Keyed
+# by tool name, and a test requires an entry for every registered tool, so a new
+# tool cannot silently show nothing. None means no stage: dismiss and ignore are
+# state changes, not work.
+_STAGE_WORDS = {
+    "cancel_reminder":         "Cancelling a reminder",
+    "check_calendar_freebusy": "Checking when you're free",
+    "confirm_pending_action":  "Making the change",
+    "create_calendar_event":   "Adding it to your calendar",
+    "delete_calendar_event":   "Deleting the event",
+    "dismiss":                 None,
+    "find_schedule_conflicts": "Looking for conflicts",
+    "get_oura_activity":       "Reading your activity",
+    "get_oura_heartrate":      "Reading your heart rate",
+    "get_oura_readiness":      "Reading your readiness",
+    "get_oura_sleep":          "Reading your sleep",
+    "get_system_state":        "Checking on the Pi",
+    "get_upcoming_events":     "Checking your calendar",
+    "get_weather":             "Checking the weather",
+    "ignore":                  None,
+    "list_pending_memories":   "Looking at what's waiting for review",
+    "lower_access":            "Changing access",
+    "plan_sessions":           "Planning around your week",
+    "remember":                "Remembering that",
+    "rename_calendar_events":  "Finding the events",
+    "review_pending_memory":   "Updating your memories",
+    "set_reminder":            "Setting a reminder",
+    "set_timer":               "Setting a timer",
+    "undo_last_change":        "Undoing that",
+    "update_calendar_event":   "Changing the event",
+}
+
+
+def _stage_for(event):
+    """The words for a tool call starting, or None for any other stream event.
+
+    Read from content_block_start, which arrives before the tool's arguments
+    are written, so the app can say what is happening as early as possible."""
+    if event.type != "content_block_start" or event.content_block.type != "tool_use":
+        return None
+    return _STAGE_WORDS.get(event.content_block.name)
+
+
 def _emit(on_text, kind, text):
     """Hand one piece of the reply to a caller streaming it, if there is one.
 
-    kind is "delta" for text as Nova writes it, or "reset" to say that what was
-    streamed so far is being discarded: the bridge sentence said alongside a
-    tool call is not part of the answer that replaces it.
+    kind is "delta" for text as Nova writes it, "stage" for what she is doing
+    while a tool works, or "reset" to say that what was streamed so far is being
+    discarded: the bridge sentence said alongside a tool call is not part of the
+    answer that replaces it.
 
     A failure in the callback is logged and swallowed. The speaker, the tools
     and the database do not care that an HTTP client went away, and a turn that
     already ran must still finish."""
-    if on_text is None or (kind == "delta" and not text):
+    if on_text is None or (kind != "reset" and not text):
         return
     try:
         on_text(kind, text)
@@ -542,6 +586,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # them and get_final_message returns the parsed input, so a half
         # written argument has no path to TTS by construction.
         async for event in stream:
+            _emit(on_text, "stage", _stage_for(event))
             if event.type != "content_block_delta":
                 continue
             if event.delta.type != "text_delta":
@@ -677,6 +722,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                     **kwargs,
                 ) as stream2:
                     async for event in stream2:
+                        _emit(on_text, "stage", _stage_for(event))
                         if event.type != "content_block_delta":
                             continue
                         if event.delta.type != "text_delta":
