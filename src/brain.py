@@ -8,7 +8,7 @@ from typing import NamedTuple
 import anthropic
 import timing
 from tts import join_for_speech, play, speak, start_synthesis
-from prompts import build_enhanced_prompt
+from prompts import build_enhanced_prompt, TEXT_TURN_NOTE
 from database import (save_message, get_seed_memories, get_episodic_memories,
                       get_recent_messages, search_memories, memory_manifest,
                       get_shareable_memories, effective_tier)
@@ -191,6 +191,54 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
     finally:
         feeder.cancel()
 
+
+async def _collect_text(queue: asyncio.Queue, text_parts: list, leaks_seen: set) -> None:
+    """Stand in for _tts_consumer on a text turn: gather the sentences, play nothing.
+
+    Same arguments and the same cue stripping, so everything that reads
+    text_parts afterwards, the fire and forget branch included, behaves the same
+    on both channels. Before this, a typed message was spoken through the room
+    speaker by miles-server, and /chat did not return until playback ended, so
+    the app showed Nova thinking while she was already talking."""
+    while True:
+        sentence = await queue.get()
+        if sentence is None:
+            return
+        text_parts.append(strip_leading_bracket_cue(sentence, leaks_seen))
+
+
+def _consumer_for(channel):
+    # Same test as build_enhanced_prompt, so the prompt and the speaker can never
+    # disagree about which channel a turn is on.
+    return _collect_text if channel == "text" else _tts_consumer
+
+
+async def _say(text, channel):
+    """Speak a line code wrote rather than the model: a staged question, or the
+    fallback. On a text turn it still reaches the reply, it just is not played."""
+    if channel == "text":
+        return
+    await asyncio.get_running_loop().run_in_executor(None, speak, text)
+
+
+def _emit(on_text, kind, text):
+    """Hand one piece of the reply to a caller streaming it, if there is one.
+
+    kind is "delta" for text as Nova writes it, or "reset" to say that what was
+    streamed so far is being discarded: the bridge sentence said alongside a
+    tool call is not part of the answer that replaces it.
+
+    A failure in the callback is logged and swallowed. The speaker, the tools
+    and the database do not care that an HTTP client went away, and a turn that
+    already ran must still finish."""
+    if on_text is None or (kind == "delta" and not text):
+        return
+    try:
+        on_text(kind, text)
+    except Exception as exc:
+        print(f"Streaming callback failed: {exc}", flush=True)
+
+
 def _trim_history(messages: list) -> list:
     """Shorten past assistant turns before sending them as context.
 
@@ -269,6 +317,22 @@ def _with_current_time(messages: list) -> list:
     return messages[:-1] + [{
         **messages[-1],
         "content": f"{messages[-1]['content']}\n\n[Current date and time: {stamp}]",
+    }]
+
+
+def _with_text_note(messages: list, channel: str) -> list:
+    """On a text turn, say in the final user turn that this reply is read.
+
+    The history is mostly spoken replies with every number written out, and
+    Nova's own transcript is a stronger signal than any system prompt rule, so
+    NUMBER_FORMAT_TEXT alone lost to it. Same placement as the clock, after the
+    cache breakpoint. Voice turns are untouched, and the database keeps the raw
+    message."""
+    if channel != "text" or not messages or messages[-1]["role"] != "user":
+        return messages
+    return messages[:-1] + [{
+        **messages[-1],
+        "content": f"{messages[-1]['content']}\n\n{TEXT_TURN_NOTE}",
     }]
 
 
@@ -399,12 +463,17 @@ def _run_tools(tool_uses, model, tier):
 
 async def ask_nova_async(user_text: str, device: str = "pi",
                          channel: str = "voice",
-                         tier: str = "hokage") -> TurnResult:
+                         tier: str = "hokage", on_text=None) -> TurnResult:
     """Run one turn.
+
+    on_text, when given, is called with each piece of the reply as it is
+    written, so a caller can show it arriving. It is how /chat/stream feeds the
+    app; the voice loop passes nothing and is unaffected.
 
     device is provenance, which client sent this, and is stored as
     source_device. channel is how the answer will be rendered, voice or text,
-    and selects the formatting fragment of the prompt. They were one parameter
+    and selects the formatting fragment of the prompt and whether anything is
+    played through the speaker. They were one parameter
     until the two meanings drifted apart: the app can want spoken output and the
     Pi could one day want text, so conflating them would make either impossible.
     """
@@ -432,6 +501,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                                    alerts.take_for_fold())
     recent          = _with_recalled(recent, user_text) if personal else recent
     recent          = _with_current_time(recent)
+    recent          = _with_text_note(recent, channel)
 
     sentence_queue = asyncio.Queue()
     router         = StreamRouter(sentence_queue)
@@ -439,7 +509,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     loop           = asyncio.get_running_loop()
     leaks_seen     = set()  # shared across both TTS consumers and the returned-text strips this turn
 
-    tts_task = asyncio.create_task(_tts_consumer(sentence_queue, spoken_parts, leaks_seen))
+    tts_task = asyncio.create_task(_consumer_for(channel)(sentence_queue, spoken_parts, leaks_seen))
 
     # Cache the system prompt. It is the stable prefix: the seed corpus and
     # persona change rarely, while `recent` changes every turn and therefore
@@ -483,6 +553,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                 timing.mark('claude_ttft_ms',
                             (first_token - claude_start) * 1000.0)
             accumulated += text
+            _emit(on_text, "delta", text)
             await router.feed(text)
 
             # The wait between the first token and the first speakable
@@ -557,6 +628,10 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         needs_second_call = _needs_second_call(results) and staged is None
 
         if needs_second_call:
+            # Whatever Nova said alongside the call is not part of the answer
+            # the tool result produces, and it is not what gets saved either.
+            # A reader who was shown it has to be told to drop it.
+            _emit(on_text, "reset", "")
             # Real tool_result blocks, not a synthetic user turn describing the
             # data in prose. The model gets the result attached to the call it
             # made, which is what lets it answer about the result rather than
@@ -570,7 +645,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             router2         = StreamRouter(sentence_queue2)
             spoken_parts2   = []
             tts_task2       = asyncio.create_task(
-                _tts_consumer(sentence_queue2, spoken_parts2, leaks_seen)
+                _consumer_for(channel)(sentence_queue2, spoken_parts2, leaks_seen)
             )
 
             # A loop, not a single call. The follow up is free to request
@@ -607,6 +682,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                             timing.note_second_ttft(
                                 (second_first - second_start) * 1000.0)
                         round_text += event.delta.text
+                        _emit(on_text, "delta", event.delta.text)
                         await router2.feed(event.delta.text)
 
                     followup_message = await stream2.get_final_message()
@@ -637,7 +713,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             final_text = strip_leading_bracket_cue(final_text, leaks_seen)
             late_question = pending_action.words_for_turn()
             if late_question is not None:
-                await loop.run_in_executor(None, speak, late_question)
+                await _say(late_question, channel)
+                _emit(on_text, "delta", f" {late_question}" if final_text else late_question)
                 final_text = f"{final_text} {late_question}".strip()
         else:
             # Timer, reminder, cancel, dismiss: the text Nova said alongside
@@ -645,7 +722,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # second of latency rephrasing "Timer set."
             final_text = " ".join(spoken_parts).strip()
             if staged is not None:
-                await loop.run_in_executor(None, speak, staged)
+                await _say(staged, channel)
+                _emit(on_text, "delta", f" {staged}" if final_text else staged)
                 final_text = f"{final_text} {staged}".strip()
 
             # A control tool is a state transition, not work, so there is
@@ -673,7 +751,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # way, which read as the tool having failed when it had worked.
             if not final_text and not only_control:
                 final_text = "Done."
-                await loop.run_in_executor(None, speak, final_text)
+                await _say(final_text, channel)
+                _emit(on_text, "delta", final_text)
 
         timing.note_action((time.monotonic() - action_start) * 1000.0)
     else:
@@ -702,8 +781,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
 
 def ask_nova(user_text: str, device: str = "pi",
-             channel: str = "voice", tier: str = None) -> TurnResult:
+             channel: str = "voice", tier: str = None, on_text=None) -> TurnResult:
     # None means "look it up", so a demotion set in one turn is in force on the
     # next without the caller having to thread it through.
     return asyncio.run(ask_nova_async(user_text, device=device, channel=channel,
-                                      tier=tier or effective_tier()))
+                                      tier=tier or effective_tier(), on_text=on_text))

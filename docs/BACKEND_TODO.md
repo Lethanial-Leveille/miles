@@ -1119,3 +1119,53 @@ his voice from the room, and that is the harder half:
 - **Online speech to text** would transcribe a noisy room better than base.en,
   at a monthly cost and with room audio leaving the Pi. Not faster; see the
   decision log.
+
+## Text channel follow ups (Sep 15 2026)
+
+The backend half is done: a text turn is silent, answers in numerals, and can be
+streamed over `/chat/stream`. See
+[SESSION_START.md](SESSION_START.md#a-typed-message-is-read-not-spoken-sep-15-2026-done).
+What is left, and why each was left.
+
+### The app has to send `channel: "text"`
+
+**Nothing above works until it does.** `ChatRequest` defaults to `voice`, on
+purpose, because the field was added after the app shipped. The public app repo
+posts `{"message": text}` and nothing else, so on that code every typed message
+still takes the voice prompt and the speaker. The build on his phone is ahead of
+that repo (it posts to `/chat`, while the public code uses the socket), so this
+has to be read in the app session rather than guessed at from here.
+
+### The app has to read the stream
+
+`URLSession.bytes` needs no dependency. Append each `delta` to the bubble, clear
+it on `reset`, replace it with `done`. The thinking indicator then ends at the
+first word instead of at the end of the turn.
+
+### `/ws` has never worked
+
+The handler is `async` and calls `ask_nova`, which calls `asyncio.run` inside the
+already running loop. Every message raises. Nothing uses it. Either delete it or
+make it `await ask_nova_async`; deleting is the honest option unless the app
+wants a socket, since `/chat/stream` now covers streaming. Not touched in the
+same change that added the streaming route, because it is a separate decision and
+the route it would compete with had not been used yet.
+
+### `WHAT_REACHES_YOU` is false on a text turn
+
+It tells Nova every message is speech recognition output, wrong somewhere in more
+than a third of turns. When he types, it is exactly what he wrote. The risk is
+the mirror of the incident that created the block: she may treat a typo or a
+terse message as a mishearing and hand it back instead of answering it. A text
+copy is the same `_for_text` pattern used for the other two blocks. Left out of
+the numbers change because it changes how she reads his messages, which deserves
+its own before and after.
+
+### Digits in shared history may reach a voice turn
+
+History is shared between channels, so numerals written on text turns now sit in
+what voice turns read back. Seeded with one numerals answer, 1 of 4 voice replies
+picked up a digit. Whether that matters depends on how `eleven_v3` reads "62",
+which has not been tested; the old claim that the synthesizer reads digits badly
+predates v3. Measure before building anything: render one reply containing digits
+and listen.

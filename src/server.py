@@ -1,9 +1,13 @@
+import asyncio
+import json
 import sys
+import threading
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import StreamingResponse
 from typing import Literal
 
 from pydantic import BaseModel
@@ -73,6 +77,59 @@ def refresh(user: str = Depends(get_current_user)):
 def chat(body: ChatRequest, user: str = Depends(get_current_user)):
     response = ask_nova(body.message, device="app", channel=body.channel).text
     return ChatResponse(response=response)
+
+
+# How long the stream waits with nothing to send before writing a comment
+# line. Cloudflare closes a connection that goes quiet, and a turn that calls a
+# slow tool can say nothing for several seconds.
+_KEEPALIVE_S = 15
+
+
+def _sse(kind: str, text: str) -> str:
+    """One Server Sent Event. The blank line at the end is what ends the event,
+    and json keeps a reply containing newlines from ending it early."""
+    return f"event: {kind}\ndata: {json.dumps({'text': text})}\n\n"
+
+
+@app.post("/chat/stream")
+async def chat_stream(body: ChatRequest, user: str = Depends(get_current_user)):
+    """The same turn as /chat, sent as it is written rather than at the end.
+
+    ask_nova runs its own event loop, so it runs on a worker thread and hands
+    each piece back here with call_soon_threadsafe, which is the only safe way
+    into this loop from another thread. The turn finishes whatever happens to
+    this response: it is already writing to the database and, on voice, to the
+    speaker."""
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def on_text(kind: str, text: str):
+        loop.call_soon_threadsafe(queue.put_nowait, (kind, text))
+
+    def run_turn():
+        try:
+            result = ask_nova(body.message, device="app", channel=body.channel,
+                              on_text=on_text)
+            on_text("done", result.text)
+        except Exception as exc:
+            on_text("error", str(exc))
+
+    threading.Thread(target=run_turn, daemon=True).start()
+
+    async def events():
+        while True:
+            try:
+                kind, text = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            yield _sse(kind, text)
+            if kind in ("done", "error"):
+                return
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 @app.get("/memories")

@@ -145,8 +145,75 @@ distinct from `device`, which is provenance and is stored as `source_device`.
 The two were one parameter until their meanings diverged: the app may want
 spoken output and the Pi may one day want text.
 
-Channel selects the response formatting fragment of the system prompt and gates
-pronunciation normalization. Tool calls and memory writes are identical on both.
+Channel selects the response formatting fragment of the system prompt and
+whether anything is played. A `text` turn never reaches the speaker:
+`_consumer_for` hands it `_collect_text` instead of `_tts_consumer`, and every
+line code speaks on its own (a staged question, the "Done." fallback) goes
+through `_say`, which stays quiet on text. Pronunciation normalization runs
+inside `speak()`, so it only ever touches voice. Tool calls and memory writes
+are identical on both.
+
+> **Correction (Sep 14 2026).** This section said channel selected the prompt
+> fragment and gated normalization, and commit `b943ea0` said "the text path
+> never calls speak()". By Sep 14 that was false: `ask_nova_async` started the
+> TTS consumer and the direct `speak()` calls on every turn whatever the
+> channel, so a message typed in the app was spoken through the room speaker by
+> `miles-server`, and `/chat` returned only after playback, which the app showed
+> as Nova still thinking. `tests/test_text_channel.py` pins it now, with a voice
+> control so the check cannot pass by seeing no speech at all.
+
+### Numbers on a text turn
+
+`NUMBER_FORMAT_TEXT` asks for numerals and was losing to two other things.
+Measured Sep 14 2026 on his real Oura sleep result and his real history, four
+samples per condition, counting replies containing any digit:
+
+| Condition | Numerals | Number words |
+|---|---|---|
+| Text prompt as written, with history | 0/4 | 4/4 |
+| Numerals in the tool speech and results examples | 2/4 | 4/4 |
+| Those examples, and no history at all | 4/4 | 3/4 |
+| Those examples, history, and `TEXT_TURN_NOTE` | 4/4 | 1/4 |
+| Shipped: both, with history | 4/4 | 0/4 |
+
+Two findings, and they are the same finding twice. **The examples mattered more
+than the rule**: `TOOL_SPEECH` said "ninety five degrees" and
+`TALKING_ABOUT_RESULTS` said "Your readiness is eighty one", and those were
+copied while the rule three blocks earlier was not. `_for_text` derives the text
+copies from the voice ones so only the sentences that assume speech change, and
+it raises at import if a swap stops matching, because the cost of a silent miss
+is the spoken example staying in the text prompt.
+
+**And the transcript beat the system prompt again**, the same way it did for
+response length. Her stored replies are mostly spoken ones with every number
+written out, and with history in place the numerals rule lost 4 times out of 4.
+`TEXT_TURN_NOTE` wins because of where it sits, not because of its wording: the
+final user turn, after the cache breakpoint, next to the clock. Its examples are
+abstract (`12.75`, `15%`) rather than sleep shaped, because anything in a prompt
+shaped like his real data gets treated as his real data.
+
+The voice prompt is byte for byte unchanged by this, so voice keeps its cached
+prefix and keeps spelling numbers out.
+
+**Known and not fixed:** history is shared between channels, so text answers in
+numerals now sit in what a voice turn reads. Measured after seeding one numerals
+answer: 1 of 4 voice replies picked up a digit ("score of 62"). Watch it; the
+fix, if it is ever needed, is the mirror of the note.
+
+### Streaming a reply to the app
+
+`ask_nova_async` takes an optional `on_text(kind, text)`. It is called with each
+piece of the reply as Claude writes it, which is the same stream that feeds
+speech, so an app can show words arriving rather than a thinking indicator.
+`POST /chat/stream` is that path; the voice loop passes nothing and is
+unaffected.
+
+`kind` is `delta` for text, and `reset` to say that what was streamed so far is
+being dropped. `reset` exists because on a tool turn the bridge sentence said
+alongside the call is not part of the answer the tool result produces and is not
+what gets saved, so a reader shown it has to be told. Lines code speaks itself,
+a staged question or the `Done.` fallback, are streamed as deltas too, so what
+is read matches what is said.
 
 ## Local intent
 

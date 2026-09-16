@@ -30,6 +30,27 @@ piece of scheduled work the system owns.
 - `miles-server.service` runs uvicorn server:app on port 8000 (FastAPI)
 - `miles-tunnel.service` runs cloudflared tunnel (Cloudflare Tunnel)
 
+Timer driven, not long running:
+
+- `miles-health.timer` runs scripts/healthcheck.py every fifteen minutes
+- `miles-wifi.timer` runs scripts/wifi_watchdog.sh every two minutes
+
+`miles-wifi` checks whether wlan0 has a carrier and a global scope IPv4
+address, and runs `nmcli connection up Alsander` when either is missing. It
+runs as root because `nmcli connection up` is polkit protected and a non root
+caller is refused on the one occasion it has to work. It is silent on a healthy
+link, because systemd already writes a Starting and a Finished line per run and
+seven hundred daily lines saying nothing happened would bury the ones that
+matter:
+
+```bash
+systemctl list-timers miles-wifi.timer
+journalctl -u miles-wifi.service -n 50
+```
+
+Both units are versioned under `systemd/` and installed by copying to
+`/etc/systemd/system/`. The other three are not versioned.
+
 ```bash
 sudo systemctl status miles-voice miles-server miles-tunnel
 sudo systemctl restart miles-voice
@@ -53,11 +74,27 @@ Domain lethanial.com registered through Cloudflare. Free Zero Trust tier.
 
 ## FastAPI endpoints
 
-REST: /auth/login, /auth/refresh, /chat, /memories, /memories/{id}, /history,
-/status, /docs
+REST: /auth/login, /auth/refresh, /chat, /chat/stream, /memories,
+/memories/pending, /memories/{id}/approve, /memories/{id} (DELETE),
+/history, /status, /docs
 WebSocket: /ws
 
-Auth: JWT, HS256, Authorization Bearer header. Access tokens 7 day expiry.
+`/chat/stream` is the same turn as `/chat`, sent as Server Sent Events while it
+is written: `event: delta` per piece, `event: reset` when what was streamed is
+being dropped, then `event: done` with the finished reply, or `event: error`.
+The turn runs on a worker thread, because `ask_nova` starts its own event loop,
+and it finishes whether or not the client is still listening. A comment line
+goes out every 15 seconds of silence so the tunnel does not close a connection
+waiting on a slow tool.
+
+**`/ws` is broken and has been since it was written.** The handler is `async`
+and calls `ask_nova`, which calls `asyncio.run` inside the loop that is already
+running, so every message raises. Nothing uses it: the app posts to `/chat`.
+Found Sep 14 2026, left alone rather than fixed blind; see BACKEND_TODO.md.
+
+Auth: JWT, HS256, Authorization Bearer header. Access tokens expire after 60
+minutes (`ACCESS_TOKEN_EXPIRE_MINUTES` in `auth.py`). No refresh token is issued;
+`/auth/refresh` needs a token that has not expired yet.
 
 ## Environment variables
 

@@ -148,6 +148,47 @@ Connect it to him when you can: his targets, how he has been sleeping, what he h
 Only say what the numbers actually show. If you are not sure what a value means for him, give the number plainly rather than guessing at a conclusion."""
 
 
+def _for_text(block, swaps):
+    """The text channel copy of a block written for voice.
+
+    Derived rather than copied, so the rules in it cannot drift apart between
+    channels; only the sentences that assume speech change. Raises at import if
+    the voice block was reworded and a swap no longer matches, because the
+    alternative is the spoken example silently staying in the text prompt."""
+    for old, new in swaps:
+        if old not in block:
+            raise ValueError(f"text channel swap no longer matches: {old[:60]!r}")
+        block = block.replace(old, new)
+    return block
+
+
+# Sep 14 2026: typed questions about his sleep came back with every number in
+# words despite NUMBER_FORMAT_TEXT. Examples are copied more readily than rules
+# are followed, and these two blocks carried spelled out ones. Measured in
+# docs/BRAIN.md#channels.
+TOOL_SPEECH_TEXT = _for_text(TOOL_SPEECH, [
+    ("Anything you say before calling a tool is spoken aloud immediately",
+     "Anything you write before calling a tool is shown immediately"),
+    ('Saying "ninety five degrees" and then being handed the real reading means Lethanial hears the answer twice',
+     'Writing "95 degrees" and then being handed the real reading means Lethanial reads the answer twice'),
+])
+
+TALKING_ABOUT_RESULTS_TEXT = _for_text(TALKING_ABOUT_RESULTS, [
+    ('"Your readiness is eighty one, HRV balance ninety one, recovery index seventy two" is a readout.',
+     '"Your readiness is 81, HRV balance 91, recovery index 72" is a readout.'),
+])
+
+# Attached to the final user turn of a text turn by brain._with_text_note, not
+# put in the system prompt. The history is mostly spoken replies with every
+# number written out, and the transcript outweighs a system prompt rule; the
+# last turn is the one place that outranks it. It sits after the cache
+# breakpoint, so it costs no cache hits. The examples are abstract on purpose:
+# a prompt example shaped like his real data gets treated as his data.
+TEXT_TURN_NOTE = ("[Typed in the app and read on a screen, not spoken. Write every "
+                  "number as numerals, like 12.75 or 15%, even where earlier "
+                  "replies spelled them out.]")
+
+
 TRUSTED_BLOCK = """WHO YOU ARE TALKING TO:
 This is not Lethanial, but it is someone he trusts.
 
@@ -311,9 +352,9 @@ def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice",
     Order is deliberate: stable content first, volatile content last, because
     this whole string is the cached prefix and anything that changes per turn
     would invalidate everything after it. device selects voice vs text specific
-    sections (response length, number formatting, output formatting); everything
-    else, including every tool and the memory instructions, is identical for
-    both.
+    sections (response length, number formatting, output formatting, and the
+    spoken examples in tool speech and results); everything else, including
+    every tool and the memory instructions, is identical for both.
 
     The capability slot in the middle holds either the legacy action tag
     instructions or a block generated from the tool registry, depending on
@@ -341,6 +382,8 @@ def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice",
     length_block = RESPONSE_LENGTH_TEXT if is_text else RESPONSE_LENGTH_VOICE
     number_block = NUMBER_FORMAT_TEXT if is_text else NUMBER_FORMAT_VOICE
     format_block = TEXT_FORMATTING if is_text else VOICE_FORMATTING
+    tool_speech_block = TOOL_SPEECH_TEXT if is_text else TOOL_SPEECH
+    results_block = TALKING_ABOUT_RESULTS_TEXT if is_text else TALKING_ABOUT_RESULTS
 
     system_prompt = "\n\n".join([
         SYSTEM_PROMPT_HEADER,
@@ -373,8 +416,8 @@ def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice",
         personal_blocks = (GUEST_BLOCK,)
 
     middle = "\n\n".join(
-        block for block in (*personal_blocks, capability_block, TOOL_SPEECH,
-                            TALKING_ABOUT_RESULTS, ALERTS, CLOCK_INSTRUCTIONS)
+        block for block in (*personal_blocks, capability_block, tool_speech_block,
+                            results_block, ALERTS, CLOCK_INSTRUCTIONS)
         if block
     )
 
