@@ -85,8 +85,8 @@ new drift is caught.
 | Claim | How to check | Last verified |
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
-| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 13 2026 (19) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 14 2026 (711) |
+| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 14 2026 (25) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 15 2026 (737) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -1069,3 +1069,41 @@ back an event from someone else's invitation or a detail he typed by hand.
 **What protects a misheard addition now:** the read back is spoken by code, so he
 hears the real day and time, and undo is one sentence away. The permission gate is
 unchanged; only hokage can add.
+
+### A typed message is read, not spoken (Sep 15 2026) (DONE)
+
+Every message typed in the app was spoken aloud through the room speaker by
+`miles-server`, and `/chat` returned only when playback finished, which the app
+showed as Nova still thinking while she was already talking. The mechanism and
+the measurements are in [BRAIN.md](BRAIN.md#channels).
+
+**The claim that this could not happen was in the repo, twice.** BRAIN.md said
+channel selected the prompt fragment and gated pronunciation, and `b943ea0` said
+"the text path never calls speak(), so there is no condition to get wrong". That
+was structurally true when it was written and stopped being true when streaming
+TTS moved into `ask_nova_async`, which speaks on every turn whatever the channel.
+Both corrected in place rather than deleted.
+
+**Chosen:** a consumer chosen by channel, `_collect_text` against
+`_tts_consumer`, with the same arguments, rather than an `if` around each of the
+four places that made sound. The fire and forget branch reads what the consumer
+collected, so one swap keeps both channels identical downstream. The test carries
+a voice control, because "nothing played" passes just as well when the fakes
+stopped seeing speech at all.
+
+**Numbers were two problems, not one.** Examples beat the rule, and the
+transcript beat the system prompt. Both are the same lesson this repo has now
+recorded three times: what Nova is handed outweighs what she is told. Fixed with
+derived text copies of the two example carrying blocks, and a note on the final
+user turn, after the cache breakpoint.
+
+**`/chat/stream` was added rather than fixing `/ws`.** The socket handler is
+`async` and calls `asyncio.run` inside the running loop, so it has never worked;
+nothing uses it. SSE keeps one request with the same auth header, and the turn
+runs on a worker thread so a client that goes away cannot take down a turn that
+is already writing to the database.
+
+**Not fixed, deliberately:** `WHAT_REACHES_YOU` tells Nova every message is
+speech recognition output, which is false when he types. Out of scope for a
+numbers fix and it changes how she treats a strange looking message, so it is in
+BACKEND_TODO.md rather than in this change.

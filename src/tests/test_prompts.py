@@ -102,6 +102,26 @@ def test_prompt_text_channel_uses_longer_response_length_and_normal_numerals():
     assert "Always spell out numbers as words" not in prompt
 
 
+def test_text_channel_examples_use_numerals_and_voice_keeps_its_own():
+    """Sep 14 2026: typed questions about his sleep were answered in words. The
+    spelled out examples in TOOL_SPEECH and TALKING_ABOUT_RESULTS were copied
+    more readily than the numerals rule was followed."""
+    text = build_enhanced_prompt([], [], channel="text")
+    voice = build_enhanced_prompt([], [], channel="voice")
+    for spoken in ("ninety five degrees", "eighty one", "spoken aloud immediately"):
+        assert spoken not in text, spoken
+        assert spoken in voice, spoken
+    assert "Your readiness is 81" in text
+
+
+def test_a_text_swap_that_no_longer_matches_fails_loudly():
+    """A reworded voice block must not leave the spoken example in the text one."""
+    import pytest
+    from prompts import _for_text
+    with pytest.raises(ValueError):
+        _for_text("A block reworded since.", [("the old sentence", "new")])
+
+
 def test_prompt_cannot_do_scoped_to_actions_not_questions():
     prompt = build_enhanced_prompt([], [], channel="voice")
     assert "applies only to actions" in prompt

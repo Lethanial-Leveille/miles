@@ -103,7 +103,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST + WebSocket
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (711 passing, 6 skipped, Sep 14 2026)
+│   └── tests/                 # pytest suite (737 passing, 6 skipped, Sep 15 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -113,8 +113,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── LATENCY.md             # The turn budget and every timing measurement
 │   ├── INFRASTRUCTURE.md      # Services, tunnel, API, env vars, reminders
 │   └── INCIDENTS.md           # What broke, dated, with the evidence
-├── scripts/                      # Operator tools, run by hand from the repo root.
-│                              # Nothing in src/ imports any of these
+├── scripts/                      # Operator tools, run by hand from the repo root,
+│                              # or on a timer. Nothing in src/ imports any of these
 │   ├── memory.py              # list/fix/chain/temporary on stored memories
 │   ├── retrieval.py           # review and label what retrieval returned
 │   ├── people.py              # people, tiers, birthdays
@@ -126,6 +126,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── label_speakers.py      # label who is speaking in the eval clips, by ear
 │   ├── label_wake.py          # label wake hits and misses by ear, worst first
 │   ├── healthcheck.py         # what broke, on a timer, not by trying to use it
+│   ├── wifi_watchdog.sh       # brings wlan0 back, on a timer, when it drops
 │   ├── google_auth.py         # one time Google OAuth, writes data/token.json
 │   ├── oura_auth.py           # one time Oura OAuth, writes data/oura_token.json
 │   ├── list_calendars.py      # every calendar the Google token sees, and if selected
@@ -137,7 +138,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── seed_memories.py       # seed corpus loader
 │   └── setup_auth.py          # one time password and JWT secret setup
 ├── assets/                    # wake_chime.wav
-├── systemd/                   # miles-health units, versioned (the other three are not)
+├── systemd/                   # miles-health and miles-wifi units, versioned
+│                              # (the three long running services are not)
 ├── models/                    # Wake word + voiceprint + enrollment (gitignored contents)
 ├── data/                      # SQLite database, seed corpus, recordings (gitignored)
 ├── build/                     # Temp WAV files (gitignored)
@@ -310,6 +312,8 @@ Landed since v0.7.1, unreleased:
 - Permission gate enforced in the executor, one tier per turn
 - Google Calendar and Oura tools; calendar create, edit and delete confirmed
   on the next turn
+- A text turn is silent, answers in numerals, and can be streamed to the app
+  over `/chat/stream`
 
 ## What Is Next
 
