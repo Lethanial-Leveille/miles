@@ -138,8 +138,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── seed_memories.py       # seed corpus loader
 │   └── setup_auth.py          # one time password and JWT secret setup
 ├── assets/                    # wake_chime.wav
-├── systemd/                   # miles-health and miles-wifi units, versioned
-│                              # (the three long running services are not)
+├── systemd/                   # every unit, versioned. Installed by copying
+│                              # to /etc/systemd/system/
 ├── models/                    # Wake word + voiceprint + enrollment (gitignored contents)
 ├── data/                      # SQLite database, seed corpus, recordings (gitignored)
 ├── build/                     # Temp WAV files (gitignored)

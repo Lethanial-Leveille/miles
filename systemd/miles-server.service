@@ -1,0 +1,15 @@
+[Unit]
+Description=M.I.L.E.S. FastAPI Server
+After=network.target
+
+[Service]
+Type=simple
+User=theycallmelee
+WorkingDirectory=/home/theycallmelee/miles/src
+EnvironmentFile=/home/theycallmelee/miles/.env
+ExecStart=/home/theycallmelee/.local/bin/uvicorn server:app --host localhost --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

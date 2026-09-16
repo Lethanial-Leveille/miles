@@ -1,0 +1,24 @@
+[Unit]
+Description=Bring wlan0 back if it has dropped
+# NetworkManager owns the profile this recovers, so there is nothing to recover
+# before it is up, and without this the first runs after a boot report a
+# failure that was really "too early".
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+# Skip silently on a machine where the interface does not exist at all, rather
+# than logging a missing wlan0 every two minutes forever.
+ConditionPathExists=/sys/class/net/wlan0
+
+[Service]
+Type=oneshot
+
+# Runs as root, unlike miles-health. `nmcli connection up` is a polkit
+# protected action, and a non root caller gets "Not authorized to control
+# networking" on the one occasion this has to work. Nothing else in the script
+# needs privilege.
+ExecStart=/home/theycallmelee/miles/scripts/wifi_watchdog.sh
+
+# No Restart. An exit of 1 means nmcli was asked and could not do it, and
+# retrying immediately turns one outage into a tight loop against wpa
+# supplicant. The timer is what decides when to look again.

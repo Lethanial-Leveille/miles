@@ -1,0 +1,15 @@
+[Unit]
+Description=M.I.L.E.S. Voice Loop
+After=sound.target
+
+[Service]
+Type=simple
+User=theycallmelee
+WorkingDirectory=/home/theycallmelee/miles/src
+EnvironmentFile=/home/theycallmelee/miles/.env
+ExecStart=/usr/bin/python3 /home/theycallmelee/miles/src/voice_main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=M.I.L.E.S. Cloudflare Tunnel
+After=network.target miles-server.service
+
+[Service]
+Type=simple
+User=theycallmelee
+ExecStart=/usr/bin/cloudflared tunnel run miles
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
