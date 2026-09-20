@@ -631,9 +631,29 @@ Consequences worth keeping:
   every software threshold addresses the symptom.
 - The direct versus reverberant null test in `docs/BACKEND_TODO.md` stopped
   being optional. It measures exactly this path.
-- Speaker verification already catches it after the fact, which is why `ignore`
-  is the most called tool. The cost is that she still wakes, records,
-  transcribes and burns a turn before finding out.
+- **Speaker verification does not catch it, and `ignore` is not evidence that
+  it does.** This bullet claimed the opposite until Sep 19 2026. See the
+  correction below.
+
+> **Correction, Sep 19 2026.** Over the 30 days to that date, `verification_log`
+> holds 148 attempts and **one** rejection. Every one of the 13 turns that ended
+> in `ignore` had passed verification: 12 scored 0.61 to 0.82 against a
+> threshold of 0.5, on 2 to 20 seconds of embedded audio, and the 13th was
+> accepted on session trust. Two of them: "We can go to the office, no, no, no,
+> no, but AI is just a challenge fo...", "between what caused a discolored
+> crater...".
+>
+> Mostly his own voice, in the room, not addressed to Nova, and the voiceprint
+> accepts them because it is built to. **`ignore` is doing all of the catching,
+> alone, one Claude call per false wake.** Not all of them are false wakes
+> either: "cancel the timer." at 0.79 was a real command that `ignore` swallowed,
+> which is the Sep 16 2026 entry above.
+>
+> So the wall is not the only false wake population. There is a second one that
+> no microphone can separate, because the sound really is the registered
+> speaker. The array answers the neighbours; it does not answer this. The two
+> need different fixes and the counts above are the only numbers that currently
+> separate them.
 
 Artifacts from the playback are quarantined in `data/wake_playback/` with a
 README. They are the measurement, not samples, and must never reach a retrain.
