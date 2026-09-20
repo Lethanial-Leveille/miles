@@ -278,3 +278,27 @@ def test_a_failed_stop_does_not_abort_labelling(monkeypatch, capsys):
     with lw._voice_service_paused() as stopped:
         assert stopped is False
     assert "Could not stop" in capsys.readouterr().out
+
+
+def test_after_can_cut_an_evening_that_runs_past_midnight(tmp_path):
+    """One busy evening can set the rate for a whole ring buffer. On Sep 19
+    2026 the 94 hits held 37 from the night guests were over and 9 more from
+    the same evening after midnight, so a date alone could not separate it."""
+    for stamp in ("20260913T213407", "20260914T003537", "20260914T113021"):
+        (tmp_path / f"0.500_{stamp}_000.wav").write_bytes(b"RIFF")
+    directory = str(tmp_path)
+
+    assert len(lw._clips(directory, 0.0)) == 3
+    assert len(lw._clips(directory, 0.0, "20260914")) == 2
+    assert len(lw._clips(directory, 0.0, "20260914T060000")) == 1
+
+
+def test_a_clip_with_no_readable_stamp_is_dropped_when_filtering(tmp_path):
+    """Dropped rather than kept, so a range never quietly includes a clip it
+    cannot place. Unfiltered it still labels, because then the date is not
+    being relied on."""
+    (tmp_path / "0.500_notastamp_000.wav").write_bytes(b"RIFF")
+    directory = str(tmp_path)
+
+    assert len(lw._clips(directory, 0.0)) == 1
+    assert lw._clips(directory, 0.0, "20260101") == []

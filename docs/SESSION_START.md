@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 14 2026 (25) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 16 2026 (833) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 19 2026 (835) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
