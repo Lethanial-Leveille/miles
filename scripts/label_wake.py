@@ -29,6 +29,7 @@ reports the model as better or worse than it is.
     python3 scripts/label_wake.py hits            # label wakes that fired
     python3 scripts/label_wake.py misses          # label wakes that did not
     python3 scripts/label_wake.py hits --min 0.3  # only the loudest cases
+    python3 scripts/label_wake.py hits --after 20260914T060000   # skip one evening
     python3 scripts/label_wake.py --status        # counts, no playback
 
 Labels: y = yes, I said the wake phrase
@@ -103,21 +104,44 @@ def _save(directory, rows):
             writer.writerow(rows[name])
 
 
-def _clips(directory, minimum):
+def _is_stamp(value):
+    """A capture timestamp, YYYYMMDDTHHMMSS, or the date prefix of one."""
+    if len(value) < 8 or not value[:8].isdigit():
+        return False
+    return len(value) == 8 or (value[8] == "T" and value[9:].isdigit())
+
+
+def _clips(directory, minimum, after=None):
     """Filenames, worst first.
 
     The score leads the filename precisely so this sort is meaningful: for
     hits, the highest scoring false positive is the most damaging, and for
-    misses the highest scoring failure is the closest call."""
+    misses the highest scoring failure is the closest call.
+
+    `after` keeps only clips captured on or after a point in time, written as
+    YYYYMMDD or YYYYMMDDTHHMMSS. Both directories are ring buffers holding
+    whatever the recent weeks happened to contain, so one unusual evening can
+    set the rate for the whole set: on Sep 19 2026, 37 of the 94 hits were
+    from Sep 13, the night guests were over, and 9 more were the same evening
+    past midnight. **A date alone could not cut that**, which is why the time
+    is accepted too. Compared as text on the fixed width stamp, so a prefix
+    means what it looks like it means. A clip whose stamp cannot be parsed is
+    dropped when filtering rather than kept, so the range means what it says."""
     if not os.path.isdir(directory):
         return []
     names = [f for f in os.listdir(directory) if f.endswith(".wav")]
     scored = []
     for name in names:
+        parts = name.split("_")
         try:
-            scored.append((float(name.split("_")[0]), name))
+            score = float(parts[0])
         except ValueError:
             continue
+        if after:
+            stamp = parts[1] if len(parts) > 1 else ""
+            if not (_is_stamp(stamp) and stamp[:len(after)] >= after):
+                continue
+        scored.append((score, name))
     scored.sort(reverse=True)
     return [(s, n) for s, n in scored if s >= minimum]
 
@@ -259,11 +283,12 @@ def cmd_status():
         print(f"           by score: {bands}")
 
 
-def cmd_label(which, minimum, relabel):
+def cmd_label(which, minimum, relabel, after=None):
     directory = SETS[which]
-    clips = _clips(directory, minimum)
+    clips = _clips(directory, minimum, after)
     if not clips:
-        print(f"No clips in {directory} at or above {minimum}.")
+        window = f" captured on or after {after}" if after else ""
+        print(f"No clips in {directory} at or above {minimum}{window}.")
         return
 
     rows = _load(directory)
@@ -333,16 +358,25 @@ def main():
                         help="which capture set to label")
     parser.add_argument("--min", type=float, default=0.0,
                         help="only clips scoring at or above this")
+    parser.add_argument("--after", metavar="STAMP",
+                        help="only clips captured on or after this "
+                             "YYYYMMDD or YYYYMMDDTHHMMSS")
     parser.add_argument("--relabel", action="store_true",
                         help="revisit clips already labelled")
     parser.add_argument("--status", action="store_true",
                         help="counts only, no playback")
     args = parser.parse_args()
 
+    # Caught here rather than silently matching nothing, because an empty set
+    # reads exactly like a clean directory.
+    if args.after and not _is_stamp(args.after):
+        parser.error("--after takes YYYYMMDD or YYYYMMDDTHHMMSS, "
+                     "for example 20260914 or 20260914T060000")
+
     if args.status or not args.which:
         cmd_status()
         return
-    cmd_label(args.which, args.min, args.relabel)
+    cmd_label(args.which, args.min, args.relabel, args.after)
 
 
 if __name__ == "__main__":
