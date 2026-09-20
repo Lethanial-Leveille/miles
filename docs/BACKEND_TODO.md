@@ -588,15 +588,23 @@ Originally Phase 4. Untouched, still wanted, and independent of hardware.
   verification for a high consequence action even inside an otherwise trusted
   session.
 
-### Session level verification
+### Session level verification (DONE Aug 11 2026)
 
 Verify once per conversation session rather than once per turn. Follow ups are
 short by nature ("yeah", "what about tomorrow") and will never embed reliably.
 
-Proposal: verify against the first command, then trust session state for
-follow ups inside the window. If a follow up is long enough to embed well and
-scores badly, drop the session. If it is too short to embed, accept on session
-state.
+Shipped in `9c95893`, and **narrower than the proposal that sat here until
+Sep 19 2026**. Session trust covers only follow ups under
+`MIN_TRUSTWORTHY_SECONDS = 2.0` of embedded audio (`audio.py`). A follow up
+longer than that is scored exactly as an initial command is, and a bad score
+ends the conversation rather than just the turn (`voice_main.py`). A wake word
+restart inside a recording is never session trusted, because it is a fresh
+request and long enough to score.
+
+**Those turns log `outcome='session_trust'` with `similarity = 0.0`**, which is
+a placeholder and not a measurement. Filter on `outcome` before averaging
+similarity or the zeros drag the mean down: over the 30 days to Sep 19 2026,
+25 of 148 attempts were session trust.
 
 **Security tradeoff, accepted deliberately:** the exposure is someone speaking
 into the mic within ten seconds of the authenticated user, in the same room.
