@@ -215,8 +215,8 @@ ip route | grep 100.      # the local /25 that tailnet traffic must not land in
 
 ## FastAPI endpoints
 
-REST: /auth/login, /auth/refresh, /chat, /chat/stream, /history, /status,
-/status/details, /docs
+REST: /auth/login, /auth/refresh, /chat, /chat/stream, /speak, /history,
+/status, /status/details, /docs
 
 Memories: GET and POST /memories, GET /memories/pending,
 POST /memories/{id}/approve, PATCH /memories/{id}, GET /memories/{id}/history,
@@ -226,6 +226,22 @@ Reminders and timers: GET /reminders, DELETE /reminders/{id}
 
 Calendar: GET /calendar/events?days=, PATCH and DELETE /calendar/events/{id}
 WebSocket: /ws
+
+`POST /speak` takes `{"text": "..."}` and streams back mp3, `audio/mpeg`,
+`Cache-Control: no-store`. It is Nova's voice for a client with no speaker of
+ours, added Sep 23 2026 so the iOS app can play her replies. It takes a finished
+reply rather than sentences because eleven_v3 voices each request separately and
+a reply synthesized piecewise changes speaker partway through; see
+[VOICE_OUTPUT.md](VOICE_OUTPUT.md#the-app-asks-for-audio-of-its-own-sep-23-2026).
+
+It runs no turn: no Claude call, no history row, no memory. The caller already
+has the text. Nothing on the path touches `speak_lock` or `aplay`, so a phone
+asking for audio can never stall the room speaker mid sentence. Failures are
+`400` for empty text, `413` over `_SPEAK_MAX_CHARS` (2000, a billing guard, not
+a safety one), and `502` when synthesis returns nothing. The `502` is possible
+only because the route pulls the first chunk before the response starts; after
+one byte the status is already chosen, so a failure partway through can only end
+the audio early.
 
 `/chat/stream` is the same turn as `/chat`, sent as Server Sent Events while it
 is written: `event: delta` per piece, `event: stage` with what Nova is doing

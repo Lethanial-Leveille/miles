@@ -105,7 +105,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (835 passing, 6 skipped, Sep 19 2026)
+│   └── tests/                 # pytest suite (846 passing, 6 skipped, Sep 23 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -241,6 +241,8 @@ of the value itself.
 - `DEFAULT_TTS_MODEL = "eleven_v3"` (chosen by ear, Sep 13 2026)
 - `EXPRESSIVE_TTS_MODEL = "eleven_v3"` (HTTP only, no WebSocket)
 - `TTS_OUTPUT_FORMAT = "pcm_22050"` (raw S16_LE mono, piped to aplay)
+- `TTS_APP_OUTPUT_FORMAT = "mp3_44100_64"` (what `/speak` sends the app; PCM is
+  free down a local pipe and wasteful down the tunnel)
 - `TTS_PHONEME_TAGS = True`
 - `SPEAKER_NAME_HINT = "AB13X"` (resolved by name at runtime in tts.py)
 - `PHRASE_DIR = ~/miles/data/phrases`, gitignored. `PHRASES` in `phrasebank.py`
@@ -322,6 +324,10 @@ Landed since v0.7.1, unreleased:
   over `/chat/stream`, with stage events while tools run
 - App endpoints: memories (add, edit, history), reminders and timers, status
   details, and a calendar week view with tap edits on the MILES calendar
+- `POST /speak` returns Nova's voice as mp3, so the app can play a reply instead
+  of only showing it
+- The room speaker follows `device`, not `channel`: only a turn from the Pi is
+  played aloud, so the app can ask for spoken formatting and synthesize it itself
 
 ## What Is Next
 

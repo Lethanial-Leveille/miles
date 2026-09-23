@@ -528,6 +528,17 @@ ELEVENLABS_API_KEY   = os.environ.get("ELEVENLABS_API_KEY")
 EXPRESSIVE_TTS_MODEL = "eleven_v3"   # HTTP only, no WebSocket, no speaker boost
 TTS_OUTPUT_FORMAT    = "pcm_22050"   # raw S16_LE mono, piped straight to aplay
 
+# What /speak sends the app, which is a different problem from what aplay wants.
+# The room speaker gets raw PCM because it is local and a pipe is free. The
+# phone is on the far side of a Cloudflare Tunnel, and the same audio as PCM is
+# roughly 44KB a second, so a ten second reply is 440KB over whatever signal he
+# has. mp3 at 64kbps is about 8KB a second and iOS decodes it natively.
+#
+# Rate and bitrate are tunable by ear. Do not drop to mp3_22050_32 without
+# listening on the phone speaker first: the saving is small and the voice is the
+# whole point of sending it.
+TTS_APP_OUTPUT_FORMAT = "mp3_44100_64"
+
 # eleven_v3 since Sep 13 2026, chosen by ear.
 #
 # On flash_v2 every reply sounded like a narrator stringing words together.

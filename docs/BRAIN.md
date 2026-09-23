@@ -145,13 +145,29 @@ distinct from `device`, which is provenance and is stored as `source_device`.
 The two were one parameter until their meanings diverged: the app may want
 spoken output and the Pi may one day want text.
 
-Channel selects the response formatting fragment of the system prompt and
-whether anything is played. A `text` turn never reaches the speaker:
-`_consumer_for` hands it `_collect_text` instead of `_tts_consumer`, and every
-line code speaks on its own (a staged question, the "Done." fallback) goes
-through `_say`, which stays quiet on text. Pronunciation normalization runs
-inside `speak()`, so it only ever touches voice. Tool calls and memory writes
-are identical on both.
+Channel selects the response formatting fragment of the system prompt. Whether
+the room speaker plays anything is a second question, answered by
+`_plays_in_the_room(channel, device)`: the reply has to be written to be spoken
+**and** the turn has to have come from the Pi. Everything that makes noise asks
+it. `_consumer_for` hands a silent turn `_collect_text` instead of
+`_tts_consumer`, every line code speaks on its own (a staged question, the
+"Done." fallback) goes through `_say`, and the phrase bank bridge on a slow tool
+call is gated the same way. Pronunciation normalization runs inside `speak()`
+and inside `tts.stream_audio`, so it reaches audio on either path and never the
+text the app displays. Tool calls and memory writes are identical on both.
+
+> **Correction (Sep 23 2026).** This section said channel selected the prompt
+> fragment *and* whether anything is played, and that was true of the code. It
+> was also the bug. `ChatRequest.channel` defaults to `voice` and the app sends
+> no channel, so every message typed in the app was formatted for speech and
+> then played through the room speaker, which is the symptom the Sep 14
+> correction below describes and did not fully remove. The deeper problem was
+> that the app had no way to ask for spoken *formatting* without also asking for
+> spoken *output on the Pi*, which is exactly what the app needs to synthesize a
+> reply itself through `/speak`. `ask_nova_async`'s own docstring had promised
+> the separation since Sep 14 ("the app can want spoken output") while the code
+> still conflated the two. Playback now follows `device`, and only `"pi"` is in
+> the room.
 
 > **Correction (Sep 14 2026).** This section said channel selected the prompt
 > fragment and gated normalization, and commit `b943ea0` said "the text path

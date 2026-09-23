@@ -2,7 +2,12 @@
 
 Sep 14 2026: every message typed in the app was spoken aloud by miles-server,
 and /chat returned only after playback, so the app showed Nova thinking while
-she was already talking. Nothing here reaches Claude, ElevenLabs or the speaker."""
+she was already talking. Nothing here reaches Claude, ElevenLabs or the speaker.
+
+Sep 23 2026: two questions that had been one. channel says how the reply is
+written, device says who asked, and only the Pi is in the room. The app asks for
+voice formatting when it means to speak the reply itself through /speak, and
+that must not come out of the speaker here."""
 
 import asyncio
 import inspect
@@ -70,12 +75,15 @@ def turn(monkeypatch):
     # The background memory pass would call Claude; these tests are about the turn.
     monkeypatch.setattr(brain.memory_pass, "notice_later", lambda *a, **k: None)
 
-    def run(channel, *streams, on_text=None):
+    # device defaults to the Pi because most of these tests ask what the room
+    # speaker does, and the room is where the Pi is. A test about the app says
+    # so, and then nothing should ever be played whatever the channel.
+    def run(channel, *streams, on_text=None, device="pi"):
         remaining = list(streams)
         monkeypatch.setattr(brain, "claude", SimpleNamespace(
             messages=SimpleNamespace(
                 stream=lambda **kwargs: (run.calls.append(kwargs), remaining.pop(0))[1])))
-        result = asyncio.run(brain.ask_nova_async("hi", device="app", channel=channel,
+        result = asyncio.run(brain.ask_nova_async("hi", device=device, channel=channel,
                                                   on_text=on_text))
         return result, played
     run.calls = []
@@ -244,3 +252,25 @@ def test_speech_not_meant_for_nova_leaves_no_trace(turn):
 def test_an_answered_turn_is_kept(turn):
     _, played = turn("text", _FakeStream(["Sure."]))
     assert not any(p.startswith("deleted:") for p in played)
+
+
+# ── the app can ask for spoken formatting without the room hearing it (Sep 23 2026) ──
+
+def test_the_app_on_the_voice_channel_is_still_silent_here(turn):
+    """Talk Mode asks for voice formatting so the reply has no markdown to read
+    aloud, then synthesizes it on the phone. Before the device split, asking for
+    that formatting played the reply through the speaker in his room."""
+    result, played = turn("voice", _FakeStream(["Twelve credits", " is full time."]),
+                          device="app")
+    assert result.text == "Twelve credits is full time."
+    assert played == []
+
+
+def test_the_app_gets_no_spoken_bridge_either(turn):
+    """The bridge exists so the room is not silent while a tool runs. The app
+    shows a stage event instead, and has no room to keep quiet."""
+    weather = SimpleNamespace(type="tool_use", name="get_weather", id="toolu_1", input={})
+    result, played = turn("voice", _FakeStream([], [weather]),
+                          _FakeStream(["It's 75 degrees."]), device="app")
+    assert played == []
+    assert result.text == "It's 75 degrees."

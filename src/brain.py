@@ -209,16 +209,30 @@ async def _collect_text(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
         text_parts.append(strip_leading_bracket_cue(sentence, leaks_seen))
 
 
-def _consumer_for(channel):
-    # Same test as build_enhanced_prompt, so the prompt and the speaker can never
-    # disagree about which channel a turn is on.
-    return _collect_text if channel == "text" else _tts_consumer
+def _plays_in_the_room(channel, device):
+    """Whether this turn should come out of the speaker in his room.
+
+    Two conditions, and they answer different questions. channel is the same
+    test build_enhanced_prompt makes, so the prompt and the speaker can never
+    disagree about whether a reply was written to be spoken. device is who
+    asked, and only the Pi is in the room: a turn from the phone has no business
+    playing out loud there, however it was formatted.
+
+    Splitting them is what lets the app ask for spoken formatting and then
+    synthesize the reply itself through /speak. Until Sep 23 2026 channel
+    decided both, so an app turn asking to be spoken was spoken here instead,
+    and the app's only silent option was text formatted with markdown."""
+    return channel != "text" and device == "pi"
 
 
-async def _say(text, channel):
+def _consumer_for(channel, device):
+    return _tts_consumer if _plays_in_the_room(channel, device) else _collect_text
+
+
+async def _say(text, channel, device):
     """Speak a line code wrote rather than the model: a staged question, or the
-    fallback. On a text turn it still reaches the reply, it just is not played."""
-    if channel == "text":
+    fallback. When it is not played it still reaches the reply."""
+    if not _plays_in_the_room(channel, device):
         return
     await asyncio.get_running_loop().run_in_executor(None, speak, text)
 
@@ -546,10 +560,11 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
     device is provenance, which client sent this, and is stored as
     source_device. channel is how the answer will be rendered, voice or text,
-    and selects the formatting fragment of the prompt and whether anything is
-    played through the speaker. They were one parameter
-    until the two meanings drifted apart: the app can want spoken output and the
-    Pi could one day want text, so conflating them would make either impossible.
+    and selects the formatting fragment of the prompt. Together they decide
+    whether the room speaker plays anything: see _plays_in_the_room. They were
+    one parameter until the two meanings drifted apart: the app can want spoken
+    output and the Pi could one day want text, so conflating them would make
+    either impossible.
     """
     model = _select_model()
     timing.note_model(model)
@@ -583,7 +598,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     loop           = asyncio.get_running_loop()
     leaks_seen     = set()  # shared across both TTS consumers and the returned-text strips this turn
 
-    tts_task = asyncio.create_task(_consumer_for(channel)(sentence_queue, spoken_parts, leaks_seen))
+    tts_task = asyncio.create_task(
+        _consumer_for(channel, device)(sentence_queue, spoken_parts, leaks_seen))
 
     # Cache the system prompt. It is the stable prefix: the seed corpus and
     # persona change rarely, while `recent` changes every turn and therefore
@@ -622,7 +638,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # the five seconds a tool turn used to take before any sound. Only
             # when Nova wrote no lead in of her own, and only once. It plays
             # under speak_lock, so the answer waits for it to finish.
-            key = _bridge_for(event) if channel != "text" and bridge is None else None
+            key = (_bridge_for(event)
+                   if _plays_in_the_room(channel, device) and bridge is None else None)
             if key is not None and not accumulated.strip():
                 bridge = loop.run_in_executor(
                     None, lambda k=key: phrasebank.play(k, bridge=True))
@@ -729,7 +746,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             router2         = StreamRouter(sentence_queue2)
             spoken_parts2   = []
             tts_task2       = asyncio.create_task(
-                _consumer_for(channel)(sentence_queue2, spoken_parts2, leaks_seen)
+                _consumer_for(channel, device)(sentence_queue2, spoken_parts2, leaks_seen)
             )
 
             # A loop, not a single call. The follow up is free to request
@@ -802,7 +819,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             final_text = strip_leading_bracket_cue(final_text, leaks_seen)
             late_question = pending_action.words_for_turn()
             if late_question is not None:
-                await _say(late_question, channel)
+                await _say(late_question, channel, device)
                 _emit(on_text, "delta", f" {late_question}" if final_text else late_question)
                 final_text = f"{final_text} {late_question}".strip()
         else:
@@ -811,7 +828,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # second of latency rephrasing "Timer set."
             final_text = " ".join(spoken_parts).strip()
             if staged is not None:
-                await _say(staged, channel)
+                await _say(staged, channel, device)
                 _emit(on_text, "delta", f" {staged}" if final_text else staged)
                 final_text = f"{final_text} {staged}".strip()
 
@@ -840,7 +857,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # way, which read as the tool having failed when it had worked.
             if not final_text and not only_control:
                 final_text = "Done."
-                await _say(final_text, channel)
+                await _say(final_text, channel, device)
                 _emit(on_text, "delta", final_text)
 
         if bridge is not None:
