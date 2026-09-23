@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 14 2026 (25) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 19 2026 (835) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 23 2026 (846) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -1360,3 +1360,45 @@ done.
 
 **Not changed:** flash_v2 would save about 250ms to first audio, but eleven_v3
 was chosen by ear, and that is his call.
+
+### The room speaker follows `device`, not `channel` (Sep 23 2026) (DONE)
+
+He asked for a speaking mode in the iOS app, with Nova's real voice rather than
+Apple's, so she sounds like one person everywhere. Two things had to change.
+
+**`POST /speak`.** Every synthesis path in the repo ended at `aplay`, so the app
+had no way to get audio at all. The route hands a finished reply to ElevenLabs
+and streams mp3 back. It takes a finished reply rather than sentences on purpose:
+eleven_v3 voices each request on its own, so a reply synthesized piecewise comes
+back sounding like it changed speakers partway through, which is the exact thing
+he asked to avoid. Details and the measurement are in
+[VOICE_OUTPUT.md](VOICE_OUTPUT.md#the-app-asks-for-audio-of-its-own-sep-23-2026).
+
+**Playback gated on `device`.** This is the part worth not reopening. `channel`
+decided both how a reply was written *and* whether the Pi spoke it. That made
+the app's two options "formatted for a screen, silent" and "formatted for speech,
+played out loud in his room", and Talk Mode needs the third: formatted for
+speech, silent here, synthesized on the phone. `_plays_in_the_room(channel,
+device)` now answers the second question, and only `"pi"` is in the room.
+
+Two things had already recorded that this split was intended.
+`ask_nova_async`'s docstring said since Sep 14 that "the app can want spoken
+output", and the Channels section of [BRAIN.md](BRAIN.md#channels) carried a
+Sep 14 correction about typed messages being spoken aloud. That correction fixed
+the case where the app sends `channel: "text"`. It did not fix the default:
+`ChatRequest.channel` defaults to `"voice"` and the app sends no channel, so in
+practice app messages were still being played in his room. The intention was
+written down twice and the code still conflated the two.
+
+**The tests caught the change, which is what they are for.**
+`tests/test_text_channel.py` hardcoded `device="app"` while asserting the room
+speaks, so three voice tests failed the moment playback stopped depending on
+channel alone. The harness now takes a device and defaults to `"pi"`, because
+most of those tests are asking what the room does. Two tests were added for the
+new guarantee: the app on the voice channel is silent here, and it gets no
+spoken bridge either.
+
+**Not done here:** the app side. The Swift repo has to call `/speak` and play
+what comes back, and `NOVA_APP_BACKEND.md` in that repo still says the backend
+speaks every chat turn because TTS "is not gated on channel". The gating claim
+was already wrong and is now wrong twice over.

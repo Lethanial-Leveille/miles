@@ -228,6 +228,42 @@ python3 scripts/pronounce.py try Lethanial Luthanyull Lah-than-yull
 python3 scripts/pronounce.py set Lethanial Luthanyull
 ```
 
+## The app asks for audio of its own (Sep 23 2026)
+
+The iOS app could show a reply but not hear it, because every synthesis path in
+the repo ended at `aplay` on the Pi. `POST /speak` is the second path: same
+voice, same model, same voice settings, same pronunciation table, different
+destination. The route is in
+[INFRASTRUCTURE.md](INFRASTRUCTURE.md#fastapi-endpoints).
+
+**One request for the whole reply, never one per sentence.** This is the same
+constraint that shaped `_tts_consumer` and it is the reason the endpoint takes a
+finished reply instead of streaming sentences as they are written. On eleven_v3
+each request is voiced on its own, so a reply synthesized a sentence at a time
+comes back as several slightly different deliveries, heard as the speaker
+changing partway through. Asking for consistency is what costs the latency here:
+the app cannot start playing until the reply is finished being written.
+
+**Format.** `TTS_APP_OUTPUT_FORMAT` is mp3, where the room speaker gets raw PCM.
+PCM is free down a local pipe and wasteful down a Cloudflare Tunnel at roughly
+44KB a second. The value is declared in [CLAUDE.md](../CLAUDE.md). `play()`
+opens `aplay` with S16_LE at 22050 hardcoded, so the room format is not a
+preference and a test pins both.
+
+**It cannot reach the room speaker.** `tts.stream_audio` shares `_prepare` and
+the ElevenLabs client with `speak()` and shares none of the playback: no
+`speak_lock`, no `aplay`, no `timing.note_tts`. The lock is the thing that would
+let a phone stall Nova mid sentence in the room, so the test that stands in for
+the synthesizer asserts the lock is unheld *while* it is being served, and makes
+opening the audio device a failure.
+
+**What it measured, once.** One render of "Twelve credits is full time,
+Lethanial." on Sep 23 2026: 1095ms to first audio, 15718 bytes, 1.96s of speech
+at 64kbps. One sample, and higher than the 470 to 620ms recorded for v3 above.
+It is not comparable to those numbers and it is not in `timing_log`: this path
+never calls `note_tts`, and the figure includes the pronunciation table read and
+a cold connection. Measure it again before quoting it for anything.
+
 ## ElevenLabs quirks
 
 ElevenLabs specific:

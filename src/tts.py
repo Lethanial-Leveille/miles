@@ -11,7 +11,7 @@ import timing
 from database import get_pronunciations
 from config import (
     ELEVENLABS_API_KEY, TTS_VOICE_ID,
-    DEFAULT_TTS_MODEL, TTS_OUTPUT_FORMAT, TTS_PHONEME_TAGS,
+    DEFAULT_TTS_MODEL, TTS_OUTPUT_FORMAT, TTS_APP_OUTPUT_FORMAT, TTS_PHONEME_TAGS,
     TTS_VOICE_SETTINGS, SPEAKER_NAME_HINT, speak_lock,
 )
 
@@ -144,7 +144,8 @@ class Synthesis:
 
     _DONE = object()
 
-    def __init__(self, text, voice_settings=None, model=None, seed=None):
+    def __init__(self, text, voice_settings=None, model=None, seed=None,
+                 output_format=None):
         self.text = text
         self.error = None
         self.requested_at = time.monotonic()
@@ -154,7 +155,10 @@ class Synthesis:
             text=text,
             model_id=model or DEFAULT_TTS_MODEL,
             voice_settings=voice_settings or TTS_VOICE_SETTINGS,
-            output_format=TTS_OUTPUT_FORMAT,
+            # Defaults to the room speaker's raw PCM. Only a caller that is not
+            # feeding aplay passes anything else, and play() cannot read one
+            # that does, because the format it opens aplay with is fixed.
+            output_format=output_format or TTS_OUTPUT_FORMAT,
             **({"seed": seed} if seed is not None else {}),
         )
         threading.Thread(target=self._drain, daemon=True).start()
@@ -198,12 +202,49 @@ def join_for_speech(sentences):
     return " ".join(parts)
 
 
-def start_synthesis(text, voice_settings=None, model=None, seed=None):
+def start_synthesis(text, voice_settings=None, model=None, seed=None,
+                    output_format=None):
     """Begin synthesizing now. None when there is nothing to say."""
     clean = _prepare(text)
     if clean is None:
         return None
-    return Synthesis(clean, voice_settings, model, seed)
+    return Synthesis(clean, voice_settings, model, seed, output_format)
+
+
+def stream_audio(text, output_format=None):
+    """Synthesize for somewhere that is not the room speaker, and yield the
+    audio as it arrives. None when there is nothing to say.
+
+    This is the app's path. It shares everything that decides how Nova sounds,
+    _prepare and so the pronunciation table, the voice, the model and the voice
+    settings, and shares none of the playback: no speak_lock, no aplay, no
+    timing.note_tts. A phone asking for audio must never be able to block the
+    room speaker mid sentence, and the lock is what would let it.
+
+    One request per call, never one per sentence. On eleven_v3 each request is
+    voiced on its own, so a reply synthesized a sentence at a time comes back in
+    several slightly different deliveries, heard as a different person partway
+    through. _tts_consumer solves the same problem the same way.
+
+    A failure before any audio arrives is raised, so the caller can still answer
+    with an error rather than a truncated file. A failure partway through is
+    logged and ends the stream, because by then the caller has already committed
+    to sending audio."""
+    synthesis = start_synthesis(text, output_format=output_format or TTS_APP_OUTPUT_FORMAT)
+    if synthesis is None:
+        return None
+
+    def chunks():
+        sent = False
+        for chunk in synthesis.chunks():
+            sent = True
+            yield chunk
+        if synthesis.error is not None:
+            print(f"TTS error (ElevenLabs, app): {synthesis.error}", flush=True)
+            if not sent:
+                raise synthesis.error
+
+    return chunks()
 
 
 def _open_aplay():

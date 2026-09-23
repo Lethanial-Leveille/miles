@@ -25,6 +25,7 @@ from database import (
 )
 from system_state import get_system_state
 import calendar_tools
+import tts
 
 app = FastAPI(title="M.I.L.E.S. API", version="0.7")
 init_db()
@@ -61,6 +62,9 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
+
+class SpeakRequest(BaseModel):
+    text: str
 
 class MemoryText(BaseModel):
     content: str
@@ -143,6 +147,62 @@ async def chat_stream(body: ChatRequest, user: str = Depends(get_current_user)):
 
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+# A reply Nova actually writes runs a few hundred characters. This is not a
+# safety limit, it is a bill: ElevenLabs charges per character, and an app bug
+# that posted a whole screen of text in a loop would spend real money before
+# anyone noticed. Raise it if a legitimate reply ever hits it.
+_SPEAK_MAX_CHARS = 2000
+
+
+@app.post("/speak")
+def speak(body: SpeakRequest, user: str = Depends(get_current_user)):
+    """Nova's voice for a client that has no speaker of ours: audio in, audio out.
+
+    Deliberately separate from /chat. The app already has the reply as text by
+    the time it wants to hear it, and a turn that had to finish speaking before
+    it returned is the thing /chat/stream was built to stop doing. This way the
+    words appear as they are written and the audio is asked for once, as a whole.
+
+    Asked for as a whole on purpose. eleven_v3 voices each request on its own, so
+    a reply synthesized a sentence at a time comes back sounding like it changed
+    speakers partway through. See tts.stream_audio.
+
+    Nothing here touches the room speaker. It is the same voice and the same
+    pronunciation table, and no part of the path can take speak_lock."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Nothing to speak")
+    if len(text) > _SPEAK_MAX_CHARS:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                            detail=f"Text is longer than {_SPEAK_MAX_CHARS} characters")
+
+    # The first chunk is pulled before the response begins, so a request that
+    # fails outright is still a status code the app can act on. Once a byte has
+    # been sent the status is spent, and a later failure can only end the audio
+    # early, which is why stream_audio raises only when nothing arrived.
+    try:
+        chunks = tts.stream_audio(text)
+        first = next(chunks) if chunks is not None else None
+    except StopIteration:
+        first = None
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"Voice synthesis failed: {exc}")
+    if first is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="Voice synthesis returned no audio")
+
+    def audio():
+        yield first
+        yield from chunks
+
+    # no-store because this is a recording of him being spoken to by name.
+    return StreamingResponse(audio(), media_type="audio/mpeg",
+                             headers={"Cache-Control": "no-store",
                                       "X-Accel-Buffering": "no"})
 
 
