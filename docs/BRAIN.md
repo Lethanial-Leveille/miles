@@ -333,8 +333,8 @@ Three rules the gate keeps, each pinned by a test:
   prompt with. It used to read `effective_tier()` itself, a second source of
   truth that would have disagreed the first time voice verification passed a
   guest's tier through: prompt gated as a guest, tools gated as hokage.
-- **`min_tier` only raises.** Calendar and health data are READ in kind and
-  private in content, so those tools carry one. If it could lower the floor,
+- **`min_tier` only raises.** Calendar, health and job search data are READ in
+  kind and private in content, so those tools carry one. If it could lower the floor,
   one keyword would open an external write to a guest.
 - **CONTROL is never gated.** A demoted speaker still has to be able to end the
   conversation.
@@ -505,6 +505,39 @@ Every Oura field names what it is, like `sleep_score_out_of_100`, and durations
 arrive as words. A bare number is a number the model assigns a unit to, which is
 how a contributor score became an hour and forty minutes of sleep. Heart rate is
 summarized in code rather than handed over as raw samples.
+
+### Prowl deadlines are named by whose they are
+
+`prowl_tools.py` reads Prowl, the job tracker, through a surface Prowl built for
+MILES (`docs/miles-integration.md` in the job tracker repo). Prowl computes
+every count, filter, sort and day difference, and the Pi recomputes none of
+them. What the Pi changes is names, for the same reason as Oura's units.
+
+A deadline arrives with `deadline_source`: `posting` is the employer's closing
+date, `self` is a date he set so a row would not sink out of view, and null is
+unknown. On Sep 25 2026 his tracker held 90 `self` dates, 24 unknown and no
+posting dates at all, and 77 of the `self` dates had passed. Read as deadlines,
+that is "you missed 77 deadlines" to someone who missed none. So the three raw
+fields are replaced before the model sees them by one pair named for the
+source: `applications_close`, `your_own_target_date` or `date_of_unknown_origin`,
+each with its own days until count. A source Prowl adds later is treated as
+unknown, which never claims whose it is. Only the summary's `overdue` list,
+which Prowl filters to posting dates, may be spoken as missed.
+
+Meaningful nulls become words: `"never applied"`, fit score `"unknown"`, fit
+check `"never run"`. `counts_by_status` is renamed
+`counts_by_status_including_closed`, because it sits beside `active_count` and
+adding it up is the natural wrong answer to "how many".
+
+Lists are cut at Prowl's own order (15 applications, 10 discoveries) and flagged
+`more_not_shown`, never counted; the applied list alone was 60 KB whole. The
+cost is that a row past the cut cannot be opened or accepted by voice. See
+[BACKEND_TODO.md](BACKEND_TODO.md#prowl-name-filter-and-limit).
+
+Accepting a discovered job is the only write. It is staged through
+`pending_action`, asked by name, and refused if anything else is already staged
+that turn, because `propose` merges one turn's proposals under a single yes and
+two accepts would become a bulk accept.
 
 ## Nova speaks, she does not recite
 

@@ -30,6 +30,7 @@ import system_state   # noqa: F401
 import tier_tool      # noqa: F401
 import calendar_tools # noqa: F401
 import oura_tools     # noqa: F401
+import prowl_tools    # noqa: F401
 import pending_action # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
@@ -242,6 +243,7 @@ async def _say(text, channel, device):
 # tool cannot silently show nothing. None means no stage: dismiss and ignore are
 # state changes, not work.
 _STAGE_WORDS = {
+    "accept_discovered_job":   "Finding that job",
     "cancel_reminder":         "Cancelling a reminder",
     "check_calendar_freebusy": "Checking when you're free",
     "confirm_pending_action":  "Making the change",
@@ -249,6 +251,8 @@ _STAGE_WORDS = {
     "delete_calendar_event":   "Deleting the event",
     "dismiss":                 None,
     "find_schedule_conflicts": "Looking for conflicts",
+    "get_job_application":     "Opening that application",
+    "get_job_search_summary":  "Checking your job search",
     "get_oura_activity":       "Reading your activity",
     "get_oura_heartrate":      "Reading your heart rate",
     "get_oura_readiness":      "Reading your readiness",
@@ -257,6 +261,8 @@ _STAGE_WORDS = {
     "get_upcoming_events":     "Checking your calendar",
     "get_weather":             "Checking the weather",
     "ignore":                  None,
+    "list_discovered_jobs":    "Checking what Prowl found",
+    "list_job_applications":   "Looking through your applications",
     "list_pending_memories":   "Looking at what's waiting for review",
     "lower_access":            "Changing access",
     "plan_sessions":           "Planning around your week",
@@ -288,6 +294,11 @@ _BRIDGES = {
     "get_oura_activity":       "bridge_health",
     "get_oura_heartrate":      "bridge_health",
     "get_weather":             "bridge_weather",
+    "get_job_search_summary":  "bridge_jobs",
+    "list_job_applications":   "bridge_jobs",
+    "get_job_application":     "bridge_jobs",
+    "list_discovered_jobs":    "bridge_jobs",
+    "accept_discovered_job":   "bridge_jobs",
 }
 
 

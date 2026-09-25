@@ -296,6 +296,9 @@ only interactive shells see it; no service does.
 - ELEVENLABS_API_KEY
 - FISH_API_KEY (retained for rollback only)
 - OURA_CLIENT_ID, OURA_CLIENT_SECRET
+- PROWL_URL, PROWL_TOKEN (the job tracker's MILES surface. The token must match
+  `MILES_SERVICE_TOKEN` on the Prowl droplet, and Prowl answers a mismatch and
+  an unset token with the same 401, so check both sides)
 
 The voice id used to live here. It moved to config.py: a voice id is neither
 secret nor deployment specific, and keeping it in a gitignored file meant voice
