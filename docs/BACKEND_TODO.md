@@ -565,6 +565,49 @@ because nobody reread it against `stream_router.py`.
 
 ## Not blocked, and worth doing anytime
 
+### A level gate on the wake window
+
+**The best characterised unbuilt change in this file, and it is not free.**
+Reject a wake whose 2.5 second window never peaks above a floor, before the
+chime, before recording, before Whisper, before Claude. The full measurement,
+including why peak beats RMS and why the line is not -40, is in
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#level-separates-where-the-score-does-not-and-far-field-set-the-line).
+
+The trade, on 38 real wakes and 22 false, Sep 25 2026:
+
+| reject below | real wakes lost | false wakes cut |
+|---|---|---|
+| -44 dBFS | 0 of 38 | 5 of 22 |
+| **-42 dBFS** | **0 of 38** | **7 of 22** |
+| -40 dBFS | 2 of 38 | 13 of 22 |
+
+**Start at -42.** It is the lowest line that costs nothing measured, and it
+still removes about a third of false wakes, each of which currently costs a
+chime, a recording, a transcription and a Claude call before `ignore` catches
+it. -40 is tempting at nearly double the yield and it is where two genuine far
+field wakes actually landed.
+
+Three things to hold onto before building it:
+
+- **A gate that rejects is a gate that can deafen her, and silently.** It must
+  log every rejection with the level it measured, or the first far field
+  regression is invisible. Prefer logging the level on every wake from the
+  start, gate or no gate, so the floor can be moved on evidence later.
+- **It is a stopgap for the neighbours, which is the array's job.** 13 of the 22
+  false wakes are quiet and the array addresses their cause; the other 9 arrive
+  loud and in the room, and nothing acoustic separates those. Do not let this
+  gate stand in for the work in
+  [INCIDENTS.md](INCIDENTS.md#the-near-misses-are-the-neighbours-sep-13-2026).
+- **Mic dependent in the number, not the mechanism.** A new capsule and gain
+  invalidate -42, and recalibrating is one afternoon of labelled clips rather
+  than a retrain. That is what makes it reasonable to build before the hardware
+  rather than after.
+
+Only worth it if the level is already to hand at the decision point. It is:
+`voice_main` keeps `_wake_window` as a rolling 2.5s of frames, which is what
+`save_wake_hit` already writes.
+
+
 ### Multi speaker verification architecture
 
 Originally Phase 4. Untouched, still wanted, and independent of hardware.

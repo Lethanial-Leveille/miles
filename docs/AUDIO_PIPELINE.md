@@ -244,6 +244,93 @@ any real fix. See `docs/BACKEND_TODO.md`.
 > [INCIDENTS.md](INCIDENTS.md#no-threshold-separates-true-from-false-wakes-any-more-sep-8-2026)
 > before acting on the empty band claim.
 
+### Settled Sep 25 2026, on 49 labelled hits: the score cannot do it
+
+The empty band is not merely stale, it is **the opposite of what the model
+does**. 49 `wake_hits` labelled by ear with `scripts/label_wake.py`, the Sep 13
+guests evening excluded so that one unusual night could not set the rate:
+
+| | n | min | p25 | median | max |
+|---|---|---|---|---|---|
+| real wake | 27 | 0.41 | 0.60 | 0.79 | 0.94 |
+| false wake | 22 | 0.40 | 0.45 | 0.52 | 0.84 |
+
+**22 of 49 wakes were false. 45 percent, on ordinary days.** Nearly half the
+times she answered, nobody had said the phrase.
+
+The distributions overlap end to end, so no threshold separates them:
+
+| `WAKE_THRESHOLD` | real wakes kept | false wakes admitted |
+|---|---|---|
+| 0.4 (live) | 27 of 27 | 22 of 22 |
+| 0.5 | 25 of 27 | 12 of 22 |
+| 0.7 | 16 of 27 | 5 of 22 |
+| 0.8 | 13 of 27 | 1 of 22 |
+
+0.8 still admits a false wake and throws away half the real ones. **Stop
+proposing threshold changes for this.** The Sep 8 reading was right on 5 events
+and is now right on 49.
+
+### Level separates where the score does not, and far field set the line
+
+Peak dBFS over the 2.5 second wake window, real wakes being the 27 labelled
+above plus 11 deliberate far field attempts on Sep 25 2026:
+
+| | n | min | p25 | median | max |
+|---|---|---|---|---|---|
+| real wake | 38 | -40.23 | -35.55 | -30.72 | -9.48 |
+| false wake | 22 | -52.36 | -43.19 | -40.47 | 0.00 |
+
+| reject below | real wakes lost | false wakes cut |
+|---|---|---|
+| -44 dBFS | 0 of 38 | 5 of 22 |
+| **-42 dBFS** | **0 of 38** | **7 of 22** |
+| -40 dBFS | 2 of 38 | 13 of 22 |
+| -38 dBFS | 4 of 38 | 16 of 22 |
+
+This is the mechanism behind the Sep 13 playback result, measured properly: the
+neighbours arrive quiet, and quiet is a thing the score does not look at.
+
+**The far field session is why the line sits at -42 and not -40.** On the 27
+desk distance wakes alone, -40 looked free: 0 of 27 real lost, 13 of 22 false
+cut. Every one of those 27 was spoken from a normal position, so the sample
+contained no evidence about the case that a level gate endangers. Eleven
+attempts from across the room, the doorway and the next room put two genuine
+wakes at **-40.23 dBFS**, just under it. The free gate is 2 dB lower and cuts
+half as much.
+
+**Two clips reading exactly -40.23 is itself the finding.** An identical peak on
+two different utterances means the peak is the window's noise floor rather than
+the voice, so at that distance the measure has stopped describing the speech.
+Do not read a peak near -40 as a quiet voice; read it as no voice found.
+
+**RMS was tried and is worse.** Real wakes median -50.77 against false at
+-54.60, and rejecting below -54 dBFS loses 12 of 38 real wakes to cut 14 of 22
+false. Peak survives because a wake phrase has a loud consonant in it even when
+its average is low.
+
+The gate itself is not built. Its trade, and what a new capsule does to the
+number, are in
+[BACKEND_TODO.md](BACKEND_TODO.md#a-level-gate-on-the-wake-window).
+
+### The false negative rate is not measured, and cannot be
+
+Every one of the 29 labelled `wake_misses` is `not_wake_phrase`. **There is not
+one confirmed missed attempt in the entire labelled set**, and the 11 far field
+attempts on Sep 25 were all answered, including from the next room. Distance
+alone does not appear to cause misses.
+
+That is not the same as saying there are none. `WAKE_MISS_FLOOR` is 0.15, so an
+attempt scoring under it **leaves no trace at all**: no clip, no `wake_log` row,
+nothing. If background noise crushes the score toward zero, which is the
+condition a miss is most often reported in, the capture is blind to it by
+construction. The floor was raised from 0.05 to 0.15 for a good reason, that 283
+of 400 clips were empty room, but the cost is that the one failure mode still
+unaccounted for is the one hiding below the floor.
+
+Answering it needs a marked attempt whose score is recorded whatever it is, not
+a lower floor.
+
 ## Wake capture
 
 Keeps the audio behind a near miss, because a score alone cannot distinguish
