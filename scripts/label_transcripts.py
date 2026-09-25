@@ -51,7 +51,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "src"))
 
 from config import (ARCHIVE_DIR, WHISPER_CLI, WHISPER_AUDIO_CTX,  # noqa: E402
-                    WHISPER_MODEL)
+                    WHISPER_MODEL, DB_PATH)
 import tts                                                        # noqa: E402
 
 EVAL_DIR = os.path.expanduser("~/miles/data/stt_eval")
@@ -66,6 +66,64 @@ FIELDS = ["file", "duration_s", "turn_type", "truth", "mode", "note"]
 MODELS = os.path.expanduser("~/miles/whisper.cpp/models")
 PROMPT = "Nova is a voice assistant running on a Raspberry Pi. Lethanial is in Gainesville."
 
+# How much prior conversation to prime the decoder with. whisper.cpp caps the
+# prompt well below this, and the tail is what matters because it is the words
+# closest to the clip, so this trims from the front.
+PRIOR_TURN_CHARS = 220
+
+
+def _prior_turns(clip_name, limit=2):
+    """The last few messages saved before this clip was recorded.
+
+    sqlite3 directly rather than database.py: this is an offline scoring script
+    and it has no business running migrations against the production database or
+    holding it open for writes."""
+    import sqlite3
+    from datetime import datetime
+    try:
+        stamp = datetime.strptime(clip_name.split("_")[0], "%Y%m%dT%H%M%S")
+    except ValueError:
+        return []
+    try:
+        con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        rows = con.execute(
+            """SELECT content FROM conversation_history
+               WHERE created_at <= ? ORDER BY created_at DESC LIMIT ?""",
+            (stamp.isoformat(), limit)).fetchall()
+        con.close()
+    except sqlite3.Error:
+        return []
+    return [r[0] for r in reversed(rows) if r[0]]
+
+
+def prior_turn_prompt(row):
+    """The conversation so far, as whisper's initial prompt, on follow ups only.
+
+    Follow ups score 21.9% WER against 8.4% on initial commands, and utterances
+    of four words or fewer score 18.5% against 10.9% for longer ones. Both point
+    the same way: the decoder's language prior is doing the work on short input
+    and it has nothing to go on. "what's the date" became "was the beat" and
+    "Set a timer for" became "Seven timer four" on clean audio, so this is not a
+    noise problem and a better microphone will not touch it.
+
+    An initial command gets no prompt, which is the point. A static domain prompt
+    was measured across every clip on Aug 13 2026 and landed 0.3 points worse,
+    inside the noise; applying context only where context is missing is the part
+    that was never tried."""
+    if row.get("turn_type") != "followup":
+        return None
+    prior = " ".join(_prior_turns(row["file"]))
+    return prior[-PRIOR_TURN_CHARS:].strip() or None
+
+
+def domain_prompt_followups_only(row):
+    """The Aug 13 prompt, restricted to follow ups.
+
+    Separates two readings of that result. If the prompt genuinely buys nothing,
+    this lands on the live model. If it was helping follow ups and hurting
+    initials, the aggregate was hiding both and this shows it."""
+    return PROMPT if row.get("turn_type") == "followup" else None
+
 # Everything to be scored. Add a row, run `score`, and it appears. The label set
 # does not change when this does, which is the entire point of having one.
 CANDIDATES = [
@@ -73,6 +131,11 @@ CANDIDATES = [
     ("base.en q8_0 (live)",   f"{MODELS}/ggml-base.en-q8_0.bin", None),
     ("base.en q8_0 + prompt", f"{MODELS}/ggml-base.en-q8_0.bin", PROMPT),
     ("tiny.en",               f"{MODELS}/ggml-tiny.en.bin",      None),
+    # A prompt may be a callable of the manifest row, so it can differ per clip.
+    # Static prompts keep the cache key they always had, so adding these does not
+    # invalidate a single transcript already measured.
+    ("q8_0 + prior turn (fu)", f"{MODELS}/ggml-base.en-q8_0.bin", prior_turn_prompt),
+    ("q8_0 + domain (fu)",     f"{MODELS}/ggml-base.en-q8_0.bin", domain_prompt_followups_only),
 ]
 
 # Non speech, however whisper chose to spell it this time. These normalize to an
@@ -371,12 +434,17 @@ def cmd_score(args):
         if tty:
             print(f"  {label} ...", end="", flush=True)
         for n, row in enumerate(rows, 1):
-            key = f"{os.path.basename(model)}|{prompt or ''}|{row['file']}"
+            # A callable prompt is resolved per clip. Keying the cache on the
+            # resolved text rather than the candidate means two candidates that
+            # happen to produce the same prompt for a clip share the result, and
+            # a static prompt keys exactly as it did before this existed.
+            text = prompt(row) if callable(prompt) else prompt
+            key = f"{os.path.basename(model)}|{text or ''}|{row['file']}"
             if key not in cache:
                 if tty:
                     print(f"\r  {label} ... {n}/{len(rows)}", end="", flush=True)
                 cache[key] = transcribe(
-                    os.path.join(ARCHIVE_DIR, row["file"]), model, prompt)
+                    os.path.join(ARCHIVE_DIR, row["file"]), model, text)
             texts.append(cache[key])
             scores.append(wer(row["truth"], cache[key]))
         results[label] = (scores, texts)
@@ -394,6 +462,20 @@ def cmd_score(args):
 
     print("\nWER is edits per true word, so lower is better and 0% is perfect.")
     print("Exact counts clips where every word matched after normalization.")
+
+    # Split, always. Follow ups score 21.9% against 8.4% on initial commands, so
+    # the aggregate above is two populations averaged, and a change that helps
+    # one while hurting the other reads as no change at all. That is exactly how
+    # the Aug 13 2026 prompt comparison came out a wash.
+    kinds = sorted({row["turn_type"] for row in rows if row.get("turn_type")})
+    print(f"\n{'candidate':26} " + " ".join(f"{k:>12}" for k in kinds))
+    for label, (scores, _) in results.items():
+        cells = []
+        for kind in kinds:
+            sel = [s for s, row in zip(scores, rows)
+                   if row.get("turn_type") == kind]
+            cells.append(f"{100*sum(sel)/len(sel):11.1f}%" if sel else f"{'':>12}")
+        print(f"{label:26} " + " ".join(cells))
 
     if args.verbose:
         best = min(results, key=lambda k: sum(results[k][0]) / len(results[k][0]))

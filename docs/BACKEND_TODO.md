@@ -565,6 +565,42 @@ because nobody reread it against `stream_router.py`.
 
 ## Not blocked, and worth doing anytime
 
+### Rejecting a false wake before the Claude call: tested, do not build
+
+Raised Sep 25 2026 on the grounds that `ignore` costs a full Claude round trip
+per false wake, and 13 fired in 30 days. **Two candidate local signals were
+measured against the labelled set and both fail. Do not reach for either again
+without reading this.**
+
+**Sentence initial case.** The idea was that room speech is caught mid
+conversation, so whisper transcribes it starting lowercase, while a command to
+Nova starts a sentence. Measured on the 58 labelled clips plus 28 real ignored
+turns: most room speech starts **capitalised**, because whisper capitalises
+whatever it hears first ("Oh, that's cool.", "Yeah.", "I mean she found the
+little tree."). Worse, real commands start lowercase, including `'cancel the
+timer.'` at 0.79 verification, which is the Sep 16 2026 incident. **The signal
+would have rejected a real command.**
+
+**Recording length.** The idea was that a recording running to `MAX_RECORD` is a
+room that never went quiet rather than a request. Only 2 recordings have ever
+exceeded 29 seconds, both from the Sep 13 guests evening under the old 60 second
+cap, and the 25 to 29 second bucket is **empty**. Since `MAX_RECORD` came down to
+30 and the wake word interrupts a recording, this guard would never fire.
+
+**The cost was also overstated when this was raised.** `ignore` produces no
+speech, so a false wake reaching Claude is inaudible to him. What he actually
+experiences is the chime and the recording, and the level gate addresses a third
+of those before either happens. What is left is roughly 13 Claude calls a month.
+
+**What would actually separate them is semantic**, and the thing already doing it
+correctly is the model. Any local version needs a labelled corpus of addressed
+against not addressed transcripts, which does not exist; the 20 empty truth clips
+in `data/stt_eval` are the start of one. Until it does, this is guesswork with an
+asymmetric cost, and `local_intent.py` already sets the rule for that case:
+decline when unsure, because falling through to Claude is merely expensive while
+firing wrongly hangs up on him mid thought.
+
+
 ### A level gate on the wake window (BUILT Sep 25 2026, at -42)
 
 Shipped in `src/wake_gate.py`; the live mechanism and its three safety
