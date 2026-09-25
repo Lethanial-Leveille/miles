@@ -166,6 +166,103 @@ inside the noise on 58 clips. It buys nothing at 64ms and one more moving part.
 strongest argument for Deepgram in the repo and it is an accuracy argument, not
 a latency one; after q8_0 there is only ~260ms of latency left to win.
 
+### What the 19.8% is actually made of (Sep 25 2026)
+
+**Read this before quoting it as a transcription accuracy figure**, because half
+of it is not one. 19.8% is the unweighted mean of per clip WER over all 58
+labelled clips, and 20 of those clips have no true content at all: their audio
+was never addressed to Nova. Whisper invents words in 6 of them, each scoring a
+flat 1.00.
+
+```
+'Safe keeps handy.'            'Yeah, so I think that a couple more is a good one.'
+'I just know what we know about Makayana.'          '- New.'
+"Come back here! No! Come back here! A bull's hand, hold on!"
+'the frame was black. You took it, grimey, and you gave me these.'
+```
+
+Six clips at 1.00 out of 58 is **10.3 of the 19.8 points, 52 percent of the
+total error mass.** On the 38 clips that are real speech, word weighted WER is
+**12.7%**.
+
+So the transcription number and the false wake rate are the same problem
+measured twice, and the false wake is upstream. **Waking less improves this
+figure without touching the STT.**
+
+What is left after separating them is not noise either:
+
+| | n | WER, word weighted |
+|---|---|---|
+| initial turns | 24 | 8.4% |
+| follow ups | 14 | 21.9% |
+| 4 words or fewer | 17 | 18.5% |
+| more than 4 words | 21 | 10.9% |
+
+**Noise does not explain it.** SNR computed over the same clips with
+`measure_acoustics`, which already spans 3.3 to 30.3 dB in ordinary use:
+
+| SNR | n | WER |
+|---|---|---|
+| under 14 dB | 29 | 14.4% |
+| 14 to 18 dB | 17 | 11.1% |
+| 18 to 22 dB | 5 | 17.4% |
+| 22 to 26 dB | 5 | 7.1% |
+| 26 dB and up | 2 | 0.0% |
+
+Below 18 dB is 13.1%, at or above is 11.1%. Two points, non monotonic. The room
+is already the noisy condition and it is not what costs the words; short
+utterances with no context for the decoder's language prior are.
+
+**Follow up clips are also where the not addressed speech is**: 27 percent of
+follow ups have empty truth against 8 percent of initial commands, because the
+follow up window opens into a room that is still talking. Any follow up figure
+mixes two populations, which is why the two numbers above differ so much from
+the per turn type means the scorer prints.
+
+### The Aug 13 prompt verdict was hiding a split (Sep 25 2026)
+
+`scripts/label_transcripts.py score` now prints WER per `turn_type` as well as
+pooled, because the pooled number concealed this for six weeks:
+
+| candidate | pooled | follow up | initial |
+|---|---|---|---|
+| base.en q8_0 (live) | 19.8% | 37.4% | 9.0% |
+| q8_0 + domain prompt, every clip | 20.1% | 35.6% | 10.7% |
+| **q8_0 + domain prompt, follow ups only** | **19.1%** | **35.6%** | **9.0%** |
+| q8_0 + prior turn text, follow ups only | 20.5% | 39.4% | 9.0% |
+
+(Per turn type cells are unweighted means including the empty truth clips, so
+they are higher than the word weighted figures above. Same ruler across a row.)
+
+**The prompt helps follow ups by 1.8 points and hurts initial commands by 1.7.**
+Averaged, that is the "0.3 points worse, inside the noise" recorded on Aug 13,
+and the conclusion drawn from it, that the prompt buys nothing, was wrong about
+the mechanism. It buys something exactly where context is missing and costs
+something where it is not.
+
+**Priming with the actual prior turn is worse than no prompt at all**, 39.4%
+against 37.4%. The previous turn's words bias the decoder toward reusing them,
+which is the opposite of the help that was wanted.
+
+**None of this is shipped, and the follow ups only variant should not be.** Its
+entire gain is 2 clips of 22, and one of the two is the prompt leaking its own
+vocabulary into the transcript:
+
+```
+truth  "Make an order to Raising Cane's ..."
+was    'Make an order to raise them in the canes and tell ...'
+now    'Make an order to raise them in Gainesville and tell ...'
+```
+
+`Gainesville` is a word from the prompt, not from the audio. It scores better by
+edit distance and is worse by any reading that matters. The other change moved
+"was the beat." to "What's the means?" against a truth of "what's the date",
+which is still wrong. No clip moved from wrong to exactly right in any
+candidate: `exact` is 36/58 across all four base.en rows.
+
+**What is durable here is the split, not the candidate.** The scorer prints it
+now, so the next comparison cannot average a gain and a loss into nothing.
+
 Errors concentrate in **short follow ups**, where there is least context for the
 decoder's language prior: "what's the date" to "was the beat", "Hey Nova" to
 "Head over", "Set a timer for" to "Seven timer four".

@@ -93,3 +93,46 @@ def test_the_real_disagreement_that_motivated_this():
 
     assert lt.wer(truth, prompted) == 0
     assert lt.wer(truth, base) > 0.5
+
+
+# ── per clip prompts ──
+#
+# A prompt that differs per clip is the only way to test "give the decoder the
+# context it is missing", because the context is different for every follow up.
+# The risk is that it silently applies where it should not, so both builders are
+# pinned on the turn type they refuse.
+
+
+def test_a_prior_turn_prompt_is_only_built_for_follow_ups():
+    """An initial command gets nothing. Applying context everywhere is what was
+    measured on Aug 13 2026 and came out a wash."""
+    assert lt.prior_turn_prompt(
+        {"turn_type": "initial", "file": "20260811T163519_500_initial.wav"}) is None
+
+
+def test_the_domain_prompt_variant_refuses_initial_turns():
+    assert lt.domain_prompt_followups_only({"turn_type": "followup"}) == lt.PROMPT
+    assert lt.domain_prompt_followups_only({"turn_type": "initial"}) is None
+
+
+def test_an_unparseable_clip_name_yields_no_prior_turns():
+    """The manifest is hand editable and these names carry a timestamp by
+    convention, not by guarantee. A scoring run must not die on one bad row."""
+    assert lt._prior_turns("not-a-stamp.wav") == []
+
+
+def test_the_prompt_keeps_the_tail_when_history_is_long(monkeypatch):
+    """whisper caps the prompt, and the words closest to the clip are the ones
+    worth keeping, so this trims from the front rather than the back."""
+    monkeypatch.setattr(lt, "_prior_turns", lambda name, limit=2: ["x" * 500])
+    prompt = lt.prior_turn_prompt(
+        {"turn_type": "followup", "file": "20260811T163519_500_followup.wav"})
+    assert len(prompt) == lt.PRIOR_TURN_CHARS
+
+
+def test_no_history_means_no_prompt_rather_than_an_empty_one(monkeypatch):
+    """An empty --prompt is not the same as no --prompt, and passing one would
+    measure something nobody asked about."""
+    monkeypatch.setattr(lt, "_prior_turns", lambda name, limit=2: [])
+    assert lt.prior_turn_prompt(
+        {"turn_type": "followup", "file": "20260811T163519_500_followup.wav"}) is None
