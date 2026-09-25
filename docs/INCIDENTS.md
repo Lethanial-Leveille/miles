@@ -658,6 +658,26 @@ Consequences worth keeping:
 Artifacts from the playback are quarantined in `data/wake_playback/` with a
 README. They are the measurement, not samples, and must never reach a retrain.
 
+> **Closed Sep 25 2026, at n=49 instead of n=5.** Labelling the hit directory by
+> ear settled both halves of this. **45 percent of wakes on ordinary days are
+> false**, the score distributions of real and false wakes overlap end to end so
+> no threshold separates them, and **level does separate**: rejecting a window
+> that never peaks above -42 dBFS cuts 7 of 22 false wakes without losing any of
+> 38 real ones. The tables are in
+> [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#settled-sep-25-2026-on-49-labelled-hits-the-score-cannot-do-it).
+>
+> **The reading that this was all one population was too tidy.** 13 of the 22
+> false wakes are quiet and are the wall, as this entry argues. The other 9
+> arrive loud and nearby, and 5 days earlier the `ignore` data had already shown
+> what they are: his own voice, correctly recognised, not addressed to Nova. The
+> array answers the first group and cannot answer the second.
+>
+> **And the far field attempts this entry never had were collected.** Eleven, on
+> Sep 25, from across the room, the doorway and the next room. All eleven were
+> answered, so distance alone is not causing misses. Two of them landed at
+> -40.23 dBFS and are the only reason the level floor is -42 rather than -40,
+> which is the whole value of having collected them.
+
 ---
 
 ## The mixer card guard measured the speakers (Sep 6 2026)
