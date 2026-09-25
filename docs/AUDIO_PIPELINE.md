@@ -351,6 +351,46 @@ after a whisper.cpp upgrade rather than writing distil off permanently.
 **Beam search also hallucinates slightly less**, 5 of 20 against 6, which is a
 small point in the same direction as everything else about it.
 
+### Deepgram Nova 3, measured Sep 25 2026
+
+Scored as a candidate row on the same 58 clips, via a callable in `CANDIDATES`
+rather than a separate harness, so it is the same ruler. `punctuate` and
+deliberately **not** `smart_format`: smart format rewrites numbers as digits and
+these truths are written in words, so it would score "1 minute" against "one
+minute" as an error for a formatting reason rather than a hearing one.
+
+| | pooled | real speech only | follow up | initial | exact | invents words in non speech | p50 |
+|---|---|---|---|---|---|---|---|
+| base.en q8_0, beam 5 (live) | 17.5% | 11.8% | 33.3% | 7.9% | 38/58 | 5 of 20 | 1137ms |
+| **deepgram nova-3** | **7.6%** | **8.8%** | **10.7%** | **5.7%** | **46/58** | **2 of 20** | **520ms** |
+
+**It is better on every axis at once, including latency.** p50 520ms and p90
+826ms are both inside the 990ms head start, so a remote transcript is *fully
+hidden* where the local one at 1137ms is not. The accurate path is also the fast
+one, which is not how this trade normally goes.
+
+Read the two WER columns as different questions. Pooled 7.6% partly rewards
+staying quiet on the 20 non speech clips; **8.8% word weighted on the 38 real
+speech clips is the accuracy comparison**, against 11.8%. Both favour Deepgram.
+
+**It is also better at silence, 2 of 20 against 5.** That matters more here than
+the WER, for the reason distil was rejected: 45 percent of wakes are false, and
+every invented sentence in an empty room becomes a turn that reaches Claude.
+
+The errors it removes are exactly the ones that prompted the investigation:
+
+```
+truth 'what's the date'                  whisper 'was the beat.'
+truth 'Set a timer for'                  whisper 'Seven timer four.'
+truth 'Hey Nova'                         whisper 'Head over.'
+truth 'Can you set a reminder ...'       whisper 'Can you send a reminder ...'
+```
+
+**Not integrated.** Two things have to be decided before it is, and neither is a
+measurement. Whisper stays as the offline fallback regardless; `netcheck` already
+knows which path is available. See
+[BACKEND_TODO.md](BACKEND_TODO.md#deepgram-as-the-online-path).
+
 Errors concentrate in **short follow ups**, where there is least context for the
 decoder's language prior: "what's the date" to "was the beat", "Hey Nova" to
 "Head over", "Set a timer for" to "Seven timer four".
