@@ -33,6 +33,9 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 24 2026 | Pruning by age deleted half the hand labelled wake clips | [below](#pruning-by-age-ate-the-labelling-sep-24-2026) |
+| Sep 16 2026 | Cancelling a timer set a new one | [below](#cancelling-a-timer-set-a-new-one-sep-16-2026) |
+| Sep 15 2026 | Moving two lessons took eight turns | [below](#moving-two-lessons-took-eight-turns-sep-15-2026) |
 | Sep 14 2026 | One deauth took the Pi off the network for 21 hours, and the recovery exposed it to the internet for 9 | [below](#one-deauth-cost-21-hours-offline-and-9-hours-exposed-sep-14-2026) |
 | Sep 14 2026 | Fixing one name on three lessons took five read backs and three yeses | [below](#fixing-one-name-took-five-read-backs-sep-14-2026) |
 | Sep 14 2026 | His yes created a career fair on a date Nova never said | [below](#his-yes-created-a-date-he-did-not-hear-sep-14-2026) |
@@ -50,6 +53,45 @@ session real work.
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
 
 ---
+
+## Pruning by age ate the labelling (Sep 24 2026)
+
+`wake_misses` is a ring buffer: it fills to `WAKE_MISS_MAX_FILES` and the oldest
+clip is evicted. On Sep 13 2026, 29 of its clips were labelled by ear, every one
+above 0.20, and that set was the answer to "are the near misses him or the
+building". Eleven days later:
+
+```
+labelled rows in labels.csv:  29
+        audio still on disk:  15   (13 by Sep 25)
+                    EVICTED:  14
+```
+
+The evicted scores were 0.205 through 0.392, so it took the closest calls along
+with the rest. Eviction is by modification time, which is uncorrelated with
+whether a clip has been judged, so it removed roughly half of each.
+
+**A verdict with no audio is worthless.** It cannot be relistened to, cannot go
+into a retrain, and cannot be checked when a later session disagrees with it. The
+labels survived in `labels.csv` the whole time, which is what made the loss
+invisible: `label_wake.py --status` counts only verdicts whose clip is still
+present, so the number simply drifted down and looked like less work done.
+
+**Both halves of this were silent.** Nothing logged a deletion, and the
+directory sat at exactly its cap looking as healthy as the day before. The only
+reason it surfaced at all is that a session happened to compare the manifest row
+count against the directory listing.
+
+Fixed in `wake_capture.py`: an unlabelled clip is evicted before a labelled one,
+oldest first within each group. **It is a preference and deliberately not a
+prohibition.** "Never delete a labelled clip" fails slowly and worse, because
+once the buffer is entirely labelled the directory stops recording anything new
+while still looking full and healthy, which is this same failure with a
+different cause.
+
+The lesson is not about ring buffers. It is that **the valuable subset of a
+diagnostic store is usually the part a human touched**, and a cap that predates
+any labelling has no way to know that.
 
 ## Cancelling a timer set a new one (Sep 16 2026)
 
