@@ -288,6 +288,66 @@ q8_0 quantization, which should not happen and is the clearest evidence in the
 table that 58 clips is a small ruler. It is 22 clips deciding every follow up
 cell. Treat the direction as solid and the decimals as not.
 
+### small.en and distil-small.en, measured Sep 25 2026
+
+Both downloaded and scored against the same 58 clips, so the rows are
+comparable. Latency is p50 over 8 archived clips at three threads, against the
+990ms head start.
+
+| candidate | pooled | follow up | initial | exact | p50 | invents words in non speech |
+|---|---|---|---|---|---|---|
+| base.en q8_0, greedy (live) | 19.8% | 37.4% | 9.0% | 36/58 | 1024ms | 6 of 20 |
+| **base.en q8_0, beam 5** | **17.5%** | 33.3% | 7.9% | 38/58 | **1137ms** | **5 of 20** |
+| small.en q8_0, greedy | 18.7% | 36.3% | 7.9% | 39/58 | | 6 of 20 |
+| small.en q8_0, beam 5 | 17.8% | **31.7%** | 9.3% | 38/58 | 3263ms | 6 of 20 |
+| distil-small.en, greedy | 46.9% | 48.0% | 46.2% | 20/58 | | **19 of 20** |
+| distil-small.en, beam 5 | 43.6% | 43.4% | 43.7% | 22/58 | | |
+
+**Beam search on base.en beats small.en running greedy**, 17.5% against 18.7%,
+for 113ms instead of roughly triple the compute. That is the second time on this
+hardware that the decoder mattered more than the weights, after q8_0 turned out
+to cost nothing against fp16. **Try the decoder before buying a bigger model.**
+
+**small.en is out on latency, not on accuracy.** At beam 5 it has the best follow
+up number of anything measured, 31.7%, and it costs 3263ms against a 990ms head
+start. That is roughly 2.3 seconds added to a 4404ms turn, for a population that
+is a quarter of turns. If follow up accuracy ever becomes the priority, this is
+the ceiling and that is the bill.
+
+### distil-small.en is rejected, and the reason is specific
+
+46.9% pooled looks like a broken model and is not. **On real speech it is
+competitive**, word weighted by clip length against base.en q8_0:
+
+| clip length | n | base.en | distil |
+|---|---|---|---|
+| under 3s | 28 | 20.0% | 18.3% |
+| 3 to 6s | 19 | 10.3% | 17.6% |
+| 6 to 12s | 4 | 9.4% | 12.5% |
+
+The entire deficit is one behaviour: **it invents words in 19 of 20 clips that
+are not speech to Nova**, against 6 of 20 for base.en. Each of those scores a
+flat 1.00, which is where 46.9% comes from.
+
+```
+truth  '[silence]'   ->  distil  'you'
+truth  (room noise)  ->  distil  'Yeah, so I think that it can work.'
+truth  (room noise)  ->  distil  'So you keep standing.'
+```
+
+**That is the one failure mode this system can least afford**, because 45 percent
+of wakes are false and 27 percent of follow up clips are not addressed to her.
+A model that fills silence with plausible sentences converts every false wake
+into a turn that reaches Claude. Rejected on those grounds and not on WER.
+
+The likely cause is upstream of the weights: whisper.cpp does not implement the
+chunked long form strategy the distilled models were trained for. That is a
+whisper.cpp limitation rather than a distil-whisper one, so it is worth retesting
+after a whisper.cpp upgrade rather than writing distil off permanently.
+
+**Beam search also hallucinates slightly less**, 5 of 20 against 6, which is a
+small point in the same direction as everything else about it.
+
 Errors concentrate in **short follow ups**, where there is least context for the
 decoder's language prior: "what's the date" to "was the beat", "Hey Nova" to
 "Head over", "Set a timer for" to "Seven timer four".
