@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 14 2026 (25) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 25 2026 (870) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 25 2026 (883) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -798,6 +798,29 @@ people. Widen it only after the confirmation flow has earned trust in real use.
 **Single occurrences only.** The instance id is all the lookup ever holds, so a
 repeating event cannot be deleted as a series by accident, and the read back says
 so.
+
+### Every recording goes to Deepgram (Sep 25 2026) (DECIDED)
+
+Deepgram Nova 3 measured 7.6% WER against 17.5% for the best local candidate, and
+faster, and better at staying quiet in an empty room. The numbers are in
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#deepgram-nova-3-measured-sep-25-2026).
+
+**The cost accepted is not technical.** Running it live sends every recording off
+the Pi, and **45 percent of wakes are false**, so that includes clips of his
+roommates and of the neighbours through the wall, who have not agreed to
+anything. The alternative offered was gating the remote call behind
+`verify_voice` so only confirmed speech from him leaves the machine, at roughly
+200ms of the latency win, since verification currently runs beside transcription
+rather than before it.
+
+Lethanial chose to accept it on the grounds that it is his apartment and his
+assistant. Recorded so a later session does not reopen it. **Revisit if anyone
+else is enrolled**, because the multi speaker work in
+[BACKEND_TODO.md](BACKEND_TODO.md) changes who "his voice" means, or if the
+recordings are ever shared beyond this Pi.
+
+The `verify_voice` gate stays written down as the known alternative rather than
+being deleted, so the decision can be reversed without rediscovering how.
 
 ### The Oura client secret is not rotated (Sep 13 2026) (DECIDED)
 

@@ -392,6 +392,30 @@ WHISPER_SEGMENT_SECONDS = 28.0
 # Set to 1 to go back to greedy. Both the speculative run and the full one read
 # this through _whisper_cmd, so they cannot drift apart.
 WHISPER_BEAM_SIZE = 5
+
+# ── Deepgram, the online transcript ──
+#
+# Measured Sep 25 2026 on the 58 hand labelled clips: 7.6% WER against 17.5% for
+# base.en q8_0 at beam 5, follow ups 10.7% against 33.3%, and it invents words in
+# 2 of 20 non speech clips against 5. Faster as well, p50 520ms and p90 826ms,
+# both inside the 990ms speculation head start that whisper at beam 5 exceeds.
+#
+# **Whisper is the floor and stays.** Every failure falls back to it, so the
+# offline behaviour that already exists does not regress and a bad day at Deepgram
+# costs nothing more than today.
+#
+# Set DEEPGRAM_STT to False to run fully local again; nothing else has to change.
+#
+# The key is a secret and lives in .env. The model name is a configuration choice
+# and does not, for the same reason TTS_VOICE_ID does not.
+DEEPGRAM_STT       = True
+DEEPGRAM_API_KEY   = os.environ.get("DEEPGRAM_API_KEY")
+DEEPGRAM_MODEL     = "nova-3"
+# Generous against the 520ms median, because the fallback is a full whisper run
+# rather than a failed turn, and cutting off a request that was about to answer
+# buys nothing. Bounded so a hung socket cannot hold the turn open.
+DEEPGRAM_TIMEOUT_S = 8.0
+
 TEMP_WAV        = os.path.expanduser("~/miles/build/command.wav")
 
 # ── Wake miss capture ──

@@ -82,6 +82,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── alerts.py              # Pending alert queue and fold into the next turn
 │   ├── audio.py               # Mic, wake word, VAD, Whisper, Resemblyzer
 │   ├── audio_segments.py      # Whisper window by clip length; cutting long recordings
+│   ├── deepgram_stt.py        # the online transcript, with whisper as the floor
 │   ├── wake_listener.py       # hears the wake word during a recording
 │   ├── wake_gate.py           # drops a wake that arrived too quiet to be him
 │   ├── wake_capture.py        # what to evict when a capture directory is full
@@ -107,7 +108,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (870 passing, 6 skipped, Sep 25 2026)
+│   └── tests/                 # pytest suite (883 passing, 6 skipped, Sep 25 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -215,6 +216,15 @@ of the value itself.
   WER for 113ms. Set to 1 for greedy; both the speculative and full runs read it
   through `_whisper_cmd`)
 
+### Deepgram — why: [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#deepgram-nova-3-measured-sep-25-2026)
+- `DEEPGRAM_STT = True`, `DEEPGRAM_MODEL = "nova-3"`, `DEEPGRAM_TIMEOUT_S = 8.0`
+- `DEEPGRAM_API_KEY` from `.env`. The key is a secret, the model name is not
+- **Whisper is the floor and stays.** Every failure falls back to it, so the
+  offline path does not regress. `DEEPGRAM_STT = False` returns to fully local
+- Every recording leaves the Pi, including the 45 percent of wakes that are
+  false. That was decided, not overlooked: see the decision log in
+  [SESSION_START.md](docs/SESSION_START.md)
+
 ### Wake capture — why: [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#wake-capture)
 - `CAPTURE_WAKE_MISSES = True`, `WAKE_MISS_DIR = ~/miles/data/wake_misses`
 - `WAKE_MISS_FLOOR = 0.15`, `WAKE_LOG_FLOOR = 0.15`
@@ -287,8 +297,8 @@ Recordings are of a real person in a real room. Treat them accordingly.
 
 Wake word: openWakeWord (hey_nova.onnx).
 VAD: webrtcvad, mode 2.
-STT: whisper.cpp (base.en, beam search at 5, NEON ARM optimizations, capped
-audio context).
+STT: Deepgram Nova 3 online, falling back to whisper.cpp (base.en, beam search at
+5, NEON ARM optimizations, capped audio context) whenever it does not answer.
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: Resemblyzer (256 dim cosine similarity).
