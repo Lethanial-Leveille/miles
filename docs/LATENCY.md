@@ -70,6 +70,13 @@ where the speculation held.
 |---|---|
 | endpoint | 880ms |
 | transcribe | 1166ms |
+
+> **Beam search landed Sep 25 2026 and adds ~113ms to every transcribe.** p50 over
+> 8 archived clips at three threads went 1024 to 1137ms for 2.3 points of WER. It
+> is bought from the speculation head start, 990ms, rather than from the turn, so
+> the exposed portion grows from roughly 15ms to roughly 152ms. Every stage figure
+> on this page predates it. See
+> [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#beam-search-is-the-thing-that-was-never-tried-sep-25-2026).
 | verify | 193ms |
 | claude_ttft | 1253ms |
 | first_sentence | 288ms |

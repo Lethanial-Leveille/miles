@@ -210,6 +210,10 @@ of the value itself.
 - `WHISPER_AUDIO_CTX_LONG = 1500` (Whisper's full 30 seconds, for longer clips)
 - `WHISPER_SEGMENT_SECONDS = 28.0` (longer recordings are cut at a pause and
   transcribed in pieces)
+- `WHISPER_BEAM_SIZE = 5` (whisper.cpp's own default; this pipeline passed 1 until
+  Sep 25 2026 and every WER figure before that date was greedy. 19.8% to 17.5%
+  WER for 113ms. Set to 1 for greedy; both the speculative and full runs read it
+  through `_whisper_cmd`)
 
 ### Wake capture — why: [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#wake-capture)
 - `CAPTURE_WAKE_MISSES = True`, `WAKE_MISS_DIR = ~/miles/data/wake_misses`
@@ -283,7 +287,7 @@ Recordings are of a real person in a real room. Treat them accordingly.
 
 Wake word: openWakeWord (hey_nova.onnx).
 VAD: webrtcvad, mode 2.
-STT: whisper.cpp (base.en, greedy decoding, NEON ARM optimizations, capped
+STT: whisper.cpp (base.en, beam search at 5, NEON ARM optimizations, capped
 audio context).
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
