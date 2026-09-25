@@ -71,6 +71,8 @@ PROMPT = "Nova is a voice assistant running on a Raspberry Pi. Lethanial is in G
 # closest to the clip, so this trims from the front.
 PRIOR_TURN_CHARS = 220
 
+BEAM_5 = ["-bs", "5", "-bo", "5"]
+
 
 def _prior_turns(clip_name, limit=2):
     """The last few messages saved before this clip was recorded.
@@ -126,16 +128,22 @@ def domain_prompt_followups_only(row):
 
 # Everything to be scored. Add a row, run `score`, and it appears. The label set
 # does not change when this does, which is the entire point of having one.
+# (label, model, prompt, decoder flags). A prompt may be a callable of the
+# manifest row, so it can differ per clip. Decoder flags default to greedy, which
+# is what every measurement in this repo was taken with and what production runs.
 CANDIDATES = [
-    ("base.en fp16",          f"{MODELS}/ggml-base.en.bin",      None),
-    ("base.en q8_0 (live)",   f"{MODELS}/ggml-base.en-q8_0.bin", None),
-    ("base.en q8_0 + prompt", f"{MODELS}/ggml-base.en-q8_0.bin", PROMPT),
-    ("tiny.en",               f"{MODELS}/ggml-tiny.en.bin",      None),
-    # A prompt may be a callable of the manifest row, so it can differ per clip.
-    # Static prompts keep the cache key they always had, so adding these does not
-    # invalidate a single transcript already measured.
-    ("q8_0 + prior turn (fu)", f"{MODELS}/ggml-base.en-q8_0.bin", prior_turn_prompt),
-    ("q8_0 + domain (fu)",     f"{MODELS}/ggml-base.en-q8_0.bin", domain_prompt_followups_only),
+    ("base.en fp16",          f"{MODELS}/ggml-base.en.bin",      None, None),
+    ("base.en q8_0 (live)",   f"{MODELS}/ggml-base.en-q8_0.bin", None, None),
+    ("base.en q8_0 + prompt", f"{MODELS}/ggml-base.en-q8_0.bin", PROMPT, None),
+    ("tiny.en",               f"{MODELS}/ggml-tiny.en.bin",      None, None),
+    ("q8_0 + prior turn (fu)", f"{MODELS}/ggml-base.en-q8_0.bin", prior_turn_prompt, None),
+    ("q8_0 + domain (fu)",     f"{MODELS}/ggml-base.en-q8_0.bin", domain_prompt_followups_only, None),
+    # Beam search. whisper.cpp defaults to 5 and this pipeline has always passed
+    # 1, so no comparison in the repo has ever varied it. It is the standard lever
+    # for the error this set is full of: a plausible wrong word that greedy
+    # commits to because it never considers the alternative.
+    ("q8_0 beam 5",           f"{MODELS}/ggml-base.en-q8_0.bin", None, BEAM_5),
+    ("base.en fp16 beam 5",   f"{MODELS}/ggml-base.en.bin",      None, BEAM_5),
 ]
 
 # Non speech, however whisper chose to spell it this time. These normalize to an
@@ -177,9 +185,11 @@ def duration(path):
         return round(w.getnframes() / w.getframerate(), 1)
 
 
-def transcribe(path, model, prompt=None):
-    cmd = [WHISPER_CLI, "-m", model, "-f", path, "-bs", "1", "-bo", "1",
+def transcribe(path, model, prompt=None, extra=None):
+    """Greedy unless `extra` says otherwise, because greedy is what runs live."""
+    cmd = [WHISPER_CLI, "-m", model, "-f", path,
            "--no-prints", "--no-timestamps", "-ac", str(WHISPER_AUDIO_CTX)]
+    cmd += list(extra) if extra else ["-bs", "1", "-bo", "1"]
     if prompt:
         cmd += ["--prompt", prompt]
     return subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
@@ -422,7 +432,7 @@ def cmd_score(args):
     print(f"Scoring {len(rows)} labelled clips against {len(CANDIDATES)} candidates.\n")
 
     results = {}
-    for label, model, prompt in CANDIDATES:
+    for label, model, prompt, extra in CANDIDATES:
         if not os.path.exists(model):
             print(f"  {label:24} SKIPPED, no model at {model}")
             continue
@@ -439,12 +449,16 @@ def cmd_score(args):
             # happen to produce the same prompt for a clip share the result, and
             # a static prompt keys exactly as it did before this existed.
             text = prompt(row) if callable(prompt) else prompt
-            key = f"{os.path.basename(model)}|{text or ''}|{row['file']}"
+            # The decoder flags are appended only when there are any, so every
+            # greedy candidate keys exactly as it did before beam search existed
+            # and nothing already measured has to be transcribed again.
+            suffix = ("|" + " ".join(extra)) if extra else ""
+            key = f"{os.path.basename(model)}|{text or ''}|{row['file']}{suffix}"
             if key not in cache:
                 if tty:
                     print(f"\r  {label} ... {n}/{len(rows)}", end="", flush=True)
                 cache[key] = transcribe(
-                    os.path.join(ARCHIVE_DIR, row["file"]), model, text)
+                    os.path.join(ARCHIVE_DIR, row["file"]), model, text, extra)
             texts.append(cache[key])
             scores.append(wer(row["truth"], cache[key]))
         results[label] = (scores, texts)

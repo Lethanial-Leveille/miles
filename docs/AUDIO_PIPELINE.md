@@ -263,6 +263,31 @@ candidate: `exact` is 36/58 across all four base.en rows.
 **What is durable here is the split, not the candidate.** The scorer prints it
 now, so the next comparison cannot average a gain and a loss into nothing.
 
+### Beam search is the thing that was never tried (Sep 25 2026)
+
+Every WER figure above, and every one in this repo before this date, was measured
+with **greedy decoding**. `-bs 1 -bo 1` was passed at all three call sites,
+including production, while whisper.cpp's own default is 5. No comparison had
+ever varied it.
+
+| candidate | pooled | follow up | initial | exact |
+|---|---|---|---|---|
+| base.en q8_0, greedy (live) | 19.8% | 37.4% | 9.0% | 36/58 |
+| **base.en q8_0, beam 5** | **17.5%** | **33.3%** | **7.9%** | **38/58** |
+| base.en fp16, beam 5 | 19.1% | 37.5% | 7.9% | 37/58 |
+
+**It is the only change measured here that improves both populations at once.**
+Every prompt variant traded one against the other. It is also the only one to move
+`exact` at all: two clips went from wrong to word for word correct, where six
+weeks of prompt candidates left it pinned at 36/58.
+
+Cost is 137ms, in the table above, against a 990ms head start and a 4404ms turn.
+
+**One caution on this set.** fp16 at beam 5 lands 1.6 points *worse* than its own
+q8_0 quantization, which should not happen and is the clearest evidence in the
+table that 58 clips is a small ruler. It is 22 clips deciding every follow up
+cell. Treat the direction as solid and the decimals as not.
+
 Errors concentrate in **short follow ups**, where there is least context for the
 decoder's language prior: "what's the date" to "was the beat", "Hey Nova" to
 "Head over", "Set a timer for" to "Seven timer four".
@@ -652,12 +677,32 @@ median rather than as a bimodal distribution with follow ups pinned to the slow
 mode. **Split timing_log by `turn_type` before trusting any stage median.**
 
 **The head start is capped at `SILENCE_LIMIT` minus `SPECULATIVE_SILENCE_MS`**,
-750ms today, and that is the number that decides whether transcription is free.
-base.en costs 1237ms at four threads and 1424ms at three, measured over 12
-archived clips, so even a perfect hit leaves ~670ms exposed. An STT that
-finishes inside 750ms contributes nothing to perceived latency at all; one that
+and that is the number that decides whether transcription is free. An STT
+finishing inside it contributes nothing to perceived latency at all; one that
 does not is only ever partly hidden. That, rather than raw speed, is the bar any
 replacement has to clear.
+
+> **The figure here read 750ms until Sep 25 2026, and had been wrong since
+> `5173a9c`.** It is derived from two config values, and
+> `SPECULATIVE_SILENCE_MS` went 450 to 210 without this paragraph following. At
+> `SILENCE_LIMIT = 1.2` it is **990ms today**. Recompute it rather than quoting
+> it; a derived number written out as a literal is a number that goes stale
+> silently.
+
+When fp16 base.en was live it cost 1237ms at four threads and 1424ms at three
+over 12 archived clips, which left ~670ms exposed against the head start of the
+day. Measured again Sep 25 2026 on 10 archived clips at three threads, against
+the 990ms available now:
+
+| decoder | p50 | exposed |
+|---|---|---|
+| greedy, `-bs 1 -bo 1` (live) | 1005ms | ~15ms |
+| beam 5, `-bs 5 -bo 5` | 1142ms | ~152ms |
+
+**Beam search costs 137ms, not the multiple it looks like it should.** The
+encoder runs once either way and base.en's decoder is small, so widening the
+beam repeats the cheap half. Predicting this from the beam width would have been
+the same mistake as predicting q5_1 was faster than q8_0.
 
 Note the coupling before touching either dial: lowering `SILENCE_LIMIT` shrinks
 the head start and makes transcription worse by exactly as much as it makes
