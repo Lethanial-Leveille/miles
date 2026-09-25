@@ -89,6 +89,7 @@ from config import (
 )
 from audio_segments import audio_ctx_for, segment_bounds
 from wake_listener import WakeListener
+import wake_capture
 from database import keep_voiceprint_sample, log_verification
 import timing
 
@@ -404,13 +405,18 @@ def _save_wake_clip(frames, score, directory, max_files, label):
         dest  = os.path.join(directory, f"{score:.3f}_{stamp}.wav")
         _write_wav(frames, dest)
 
-        # Pruned by modification time rather than by name, because the name
-        # leads with the score so it can be sorted by severity.
-        existing = sorted(
-            (os.path.join(directory, f) for f in os.listdir(directory)
-             if f.endswith(".wav")), key=os.path.getmtime)
-        for stale in existing[:max(0, len(existing) - max_files)]:
-            os.remove(stale)
+        # Never by name: the name leads with the score so it sorts by severity,
+        # which has nothing to do with what is worth keeping. wake_capture
+        # prefers the unlabelled, because pruning by age alone spent eleven days
+        # eating hand labelled clips.
+        for stale in wake_capture.clips_to_evict(directory, max_files):
+            try:
+                os.remove(stale)
+            except OSError:
+                # Tolerated per file rather than per call. One clip that has
+                # already gone is not a reason to leave the rest of the surplus
+                # on disk, which is what a single try around the loop did.
+                pass
         return dest
     except OSError as exc:
         print(f"Could not save wake {label}: {exc}", flush=True)

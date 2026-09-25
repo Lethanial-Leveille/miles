@@ -366,6 +366,14 @@ hides.
 This is step one of the plan in `docs/BACKEND_TODO.md`. Retraining
 `hey_nova.onnx` is not possible without it: there is nothing to evaluate against.
 
+**Eviction prefers the unlabelled**, since Sep 25 2026. Pruning by age alone
+destroyed 14 of the 29 labelled miss clips in eleven days, and a verdict whose
+audio is gone cannot train or evaluate anything. `wake_capture.py` evicts
+unlabelled clips first, oldest first within each group, and falls back to the
+oldest labelled one rather than letting a full buffer stop recording. The loss
+and why the fallback matters are in
+[INCIDENTS.md](INCIDENTS.md#pruning-by-age-ate-the-labelling-sep-24-2026).
+
 > **Correction, Sep 13 2026.** `WAKE_MISS_FLOOR` was raised from 0.05 to 0.15
 > and `WAKE_LOG_FLOOR` is also 0.15, so the capture floor is no longer *below*
 > the log floor as the paragraph above states. They are equal. The reason for
