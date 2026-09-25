@@ -276,6 +276,9 @@ ever varied it.
 | **base.en q8_0, beam 5** | **17.5%** | **33.3%** | **7.9%** | **38/58** |
 | base.en fp16, beam 5 | 19.1% | 37.5% | 7.9% | 37/58 |
 
+**Shipped Sep 25 2026** as `WHISPER_BEAM_SIZE = 5`, read by `_whisper_cmd` so the
+speculative run and the full one cannot drift apart. Set it to 1 for greedy.
+
 **It is the only change measured here that improves both populations at once.**
 Every prompt variant traded one against the other. It is also the only one to move
 `exact` at all: two clips went from wrong to word for word correct, where six

@@ -377,6 +377,21 @@ WHISPER_AUDIO_CTX_LONG = 1500
 # quietest moment near each boundary and transcribed in pieces. Under the thirty
 # second window with room to spare.
 WHISPER_SEGMENT_SECONDS = 28.0
+
+# Beam search. whisper.cpp defaults to 5 and this pipeline passed 1 until Sep 25
+# 2026, so every WER figure measured here before that date was greedy and no
+# comparison had ever varied it. Greedy commits to the first plausible word and
+# never reconsiders, which is the error this set is full of: "what's the date"
+# heard as "was the beat" on clean audio.
+#
+# Measured on the 58 hand labelled clips: 19.8% to 17.5% WER, exact 36/58 to
+# 38/58, and it is the only change tried that improves initial commands and
+# follow ups at the same time. It also beat small.en running greedy, at a third
+# of the compute. Cost is 113ms of a 990ms head start, p50 1024 to 1137ms.
+#
+# Set to 1 to go back to greedy. Both the speculative run and the full one read
+# this through _whisper_cmd, so they cannot drift apart.
+WHISPER_BEAM_SIZE = 5
 TEMP_WAV        = os.path.expanduser("~/miles/build/command.wav")
 
 # ── Wake miss capture ──

@@ -82,6 +82,7 @@ from config import (
     ARCHIVE_RECORDINGS, ARCHIVE_DIR, ARCHIVE_MAX_FILES,
     TTS_FLUSH_MARGIN_MS,
     SPECULATIVE_TRANSCRIBE, SPECULATIVE_SILENCE_MS, SPECULATIVE_THREADS,
+    WHISPER_BEAM_SIZE,
     SPECULATIVE_WAV,
     CAPTURE_WAKE_MISSES, WAKE_MISS_DIR, WAKE_MISS_MAX_FILES,
     CAPTURE_WAKE_HITS, WAKE_HIT_DIR, WAKE_HIT_MAX_FILES,
@@ -497,7 +498,8 @@ def _whisper_cmd(wav_path, threads=None):
     The audio window follows the clip's own length, read from the file rather
     than passed in, so every caller gets it right without knowing it exists."""
     cmd = [WHISPER_CLI, "-m", WHISPER_MODEL, "-f", wav_path,
-           "-bs", "1", "-bo", "1", "--no-prints", "--no-timestamps",
+           "-bs", str(WHISPER_BEAM_SIZE), "-bo", str(WHISPER_BEAM_SIZE),
+           "--no-prints", "--no-timestamps",
            "-ac", str(audio_ctx_for(_wav_seconds(wav_path)))]
     if threads is not None:
         cmd += ["-t", str(threads)]
