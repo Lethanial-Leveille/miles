@@ -309,9 +309,32 @@ Do not read a peak near -40 as a quiet voice; read it as no voice found.
 false. Peak survives because a wake phrase has a loud consonant in it even when
 its average is low.
 
-The gate itself is not built. Its trade, and what a new capsule does to the
-number, are in
-[BACKEND_TODO.md](BACKEND_TODO.md#a-level-gate-on-the-wake-window).
+**Built Sep 25 2026**, at -42, in `wake_gate.py`. It runs before the chime, so a
+rejected wake costs one peak measurement and nothing else: no recording, no
+Whisper, no Claude. Replayed over the labelled clips, the shipped function
+rejects 0 of 38 real wakes and 7 of 22 false ones, which is the table above.
+
+Three properties it is not allowed to lose, each pinned in
+`tests/test_wake_level_gate.py`:
+
+- **It fails open.** No level, a window not yet full, or `WAKE_LEVEL_GATE` off
+  all wake her. A partial window is the first 2.5 seconds after a restart.
+- **Rejections keep their audio**, in `wake_gated`, which `label_wake.py` reads
+  as a third set. A real "hey nova" landing there is the only way the gate's
+  cost is ever visible, and a journal line could not answer "was that one real".
+- **The level prints on every detection, not only rejections.** Recording
+  failures alone is what made `wake_log` read as a cluster of attempts under the
+  line and got the threshold lowered to 0.3 on bad evidence.
+
+It lives outside `audio.py` on purpose: that module takes the microphone lock at
+import, so a guard living there is only testable with `miles-voice` stopped, and
+this is not the one to leave skipped on an ordinary run.
+
+**It is a stopgap for the neighbours, not a fix.** 13 of the 22 false wakes are
+quiet and the array addresses their cause; 9 arrive loud and nearby because they
+are his own voice not addressed to Nova, and no acoustic measure separates
+those. What a new capsule does to the number is in
+[BACKEND_TODO.md](BACKEND_TODO.md#a-level-gate-on-the-wake-window-built-sep-25-2026-at--42).
 
 ### The false negative rate is not measured, and cannot be
 
