@@ -91,6 +91,7 @@ from config import (
 from audio_segments import audio_ctx_for, segment_bounds
 from wake_listener import WakeListener
 import wake_capture
+import deepgram_stt
 from database import keep_voiceprint_sample, log_verification
 import timing
 
@@ -514,7 +515,12 @@ class _Speculation:
     Holds a snapshot of the frames captured up to the moment speech stopped.
     The final clip differs only by the trailing silence that endpointing was
     still waiting out, and silence carries no words, so the transcript is the
-    one the full clip would have produced."""
+    one the full clip would have produced.
+
+    A Deepgram request goes out on the same frames, in parallel rather than
+    instead: it is more accurate and finishes inside the same window, and whisper
+    running anyway means the fallback costs nothing extra. Deepgram is a socket
+    read, not a core, so the two do not contend."""
 
     def __init__(self, frames, turn_type='initial'):
         _write_wav(frames, SPECULATIVE_WAV)
@@ -522,6 +528,10 @@ class _Speculation:
         self.proc = subprocess.Popen(
             _whisper_cmd(SPECULATIVE_WAV, threads=SPECULATIVE_THREADS),
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        # From the frames rather than SPECULATIVE_WAV, which the next speculation
+        # overwrites while this request may still be reading it. Same hazard
+        # early_verify.prepare exists to avoid.
+        self.remote_run = deepgram_stt.start(frames)
         # The voice embedding starts beside it, on the same frames; see
         # early_verify.py. A failure here only loses the head start.
         try:
@@ -536,10 +546,24 @@ class _Speculation:
         self.stale = True
         if self.early is not None:
             self.early.cancel()
+        if self.remote_run is not None:
+            self.remote_run.cancel()
         try:
             self.proc.terminate()
         except Exception:
             pass
+
+    def remote(self):
+        """The Deepgram transcript, or None to fall back to whisper.
+
+        **An empty string is an answer, not a failure**, and the two must not
+        collapse. Deepgram returning no words on a false wake is correct and
+        better than whisper's invented sentence; is_noise_transcript already
+        reads it as noise and ends the turn quietly. Only None means ask
+        whisper."""
+        if self.remote_run is None:
+            return None
+        return self.remote_run.result()
 
     def result(self):
         """The transcript, or None if the run failed. Blocks if it is still
@@ -625,6 +649,10 @@ def transcribe(wav_path):
 
     with timing.stopwatch('transcribe_ms'):
         if speculation is not None and not speculation.stale:
+            remote = speculation.remote()
+            if remote is not None:
+                print("(deepgram transcript)", flush=True)
+                return remote
             text = speculation.result()
             if text:
                 # Printed rather than marked: end_turn only reads known keys, so
@@ -634,6 +662,14 @@ def transcribe(wav_path):
                 return text
         elif speculation is not None:
             speculation.cancel()
+
+        # No speculation to ride along with: a cancelled one, a disabled one, or
+        # a recording too long for a single window. Deepgram has no window limit,
+        # so it is tried before the piecewise path rather than after it.
+        remote = deepgram_stt.transcribe_file(wav_path)
+        if remote is not None:
+            print("(deepgram transcript)", flush=True)
+            return remote
 
         if _wav_seconds(wav_path) > WHISPER_SEGMENT_SECONDS:
             return _transcribe_in_pieces(wav_path)

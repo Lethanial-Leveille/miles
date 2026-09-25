@@ -386,10 +386,32 @@ truth 'Hey Nova'                         whisper 'Head over.'
 truth 'Can you set a reminder ...'       whisper 'Can you send a reminder ...'
 ```
 
-**Not integrated.** Two things have to be decided before it is, and neither is a
-measurement. Whisper stays as the offline fallback regardless; `netcheck` already
-knows which path is available. See
-[BACKEND_TODO.md](BACKEND_TODO.md#deepgram-as-the-online-path).
+**Live since Sep 25 2026**, in `deepgram_stt.py`.
+
+**It rides along with the speculation rather than replacing it.** `_Speculation`
+already starts whisper and the voice embedding on the same frames; the Deepgram
+request is a third thing started on those frames, and `transcribe` prefers its
+transcript when one came back. Whisper is running anyway, so the fallback costs
+nothing, and a socket read does not contend with it for a core. The earlier claim
+that running both doubles the CPU per turn was wrong.
+
+**An empty string is an answer and None is a failure, and the two must not
+collapse.** Deepgram reporting no words on a false wake is correct, better than
+whisper's invented sentence, and `is_noise_transcript` already reads it as noise
+and ends the turn quietly. Only `None` falls through to whisper. This is the
+single most breakable thing about the integration and `tests/test_deepgram_stt.py`
+pins it.
+
+Where there is no speculation to ride along with, a cancelled one or a recording
+too long for one window, the file is sent directly. Deepgram has no thirty second
+limit, so it is tried **before** the piecewise whisper path rather than after it.
+
+`DEEPGRAM_STT = False` returns to fully local with nothing else to change.
+
+**Every recording leaves the Pi, including the false wakes**, which is how other
+people in the apartment end up transcribed. That was decided rather than
+overlooked, along with the `verify_voice` gate that was declined; both are in the
+decision log in [SESSION_START.md](SESSION_START.md).
 
 Errors concentrate in **short follow ups**, where there is least context for the
 decoder's language prior: "what's the date" to "was the beat", "Hey Nova" to

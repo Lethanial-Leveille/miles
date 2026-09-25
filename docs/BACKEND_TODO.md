@@ -565,7 +565,11 @@ because nobody reread it against `stream_router.py`.
 
 ## Not blocked, and worth doing anytime
 
-### Deepgram as the online path
+### Deepgram as the online path (BUILT Sep 25 2026)
+
+Live in `src/deepgram_stt.py`; the mechanism is in
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#deepgram-nova-3-measured-sep-25-2026) and
+the privacy decision is in the decision log. What stays here is the reasoning.
 
 Measured Sep 25 2026 and it wins on accuracy, on latency and on staying quiet in
 an empty room. The numbers are in
