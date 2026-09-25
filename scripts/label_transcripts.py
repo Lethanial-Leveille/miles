@@ -43,6 +43,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import wave
 
 import numpy as np
@@ -72,6 +73,49 @@ PROMPT = "Nova is a voice assistant running on a Raspberry Pi. Lethanial is in G
 PRIOR_TURN_CHARS = 220
 
 BEAM_5 = ["-bs", "5", "-bo", "5"]
+
+# Network engines, timed as they run because a remote transcript that arrives
+# after the speculation head start costs perceived latency no matter how accurate
+# it is. docs/AUDIO_PIPELINE.md carries the bar it has to clear.
+REMOTE_MS = {}
+
+
+def deepgram_nova3(path):
+    """Deepgram Nova 3, prerecorded endpoint, one clip per call.
+
+    **`punctuate` and deliberately not `smart_format`.** Smart format rewrites
+    numbers as digits, and the truths in this manifest are written in words, so
+    "1 minute" against "one minute" would score as an error for a formatting
+    reason rather than a hearing one. `normalize` keeps digits, so it cannot
+    absorb that difference. The point is to measure what it heard.
+
+    Returns an empty string on any failure, which scores as silence. That is the
+    honest reading: a transcript that did not arrive is not a transcript, and a
+    network engine failing is the thing the local fallback exists for."""
+    import requests
+    key = os.getenv("DEEPGRAM_API_KEY")
+    if not key:
+        return ""
+    with open(path, "rb") as f:
+        audio = f.read()
+    started = time.monotonic()
+    try:
+        r = requests.post(
+            "https://api.deepgram.com/v1/listen",
+            params={"model": "nova-3", "punctuate": "true", "language": "en"},
+            headers={"Authorization": f"Token {key}",
+                     "Content-Type": "audio/wav"},
+            data=audio, timeout=30)
+        r.raise_for_status()
+        alt = r.json()["results"]["channels"][0]["alternatives"][0]
+        text = alt.get("transcript", "")
+    except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
+        print(f"    deepgram failed on {os.path.basename(path)}: {exc}",
+              flush=True)
+        return ""
+    REMOTE_MS.setdefault("deepgram_nova3", []).append(
+        (time.monotonic() - started) * 1000)
+    return text
 
 
 def _prior_turns(clip_name, limit=2):
@@ -155,6 +199,10 @@ CANDIDATES = [
     # trust the published numbers.
     ("distil-small.en",       f"{MODELS}/ggml-distil-small.en.bin", None, None),
     ("distil-small.en beam 5", f"{MODELS}/ggml-distil-small.en.bin", None, BEAM_5),
+    # A model may instead be a callable taking a wav path and returning a
+    # transcript, so a network engine is scored on the same ruler as the local
+    # ones rather than in a separate harness with its own quirks.
+    ("deepgram nova-3",       deepgram_nova3,                       None, None),
 ]
 
 # Non speech, however whisper chose to spell it this time. These normalize to an
@@ -444,8 +492,12 @@ def cmd_score(args):
 
     results = {}
     for label, model, prompt, extra in CANDIDATES:
-        if not os.path.exists(model):
+        remote = callable(model)
+        if not remote and not os.path.exists(model):
             print(f"  {label:24} SKIPPED, no model at {model}")
+            continue
+        if remote and not os.getenv("DEEPGRAM_API_KEY"):
+            print(f"  {label:24} SKIPPED, no DEEPGRAM_API_KEY in the environment")
             continue
         scores, texts = [], []
         # Progress only on a terminal. Piped to a file it is one line per
@@ -464,12 +516,14 @@ def cmd_score(args):
             # greedy candidate keys exactly as it did before beam search existed
             # and nothing already measured has to be transcribed again.
             suffix = ("|" + " ".join(extra)) if extra else ""
-            key = f"{os.path.basename(model)}|{text or ''}|{row['file']}{suffix}"
+            name = model.__name__ if remote else os.path.basename(model)
+            key = f"{name}|{text or ''}|{row['file']}{suffix}"
             if key not in cache:
                 if tty:
                     print(f"\r  {label} ... {n}/{len(rows)}", end="", flush=True)
-                cache[key] = transcribe(
-                    os.path.join(ARCHIVE_DIR, row["file"]), model, text, extra)
+                path = os.path.join(ARCHIVE_DIR, row["file"])
+                cache[key] = (model(path) if remote
+                              else transcribe(path, model, text, extra))
             texts.append(cache[key])
             scores.append(wer(row["truth"], cache[key]))
         results[label] = (scores, texts)
@@ -484,6 +538,11 @@ def cmd_score(args):
         wrong = sum(1 for s in scores if s > 0)
         print(f"{label:26} {100*mean:6.1f}% {exact:>4}/{len(scores)} "
               f"{wrong:>23}")
+
+    for name, times in REMOTE_MS.items():
+        times = sorted(times)
+        print(f"\n{name}: n={len(times)} round trips, p50 {times[len(times)//2]:.0f}ms, "
+              f"p90 {times[int(len(times)*0.9)]:.0f}ms, max {times[-1]:.0f}ms")
 
     print("\nWER is edits per true word, so lower is better and 0% is perfect.")
     print("Exact counts clips where every word matched after normalization.")

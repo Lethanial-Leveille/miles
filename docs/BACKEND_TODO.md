@@ -565,6 +565,44 @@ because nobody reread it against `stream_router.py`.
 
 ## Not blocked, and worth doing anytime
 
+### Deepgram as the online path
+
+Measured Sep 25 2026 and it wins on accuracy, on latency and on staying quiet in
+an empty room. The numbers are in
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#deepgram-nova-3-measured-sep-25-2026).
+Cost is not a factor: $200 of credit, then $0.0043/min prerecorded, against a
+median clip of 2.9 seconds and a few minutes of audio a day.
+
+**Whisper stays.** This is an online upgrade with a local fallback, not a
+replacement. `netcheck` already diagnoses which path exists, the phrase bank
+already covers what Nova can say offline, and a remote engine failing is exactly
+what the local one is for. A failed or slow call must fall through to whisper
+rather than producing an empty transcript, which `deepgram_nova3` in the eval
+script deliberately does not do, because there an empty string is the honest
+score.
+
+Two open questions, neither of them a measurement:
+
+**1. Where it sits relative to speculation.** Speculative transcription starts a
+whisper run 210ms into the endpoint silence and has 990ms before the recording
+ends. A Deepgram call on those same frames returns in a median 520ms, so it fits
+inside the same window and the existing `maybe_speculate` and
+`cancel_speculation` structure is the natural home. The open part is what happens
+when the remote call is still in flight at the end of the recording: wait on it,
+or start whisper alongside and take whichever lands first. The second is more
+robust and doubles the CPU cost of a turn.
+
+**2. It sends the room to a third party, continuously.** This is the one that is
+not technical. The eval was 58 clips uploaded once, with consent asked for. Live,
+**every recording goes out, including the 45 percent of wakes that are false**,
+which is how the neighbours and anyone visiting end up transcribed by a company
+they have never heard of. The recordings are already treated as sensitive in this
+repo and that line in CLAUDE.md exists for a reason. Options worth weighing
+before wiring it up: gate the remote call behind `verify_voice` so only confirmed
+speech from him leaves the Pi, which costs the speculation overlap; or accept it
+and say so explicitly here.
+
+
 ### Rejecting a false wake before the Claude call: tested, do not build
 
 Raised Sep 25 2026 on the grounds that `ignore` costs a full Claude round trip
