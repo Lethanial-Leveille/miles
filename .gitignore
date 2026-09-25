@@ -32,9 +32,17 @@ data/
 # individually, which meant a model in any other format was committable by
 # accident. openWakeWord also ships .tflite, so that was a live gap rather than
 # a hypothetical one.
+#
+# The extension rules stay alongside it, because a directory rule has the mirror
+# image of that gap: it only protects the directories that exist today. On Sep 25
+# 2026 a 336MB ggml model landed in the repo root, from a download whose working
+# directory was not what it looked like, and `git check-ignore` had nothing to say
+# about it. Weights are large and always derived, so nothing of this shape is ever
+# worth committing wherever it lands.
 models/
 *.npy
 *.npz
+*.bin
 
 # ── Build artifacts and vendored source ──
 build/

@@ -144,6 +144,17 @@ CANDIDATES = [
     # commits to because it never considers the alternative.
     ("q8_0 beam 5",           f"{MODELS}/ggml-base.en-q8_0.bin", None, BEAM_5),
     ("base.en fp16 beam 5",   f"{MODELS}/ggml-base.en.bin",      None, BEAM_5),
+    # Bigger, and slower in proportion. Whether the accuracy is worth the latency
+    # is a separate question from whether it is more accurate, and the head start
+    # in docs/AUDIO_PIPELINE.md is what decides it.
+    ("small.en q8_0",         f"{MODELS}/ggml-small.en-q8_0.bin", None, None),
+    ("small.en q8_0 beam 5",  f"{MODELS}/ggml-small.en-q8_0.bin", None, BEAM_5),
+    # distil-whisper: near small.en accuracy at near base.en speed, in principle.
+    # whisper.cpp's support is partial, since it does not implement the chunked
+    # strategy the distilled models were trained to use, so measure rather than
+    # trust the published numbers.
+    ("distil-small.en",       f"{MODELS}/ggml-distil-small.en.bin", None, None),
+    ("distil-small.en beam 5", f"{MODELS}/ggml-distil-small.en.bin", None, BEAM_5),
 ]
 
 # Non speech, however whisper chose to spell it this time. These normalize to an
