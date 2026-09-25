@@ -1358,3 +1358,15 @@ Backend endpoints exist for: memories (add, edit, history), reminders and
 timers (list, cancel), status details, the calendar week with tap edits, and
 stage events on `/chat/stream`. None of it shows until the app uses it; the
 routes and their rules are in INFRASTRUCTURE.md.
+
+### Prowl name filter and limit
+
+`list_job_applications` and `list_discovered_jobs` cut Prowl's lists on the Pi
+(15 and 10 rows), because whole they were 60 KB and 47 KB on Sep 25 2026. A job
+past the cut cannot be opened or accepted by voice, and in the discovery inbox
+that is most of it: 84 of 120 jobs were unscored and sort last. The fix is on
+Prowl's side, since filtering belongs there: `?organization=` (a name match)
+and `?limit=` on `/integrations/miles/applications` and `/discovered`. Then
+"the Anduril one" is resolved by Prowl rather than by Haiku scanning a cut
+list, and the Pi caps become Prowl's `limit`. Not done yet because the caps are
+enough to ship and it touches the job tracker repo, not this one.

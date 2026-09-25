@@ -172,10 +172,11 @@ rendered files keep their numbering.
 
 ### Bridges on slow tool turns, Sep 16 2026
 
-`bridge_calendar`, `bridge_health` and `bridge_weather` are said the moment a
+`bridge_calendar`, `bridge_health`, `bridge_weather` and `bridge_jobs` (added
+Sep 25 2026 for the Prowl tools) are said the moment a
 mapped tool starts on a voice turn, when Nova wrote no lead in of her own
 (`brain._BRIDGES`). They play under `speak_lock`, so the answer waits for the
-line to end, which is why they are short: rendered at 0.96s to 1.66s, against a
+line to end, which is why they are short: rendered at 0.84s to 1.66s, against a
 gap of about two seconds between a tool starting and its answer being ready.
 They commit to nothing, because the result is not known yet. Timed as
 `bridge_ms`, never as local audio; see

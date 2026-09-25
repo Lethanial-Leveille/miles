@@ -14,6 +14,7 @@ import system_state   # noqa: F401  registers get_system_state
 import tier_tool      # noqa: F401  registers lower_access
 import calendar_tools # noqa: F401  registers the calendar tools
 import oura_tools     # noqa: F401  registers the Oura tools
+import prowl_tools    # noqa: F401  registers the Prowl tools
 import pending_action # noqa: F401  registers confirm_pending_action
 from tools import Permission, permits, registry
 
@@ -43,6 +44,11 @@ EXPECTED = {
     "get_oura_sleep":          (Permission.READ,           True),
     "get_oura_heartrate":      (Permission.READ,           True),
     "get_oura_activity":       (Permission.READ,           True),
+    "get_job_search_summary":  (Permission.READ,           True),
+    "list_job_applications":   (Permission.READ,           True),
+    "get_job_application":     (Permission.READ,           True),
+    "list_discovered_jobs":    (Permission.READ,           True),
+    "accept_discovered_job":   (Permission.EXTERNAL_WRITE, True),
 }
 
 # READ in kind, private in content, or writes beyond this Pi. None of these
@@ -54,7 +60,8 @@ HOKAGE_ONLY = {
     "update_calendar_event", "delete_calendar_event",
     "list_pending_memories", "review_pending_memory",
     "find_schedule_conflicts", "plan_sessions", "rename_calendar_events",
-    "undo_last_change",
+    "undo_last_change", "get_job_search_summary", "list_job_applications",
+    "get_job_application", "list_discovered_jobs", "accept_discovered_job",
 }
 
 # WRITE tools that legitimately cost a second round trip, with the reason.
@@ -86,6 +93,8 @@ ROUND_TRIP_WRITES = {
     "rename_calendar_events",
     # What was undone is read back word for word.
     "undo_last_change",
+    # A proposal of one job; the question it returns is the point.
+    "accept_discovered_job",
 }
 
 

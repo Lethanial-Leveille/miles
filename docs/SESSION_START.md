@@ -1425,3 +1425,27 @@ spoken bridge either.
 what comes back, and `NOVA_APP_BACKEND.md` in that repo still says the backend
 speaks every chat turn because TTS "is not gated on channel". The gating claim
 was already wrong and is now wrong twice over.
+
+### Prowl is relabeled on the Pi, never recomputed (Sep 25 2026) (DONE)
+
+`prowl_tools.py` gives Nova the job search. Three choices here would otherwise
+be reopened.
+
+**Rename, do not recompute.** Prowl computes every count, filter and day
+difference. The Pi renames deadline fields by `deadline_source` and turns
+meaningful nulls into words, and nothing else. The alternative, passing Prowl's
+fields through and telling the model in the description to read
+`deadline_source`, was rejected: a description is a hint the model can miss,
+and with 77 passed dates of his own and no posting dates, one miss is "you
+missed 77 deadlines". A key named `your_own_target_date` cannot be misread as a
+closing date. The reasoning is in
+[BRAIN.md](BRAIN.md#prowl-deadlines-are-named-by-whose-they-are).
+
+**Caps on the Pi for now.** 15 applications and 10 discoveries, cut at Prowl's
+order and flagged, not counted. The right fix is a filter on Prowl's side;
+deferred in [BACKEND_TODO.md](BACKEND_TODO.md#prowl-name-filter-and-limit).
+
+**One accept per question, enforced in code.** `pending_action.propose` merges
+one turn's proposals under a single yes. Rather than change that for every
+caller, `accept_discovered_job` refuses when anything is already staged that
+turn. Prowl's contract forbids bulk accept, and this is what makes it true.

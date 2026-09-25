@@ -101,6 +101,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── tier_tool.py           # lower_access tool: demotion by voice, never escalation
 │   ├── calendar_tools.py      # Google Calendar reads, freebusy, changes with undo, app view
 │   ├── oura_tools.py          # Oura readiness, sleep, heart rate, activity
+│   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
 │   ├── timing.py              # Per turn latency instrumentation
 │   ├── brain.py               # ask_nova orchestrator
@@ -108,7 +109,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (883 passing, 6 skipped, Sep 25 2026)
+│   └── tests/                 # pytest suite (926 passing, 6 skipped, Sep 25 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -279,8 +280,8 @@ of the value itself.
 - `PERMISSION_TIERS` (in `tools.py`): READ `genin`, CONTROL `genin`, WRITE
   `chunin`, EXTERNAL_WRITE `hokage`. A tool's `min_tier` can only raise its floor.
 - Raised by `min_tier`: `remember` to `jonin`; `lower_access`, every calendar
-  tool, every Oura tool, `list_pending_memories` and `review_pending_memory` to
-  `hokage`.
+  tool, every Oura tool, every Prowl tool, `list_pending_memories` and
+  `review_pending_memory` to `hokage`.
 - `CONFIRM_WINDOW_S = 120` (in `pending_action.py`, not `config.py`)
 
 ### Storage and other
@@ -306,6 +307,7 @@ Memory: SQLite WAL mode, schema migrations to version 25.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.
+Jobs: Prowl (tracker.lethanial.com), its MILES surface, token auth.
 Backend: FastAPI + uvicorn + python-jose + passlib (bcrypt) + python-dotenv.
 Tunnel: cloudflared (dashboard managed).
 Process management: systemd.
@@ -351,6 +353,8 @@ Landed since v0.7.1, unreleased:
   of only showing it
 - The room speaker follows `device`, not `channel`: only a turn from the Pi is
   played aloud, so the app can ask for spoken formatting and synthesize it itself
+- Prowl job search tools: summary, applications, discoveries, and accepting one
+  discovered job after a spoken yes
 
 ## What Is Next
 

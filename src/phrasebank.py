@@ -148,6 +148,11 @@ PHRASES = {
         "Let me check the forecast.",
         "One sec, looking at the weather.",
     ],
+    'bridge_jobs': [
+        "Checking Prowl.",
+        "Let me look at your job search.",
+        "Pulling up your applications.",
+    ],
 
     'dismiss': [
         "Goodnight, Lethanial.",
