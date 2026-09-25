@@ -85,6 +85,7 @@ from config import (
     SPECULATIVE_WAV,
     CAPTURE_WAKE_MISSES, WAKE_MISS_DIR, WAKE_MISS_MAX_FILES,
     CAPTURE_WAKE_HITS, WAKE_HIT_DIR, WAKE_HIT_MAX_FILES,
+    WAKE_GATED_DIR, WAKE_GATED_MAX_FILES,
 )
 from audio_segments import audio_ctx_for, segment_bounds
 from wake_listener import WakeListener
@@ -422,6 +423,17 @@ def save_wake_miss(frames, score):
         return None
     return _save_wake_clip(frames, score, WAKE_MISS_DIR, WAKE_MISS_MAX_FILES,
                            "miss")
+
+
+def save_wake_gated(frames, score):
+    """Audio behind a score that cleared the threshold and failed the level gate.
+
+    Kept in its own directory rather than with the hits, because `wake_hits`
+    means "she answered" and these are the ones she did not. A real "hey nova"
+    in here is the only way the gate's cost becomes visible, and it is the
+    reason the gate is allowed to exist."""
+    return _save_wake_clip(frames, score, WAKE_GATED_DIR, WAKE_GATED_MAX_FILES,
+                           "gated")
 
 
 def save_wake_hit(frames, score):

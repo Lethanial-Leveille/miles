@@ -440,6 +440,33 @@ WAKE_HIT_MAX_FILES  = 300
 # what followed it. The wake model reads 80ms frames, so this is 31 of them.
 WAKE_MISS_PREROLL_MS = 2500
 
+# ── The level gate ──
+#
+# The score cannot tell a real wake from the neighbours. Measured on 49 labelled
+# hits, real and false wakes overlap from 0.40 to 0.94, so 0.8 still admits a
+# false wake while discarding half the real ones. Level does separate them,
+# because speech through a wall arrives quiet and the model does not look at
+# loudness at all. Peak beats RMS: a wake phrase has a loud consonant in it even
+# when its average is low. Both tables are in docs/AUDIO_PIPELINE.md.
+#
+# -42 is the lowest floor that costs nothing measured: 0 of 38 real wakes lost,
+# 7 of 22 false wakes cut. -40 is tempting at 13 of 22, and it is where two
+# genuine attempts from the next room actually landed. Do not raise this without
+# far field clips in the sample; the 27 desk distance wakes alone said -40 was
+# free and they were wrong.
+#
+# A false wake that clears this gate is expected. 9 of the 22 arrive loud and
+# nearby because they are his own voice not addressed to Nova, and no acoustic
+# measure separates those.
+WAKE_LEVEL_GATE  = True
+WAKE_LEVEL_FLOOR = -42.0
+
+# Rejections keep their audio, because a gate that can deafen her must be
+# auditable by ear rather than by a log line. label_wake.py reads this as a
+# third set. A real "hey nova" landing here is the regression signal.
+WAKE_GATED_DIR       = os.path.expanduser("~/miles/data/wake_gated")
+WAKE_GATED_MAX_FILES = 300
+
 # ── Speculative transcription ──
 # Endpointing and transcribing run in sequence today: 880ms of waiting for
 # silence, then 1177ms of Whisper, while the CPU sits idle through the first.

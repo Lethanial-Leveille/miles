@@ -15,12 +15,14 @@ import timing
 import tts
 import actions
 import local_intent
+import wake_gate
 from brain import ask_nova, TurnResult
 from database import init_db, log_wake_near_miss, save_message
 from parsing import is_noise_transcript, split_after_wake_phrase
 from config import (CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS,
                     FOLLOWUP_TIMEOUT, ACK_SPOKEN_CHANCE, RATE,
-                    WAKE_MISS_FLOOR, WAKE_MISS_PREROLL_MS)
+                    WAKE_MISS_FLOOR, WAKE_MISS_PREROLL_MS,
+                    WAKE_LEVEL_FLOOR)
 
 # Wire the speak callback so timer/reminder alerts play audio
 
@@ -31,6 +33,7 @@ _last_wake_log = [0.0]  # mutable so the loop can update it without global
 # since the score arrives at the end of it.
 _wake_window = deque(maxlen=max(1, int(WAKE_MISS_PREROLL_MS / (CHUNK / RATE * 1000))))
 _last_wake_capture = [0.0]
+_last_wake_gated = [0.0]
 
 print("Starting M.I.L.E.S. v0.7...", flush=True)
 audio.log_mic_gain()
@@ -225,7 +228,39 @@ try:
                         audio.save_wake_miss(list(_wake_window), float(score))
                 continue
 
-            print(f"Wake word detected! ({score:.2f})", flush=True)
+            # Measured before anything else so that both sides of the gate
+            # land in the journal, not only the rejections. wake_log recorded
+            # failures alone and read as a cluster of attempts under the line,
+            # which is how the threshold got lowered to 0.3 on bad evidence.
+            level = wake_gate.window_peak_dbfs(list(_wake_window))
+            level_text = f"{level:.1f} dBFS" if level is not None else "no level"
+
+            # The score cannot separate a real wake from the neighbours: on 49
+            # labelled hits the two overlap from 0.40 to 0.94. Level can, because
+            # speech through a wall arrives quiet and the model never looks at
+            # loudness. See docs/AUDIO_PIPELINE.md.
+            #
+            # Fails open on a window that is not yet full, which is the first
+            # 2.5 seconds after a restart. Judging a real wake from a short
+            # buffer is how a gate goes deaf for a reason nobody can
+            # reconstruct afterwards.
+            if wake_gate.too_quiet(level, len(_wake_window),
+                                   _wake_window.maxlen):
+                print(f"Wake ignored: {score:.2f} at {level_text}, under "
+                      f"{WAKE_LEVEL_FLOOR:.1f} dBFS.", flush=True)
+                # Rate limited on the same grounds as the miss capture: talking
+                # through a wall is continuous, and one conversation should not
+                # evict the directory it is being recorded into.
+                now = time.monotonic()
+                if now - _last_wake_gated[0] >= 1.5:
+                    _last_wake_gated[0] = now
+                    audio.save_wake_gated(list(_wake_window), float(score))
+                # Clears the prediction smoothing so one rejected event does not
+                # keep reporting above threshold on the frames after it.
+                audio.wake_model.reset()
+                continue
+
+            print(f"Wake word detected! ({score:.2f} at {level_text})", flush=True)
 
             # Saved before anything else touches the stream. _wake_window holds
             # the audio that produced this score, and it is the only record of

@@ -565,9 +565,15 @@ because nobody reread it against `stream_router.py`.
 
 ## Not blocked, and worth doing anytime
 
-### A level gate on the wake window
+### A level gate on the wake window (BUILT Sep 25 2026, at -42)
 
-**The best characterised unbuilt change in this file, and it is not free.**
+Shipped in `src/wake_gate.py`; the live mechanism and its three safety
+properties are in
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#level-separates-where-the-score-does-not-and-far-field-set-the-line).
+What stays here is why the floor is where it is, and what the hardware change
+does to it.
+
+**It is not free.**
 Reject a wake whose 2.5 second window never peaks above a floor, before the
 chime, before recording, before Whisper, before Claude. The full measurement,
 including why peak beats RMS and why the line is not -40, is in

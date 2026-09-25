@@ -7,6 +7,9 @@ its own answers neither:
     wake_misses   she did not answer. Was that a real "hey nova" she missed, or
                   the room, correctly ignored?
     wake_hits     she answered. Was that a real "hey nova", or the television?
+    wake_gated    the model fired and the level gate rejected it. A "no" is the
+                  gate working. A "yes" is the gate having gone deaf, and it is
+                  the only way that cost is ever visible.
 
 hey_nova.onnx is dated Apr 8 2026. It predates the mic gain tuning of Aug 10
 and it predates this apartment. CLAUDE.md records the old room separating
@@ -27,6 +30,7 @@ argument, and for the same reason: a wrong label does not crash, it quietly
 reports the model as better or worse than it is.
 
     python3 scripts/label_wake.py hits            # label wakes that fired
+    python3 scripts/label_wake.py gated          # label what the level gate cut
     python3 scripts/label_wake.py misses          # label wakes that did not
     python3 scripts/label_wake.py hits --min 0.3  # only the loudest cases
     python3 scripts/label_wake.py hits --after 20260914T060000   # skip one evening
@@ -55,10 +59,20 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "src"))
 
-from config import (WAKE_MISS_DIR, WAKE_HIT_DIR, WAKE_THRESHOLD,  # noqa: E402
-                    SPEAKER_NAME_HINT)
+from config import (WAKE_MISS_DIR, WAKE_HIT_DIR, WAKE_GATED_DIR,  # noqa: E402
+                    WAKE_THRESHOLD, SPEAKER_NAME_HINT)
 
-SETS = {"hits": WAKE_HIT_DIR, "misses": WAKE_MISS_DIR}
+SETS = {"hits": WAKE_HIT_DIR, "misses": WAKE_MISS_DIR,
+        "gated": WAKE_GATED_DIR}
+
+# The question differs per set because the same verdict means opposite things.
+# A "no" on a hit is a false wake; a "no" on a gated clip is the level gate
+# doing its job, and a "yes" there is the gate having gone deaf.
+QUESTIONS = {
+    "hits":   "She ANSWERED on this. Did you say the wake phrase?",
+    "misses": "She did NOT answer. Did you say the wake phrase?",
+    "gated":  "The level gate REJECTED this. Did you say the wake phrase?",
+}
 
 # Playback peak to normalize to. These clips are not listenable raw: the loudest
 # near miss in the archive peaks at -40 dBFS against -10 for real close speech,
@@ -298,9 +312,7 @@ def cmd_label(which, minimum, relabel, after=None):
         return
 
     device = _speaker_device()
-    question = ("She ANSWERED on this. Did you say the wake phrase?"
-                if which == "hits" else
-                "She did NOT answer. Did you say the wake phrase?")
+    question = QUESTIONS[which]
 
     print(f"{len(todo)} to label, loudest first. Threshold is {WAKE_THRESHOLD}.")
     print("  y = yes, I said it    n = no    u = unclear    r = replay")

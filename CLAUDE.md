@@ -83,6 +83,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── audio.py               # Mic, wake word, VAD, Whisper, Resemblyzer
 │   ├── audio_segments.py      # Whisper window by clip length; cutting long recordings
 │   ├── wake_listener.py       # hears the wake word during a recording
+│   ├── wake_gate.py           # drops a wake that arrived too quiet to be him
 │   ├── speaker_encoder.py     # Encoder abstraction behind verify_voice
 │   ├── early_verify.py        # voice embedding started beside the speculative transcript
 │   ├── embeddings.py          # Sentence embeddings for retrieval and intent
@@ -105,7 +106,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (846 passing, 6 skipped, Sep 23 2026)
+│   └── tests/                 # pytest suite (856 passing, 6 skipped, Sep 25 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -215,6 +216,13 @@ of the value itself.
 - `WAKE_MISS_MAX_FILES = 400`, `WAKE_MISS_PREROLL_MS = 2500`
 - `CAPTURE_WAKE_HITS = True`, `WAKE_HIT_DIR = ~/miles/data/wake_hits`
 - `WAKE_HIT_MAX_FILES = 300`
+- `WAKE_LEVEL_GATE = True`, `WAKE_LEVEL_FLOOR = -42.0` (a wake whose window never
+  peaks above this is dropped before the chime. The score cannot separate a real
+  wake from the neighbours and level can; **do not raise the floor without far
+  field clips in the sample**)
+- `WAKE_GATED_DIR = ~/miles/data/wake_gated`, `WAKE_GATED_MAX_FILES = 300`
+  (rejections keep their audio, because a guard that can deafen her has to be
+  auditable by ear. `label_wake.py gated` reads it)
 
 ### Speculative transcription — why:
 [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#speculative-transcription)

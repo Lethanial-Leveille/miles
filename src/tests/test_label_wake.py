@@ -89,11 +89,18 @@ def test_files_without_a_score_prefix_are_skipped(tmp_path):
     assert len(lw._clips(directory, 0.0)) == 1
 
 
-def test_both_capture_sets_are_reachable():
-    """Two questions needing opposite fixes. A tool covering only one of them
-    would leave the false wake case with no audio behind it at all, which is
-    the hole this was written to close."""
-    assert set(lw.SETS) == {"hits", "misses"}
+def test_every_capture_set_is_reachable_and_asks_its_own_question():
+    """Three questions needing opposite fixes. A tool covering only one would
+    leave the false wake case with no audio behind it, which is the hole this
+    was written to close, and `gated` is the only place a level gate rejecting
+    a real wake ever becomes visible.
+
+    The questions must differ per set: the same verdict means opposite things.
+    A "no" on a hit is a false wake; a "no" on a gated clip is the gate
+    working."""
+    assert set(lw.SETS) == {"hits", "misses", "gated"}
+    assert set(lw.QUESTIONS) == set(lw.SETS)
+    assert len(set(lw.QUESTIONS.values())) == len(lw.SETS)
 
 
 def test_the_three_verdicts_are_distinct():
