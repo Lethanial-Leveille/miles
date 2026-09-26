@@ -247,6 +247,7 @@ def end_turn(transcript=None, response=None):
         second_ttft_ms=stages.get("second_ttft_ms"),
         local_intent=turn["local_intent"],
         bridge_ms=stages.get("bridge_ms"),
+        claude_head_start_ms=stages.get("claude_head_start_ms"),
     )
 
     total = stages.get("total_perceived_ms")
@@ -267,4 +268,6 @@ def end_turn(transcript=None, response=None):
           f"stt {stages.get('transcribe_ms', 0):.0f} + "
           f"verify {stages.get('verify_ms', 0):.0f} + "
           f"llm {stages.get('claude_ttft_ms', 0):.0f} + "
-          f"tts {stages.get('tts_first_audio_ms', 0):.0f})", flush=True)
+          f"tts {stages.get('tts_first_audio_ms', 0):.0f})"
+          + (f", Claude call sent {stages['claude_head_start_ms']:.0f}ms early"
+             if stages.get("claude_head_start_ms") is not None else ""), flush=True)
