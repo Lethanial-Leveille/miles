@@ -85,10 +85,10 @@ new drift is caught.
 | Claim | How to check | Last verified |
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
-| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 14 2026 (25) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 25 2026 (883) |
+| Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 25 2026 (30) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 25 2026 (934) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
-| Prefix token count (never trust a written figure) | `count_tokens` on `build_enhanced_prompt` output vs the 4096 floor | Aug 11 2026 (5942, +1846) |
+| Prefix token count (never trust a written figure) | `count_tokens` on the tool schemas plus `build_enhanced_prompt` output, since tools sit inside the cached prefix, vs the 4096 floor | Sep 25 2026 (17774: tools 7103, system 10670) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
 | Speaker device resolution | `grep -n SPEAKER src/config.py src/tts.py` | Aug 11 2026 (by name, not device string) |
 | Which modules exist | `ls src/*.py` | Aug 11 2026 (20 modules) |
