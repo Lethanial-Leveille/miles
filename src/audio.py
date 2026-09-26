@@ -76,7 +76,7 @@ from verification import (VERIFIED, REJECTED, NO_AUDIO, RETRY,
                           MIN_EMBED_SECONDS, MIN_TRUSTWORTHY_SECONDS)
 
 from config import (
-    CHUNK, CHANNELS, RATE,
+    CHUNK, CHANNELS, RATE, MIC_STALL_S,
     WHISPER_MODEL, WHISPER_CLI, WHISPER_SEGMENT_SECONDS, WHISPER_INITIAL_PROMPT,
     TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
@@ -97,6 +97,7 @@ from wake_listener import WakeListener
 import wake_capture
 import deepgram_stt
 import speculative_turn
+import mic_watchdog
 from database import keep_voiceprint_sample, log_verification
 import timing
 
@@ -221,13 +222,19 @@ with silence_stderr():
         frames_per_buffer=CHUNK,
     )
 
+# A read that never returns is a deaf assistant with every service reporting
+# active. The guard ends the process instead, and systemd reopens the device.
+stream = mic_watchdog.GuardedStream(stream, MIC_STALL_S)
+stream.start_watchdog()
+
 
 # ── Audio functions ──
 
 def _recording_wake():
     """A fresh listener on the recording copy of the wake model."""
     recording_wake_model.reset()
-    return WakeListener(recording_wake_model.predict, WAKE_THRESHOLD)
+    return WakeListener(recording_wake_model.predict, WAKE_THRESHOLD,
+                        reset=recording_wake_model.reset)
 
 
 def record_command(on_wake=None):

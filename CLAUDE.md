@@ -84,6 +84,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── audio_segments.py      # Whisper window by clip length; cutting long recordings
 │   ├── deepgram_stt.py        # the online transcript, with whisper as the floor
 │   ├── wake_listener.py       # hears the wake word during a recording
+│   ├── mic_watchdog.py        # exits when the mic stops delivering, so systemd reopens it
 │   ├── wake_gate.py           # drops a wake that arrived too quiet to be him
 │   ├── wake_capture.py        # what to evict when a capture directory is full
 │   ├── speaker_encoder.py     # Encoder abstraction behind verify_voice
@@ -111,7 +112,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1027 passing, 6 skipped, Sep 25 2026)
+│   └── tests/                 # pytest suite (1035 passing, 6 skipped, Sep 26 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -197,6 +198,8 @@ of the value itself.
 - `MAX_RECORD = 30.0`
 - `TTS_FLUSH_MARGIN_MS = 250`
 - `EXPECTED_MIC_GAIN = 23`
+- `MIC_STALL_S = 5.0` (a mic read blocked this long ends the process so systemd
+  restarts it; `mic_watchdog.py`)
 - `MIC_NAME_HINT = "Seiren"`. `MIC_MIXER_CARD` is **derived** from it at import
   by `_resolve_mixer_card`, never written literally, and is `None` on a miss so
   callers report "cannot check" rather than measuring the wrong device.

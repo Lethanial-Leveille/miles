@@ -33,6 +33,7 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 26 2026 | The mic stopped delivering and she was deaf for twenty minutes, every service active | [below](#deaf-with-every-service-active-sep-26-2026) |
 | Sep 25 2026 | The SD card stalled mid turn and a reply took 48 seconds | [below](#the-sd-card-stalled-mid-turn-sep-25-2026) |
 | Sep 24 2026 | Pruning by age deleted half the hand labelled wake clips | [below](#pruning-by-age-ate-the-labelling-sep-24-2026) |
 | Sep 16 2026 | Cancelling a timer set a new one | [below](#cancelling-a-timer-set-a-new-one-sep-16-2026) |
@@ -54,6 +55,42 @@ session real work.
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
 
 ---
+
+## Deaf with every service active (Sep 26 2026)
+
+After a follow up answered at 00:06:49, the journal went silent: no "Listening
+for follow up", no "Returning to wake word", nothing for twenty minutes, while
+systemd reported miles-voice active with zero restarts. He noticed because she
+stopped answering.
+
+py-spy on the live process put the main thread in `stream.read` inside
+`audio.flush_input`, in `poll`, waiting on the capture device. Every other
+thread, the new speculative turn worker included, was idle. ALSA said:
+
+```
+/proc/asound/card3/pcm0c/sub0/status
+state: RUNNING
+trigger_time: 00:06:49 (converted from uptime)
+hw_ptr      : 16          (unchanged one second later)
+```
+
+The capture buffer is 2560 frames, 160ms, and nothing reads the mic while Nova
+speaks, so it overruns on every turn and PortAudio restarts the stream on the
+next read. That restart happened at 00:06:49 as it does after every reply, and
+the Seiren delivered sixteen frames and then nothing. State stayed RUNNING, so no
+error reached Python. A restart of the service reopened the device and it
+flowed at once.
+
+Not found anywhere in the journal since Sep 1. It came hours after several
+changes that night, none of which touch the capture path; whether one made it
+likelier is not known from one occurrence.
+
+**What changed.** `mic_watchdog.GuardedStream` wraps the stream and times every
+read. One blocked past `MIC_STALL_S` logs the ALSA status above and exits, and
+systemd restarts the loop, about 22s of deafness against unbounded.
+
+**The lesson.** "Active" is a claim about the process, not about hearing. A loop
+blocked in a read looks exactly like a quiet room.
 
 ## The SD card stalled mid turn (Sep 25 2026)
 
