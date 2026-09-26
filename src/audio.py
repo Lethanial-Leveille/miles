@@ -70,6 +70,9 @@ with silence_stderr():
 
 import speaker_encoder
 import early_verify
+import verification
+from verification import (VERIFIED, REJECTED, NO_AUDIO, RETRY,
+                          MIN_EMBED_SECONDS, MIN_TRUSTWORTHY_SECONDS)
 
 from config import (
     CHUNK, CHANNELS, RATE,
@@ -818,27 +821,8 @@ def measure_acoustics(wav_path):
     return (float(rms_dbfs) if rms_dbfs is not None else None), snr_db, spectral_tilt
 
 
-# verify_voice outcomes. NO_AUDIO is distinct from REJECTED on purpose: one
-# means "not your voice", the other means "there was no voice to compare".
-VERIFIED = 'verified'
-REJECTED = 'rejected'
-NO_AUDIO = 'no_audio'
-RETRY = 'retry'
-
-# Resemblyzer computes one partial utterance per 1.6s window and zero pads the
-# last one. Below roughly a third of that there is not enough voiced audio for
-# the embedding to mean anything.
-MIN_EMBED_SECONDS = 0.5
-
-# Below this, an embedding is too unstable to reject anyone on. Measured: a
-# 0.9s follow up of "Okay, thank you" scored 0.460 against a voiceprint whose
-# median live score is 0.781, and was refused. The utterance was genuine; the
-# embedding simply had too little to work with.
-#
-# Short conversational follow ups ("yeah", "thanks", "what about tomorrow")
-# are exactly the turns that cannot be scored reliably, so scoring them at all
-# produces false rejections and nothing else.
-MIN_TRUSTWORTHY_SECONDS = 2.0
+# The outcomes and the two duration floors live in verification.py with the
+# decision, and are imported at the top so callers keep using audio.RETRY.
 
 
 def watch_for_interrupt(stop_event):
@@ -909,7 +893,7 @@ def wake_word_audio(seconds=1.5):
 
 def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence=None,
                  session_trusted=False, recording_path=None):
-    from config import (VERIFY_THRESHOLD, VERIFY_RETRY_THRESHOLD,
+    from config import (VERIFY_THRESHOLD,
                         VOICEPRINT_LEARN_MIN_SIMILARITY,
                         VOICEPRINT_LEARN_MIN_SECONDS)
 
@@ -945,10 +929,10 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
 
     rms_dbfs, snr_db, spectral_tilt = measure_acoustics(wav_path)
 
-    # Guard before embedding, not after. embed_utterance() zero pads whatever
-    # it is handed up to one partial and returns a confident looking vector
-    # for silence, so there is no downstream signal that the input was empty.
-    if embedded_duration_seconds < MIN_EMBED_SECONDS:
+    # The decision itself is verification.py's, so the speculative turn asks the
+    # same question of the early embedding and gets the same answer.
+    unscored = verification.before_embedding(embedded_duration_seconds, session_trusted)
+    if unscored is not None and unscored.outcome == NO_AUDIO:
         print(f"No voiced audio to verify ({embedded_duration_seconds:.2f}s "
               f"after trim, need {MIN_EMBED_SECONDS}s).", flush=True)
         log_verification(
@@ -969,15 +953,14 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
         return NO_AUDIO
 
     # Too short to score, but inside a session that already authenticated on a
-    # longer utterance. Trust the session rather than reject a genuine speaker
-    # on an embedding that cannot support the decision either way.
+    # longer utterance.
     #
     # The exposure this accepts is someone speaking into the mic within the
     # follow up window, in the same room, immediately after Lethanial. Against
     # the current action set (weather, timers, reminders, conversation) that is
     # a narrower risk than refusing him every time he says "thanks". Revisit
     # when an action with real consequence is added.
-    if session_trusted and embedded_duration_seconds < MIN_TRUSTWORTHY_SECONDS:
+    if unscored is not None:
         print(f"Too short to verify ({embedded_duration_seconds:.2f}s), "
               f"trusting session.", flush=True)
         log_verification(
@@ -985,7 +968,7 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
             transcript=transcript, duration_seconds=duration_seconds,
             embedded_duration_seconds=embedded_duration_seconds,
             turn_type=turn_type, wake_confidence=wake_confidence,
-            outcome='session_trust', rms_dbfs=rms_dbfs, snr_db=snr_db,
+            outcome=unscored.logged_as, rms_dbfs=rms_dbfs, snr_db=snr_db,
             spectral_tilt=spectral_tilt, recording_path=recording_path,
         )
         timing.mark('verify_ms', (time.monotonic() - verify_started) * 1000.0)
@@ -993,26 +976,18 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
 
     if embedding is None:
         embedding = embed_voice(wav)
-    if embedding is None:
-        # The encoder declined the clip as too short. The guard above normally
-        # catches this; reaching here means the two disagree by a hair, and
-        # inventing a score for it would be worse than saying there was nothing
-        # to score.
+    verdict = verification.on_embedding(embedding, voiceprint)
+    if verdict.logged_as is None:
         print("Encoder declined the clip as too short to embed.", flush=True)
         return NO_AUDIO
-    similarity = np.dot(embedding, voiceprint) / (
-        np.linalg.norm(embedding) * np.linalg.norm(voiceprint)
-    )
+    similarity = verdict.similarity
     # Covers preprocess_wav, the acoustic measures, and embed_utterance: all
     # the work that sits between transcription and the Claude call.
     timing.mark('verify_ms', (time.monotonic() - verify_started) * 1000.0)
 
     print(f"Voice similarity: {similarity:.3f}", flush=True)
-    accepted = similarity >= VERIFY_THRESHOLD
-    # An ambiguous band rather than a hard line. The scores between these two
-    # values are the model saying it does not know, and answering "I do not
-    # know" with silence is the worst of the three available responses.
-    ambiguous = (not accepted) and similarity >= VERIFY_RETRY_THRESHOLD
+    accepted  = verdict.outcome == VERIFIED
+    ambiguous = verdict.outcome == RETRY
 
     log_verification(
         similarity=float(similarity),
@@ -1023,7 +998,7 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
         embedded_duration_seconds=embedded_duration_seconds,
         turn_type=turn_type,
         wake_confidence=wake_confidence,
-        outcome='retry' if ambiguous else 'scored',
+        outcome=verdict.logged_as,
         rms_dbfs=rms_dbfs,
         snr_db=snr_db,
         spectral_tilt=spectral_tilt,
