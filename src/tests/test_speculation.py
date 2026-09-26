@@ -100,6 +100,18 @@ def test_a_deepgram_answer_stops_whisper_before_returning():
                          "stopping the speculative whisper run")
 
 
+def test_a_stopped_whisper_is_collected_rather_than_left_a_zombie():
+    """Seen Sep 25 2026: a [whisper-cli] <defunct> under miles-voice after the
+    first night of stopping it. audio.py cannot be imported here, so this reads
+    the method as text, and checks the module can resolve what it calls."""
+    source = ast.unparse(next(n for n in ast.walk(ast.parse(AUDIO_PY.read_text()))
+                              if isinstance(n, ast.FunctionDef) and n.name == "stop_whisper"))
+    assert "self.proc.wait" in source
+    imports = {a.name for n in ast.parse(AUDIO_PY.read_text()).body
+               if isinstance(n, ast.Import) for a in n.names}
+    assert "threading" in imports
+
+
 # ── behavioural: the real loops, when the mic is free ──
 
 def _mic_is_locked():
