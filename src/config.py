@@ -234,6 +234,11 @@ ENROLL_RECORD_SECONDS = 10
 # a silent revert corrupts collected data in a way that only shows up days
 # later as inexplicably low scores.
 EXPECTED_MIC_GAIN    = 23
+
+# A mic read blocked this long is not coming back: the process exits and systemd
+# restarts it. One chunk normally returns in 80ms. See mic_watchdog.py.
+MIC_STALL_S = 5.0
+
 MIC_MIXER_CONTROL    = "Mic"
 
 # Searched for in /proc/asound/cards, mirroring SPEAKER_NAME_HINT. Update this
