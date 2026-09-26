@@ -194,6 +194,27 @@ chooses the clip, and it plays if the tool is still running after
 fits which tool. The line sits where tool times split: calendar, Oura and
 weather reads run 500 to 1000ms, additions, reminders and memory under 50ms.
 
+## A slow request is sent again, Sep 25 2026
+
+On Sep 25 2026 eleven_v3 stalled three times in one evening: a reply waited
+16.4s for its first audio and two others went silent for 7.3s and 10.5s between
+the first sentence and the rest. Before that day the longest wait between
+sentences on record was 129ms. It was ElevenLabs, not the Pi: a separate process
+touching none of the day's changes got 12.9s on one request and 0.5s on the
+next. Silence that long also reads as her being done, and he said "Hey Nova"
+into it while she was not listening.
+
+`Synthesis` now sends a request again if it has no audio after
+`TTS_HEDGE_AFTER_MS`, and plays whichever answers first; the other closes its
+stream at once, which frees the request slot. The threshold sits above p95 of
+the first byte, so about 4 percent of requests resend. Forced on three live
+requests, the plan accepted the second concurrent request every time. The
+journal says "sending the request again" when it fires and "the resent request
+answered first" when that one wins.
+
+Underruns reach the journal as "speaker ran dry" since the same day, so a pause
+inside a sentence can be told apart from v3's own phrasing.
+
 ## Pronunciation
 
 `pronunciations` table, one row per grapheme, seeded with Lethanial to
