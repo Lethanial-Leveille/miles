@@ -141,8 +141,9 @@ def test_unchanged_it_fingerprints_exactly_as_the_real_turn_will(gate, memories)
     _consider(text)
     spec = gate[0].make_request()
     real_history = (ROWS + [{"role": "user", "content": text}])[-20:]
+    # A first turn: the real one is named, as voice_main passes named=True.
     real = brain.turn_fingerprint(text, "voice", "hokage", config.MODEL_A, real_history,
-                                  alerts.take_for_fold())
+                                  alerts.take_for_fold(), named=True)
     assert spec.fingerprint == real
     assert spec.messages[-1]["content"].startswith(text)
 
@@ -293,7 +294,7 @@ def test_speaking_again_cancels_the_claude_call_too():
 def test_the_voice_turn_hands_it_over_and_always_cancels_it():
     source = ast.unparse(_function("voice_main.py", "run_turn"))
     assert "speculative_turn.take()" in source
-    assert "ask_nova(text, speculation=speculation)" in source
+    assert "ask_nova(text, speculation=speculation, named=named)" in source
     assert "finally:" in source and "speculation.cancel()" in source.split("finally:")[1]
 
 
@@ -311,3 +312,47 @@ def test_an_unclaimed_turn_records_no_head_start(turn, monkeypatch):
     monkeypatch.setattr(brain.timing, "mark", lambda stage, ms: marks.setdefault(stage, ms))
     turn(_Speculation("stale"))
     assert "claude_head_start_ms" not in marks
+
+
+
+# ── the named turn marker (Sep 26 2026) ──
+
+@pytest.mark.parametrize("text,turn_type,named", [
+    ("What's on my calendar?", "initial", True),
+    ("Hey Nova, what's on my calendar?", "initial", True),
+    ("What about Thursday?", "followup", False),
+    ("Hey Nova, set a timer", "followup", True),
+])
+def test_named_follows_voice_main(text, turn_type, named):
+    assert st.user_text_for(text, turn_type)[2] is named
+
+
+def test_a_named_turn_says_so_after_the_clock_breakpoint():
+    messages = [{"role": "user", "content": "Is Trump a good president?"}]
+    noted = brain._with_named_note(messages, True)
+    assert noted[-1]["content"].endswith(brain.NAMED_TURN_NOTE)
+    assert messages[-1]["content"] == "Is Trump a good president?", "the stored message stays raw"
+    assert brain._with_named_note(messages, False) == messages
+
+
+def test_the_note_reaches_the_request_and_the_fingerprint(memories):
+    args = ("Is Trump a good president?", "voice", "hokage", config.MODEL_A,
+            [{"role": "user", "content": "Is Trump a good president?"}], [])
+    named = brain.build_request(*args, log_recall=False, named=True)
+    plain = brain.build_request(*args, log_recall=False, named=False)
+    assert brain.NAMED_TURN_NOTE in named.messages[-1]["content"]
+    assert brain.NAMED_TURN_NOTE not in plain.messages[-1]["content"]
+    assert named.fingerprint != plain.fingerprint
+
+
+def test_the_voice_loop_names_first_turns_and_wake_word_follow_ups():
+    source = (SRC / "voice_main.py").read_text()
+    assert "run_turn(user_text, named=True)" in source
+    assert "run_turn(followup_text, named=said_wake)" in source
+
+
+def test_the_prompt_and_the_ignore_tool_both_carry_the_rule():
+    import prompts
+    from tools import registry
+    assert brain.NAMED_TURN_NOTE in prompts.NOT_ADDRESSED_TO_YOU
+    assert brain.NAMED_TURN_NOTE in registry.get("ignore").description
