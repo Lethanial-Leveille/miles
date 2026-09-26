@@ -62,6 +62,16 @@ def status(rows):
         print("  not enough impostor clips yet to trust a false acceptance rate")
 
 
+def describe(row, i, total):
+    """The header line for one clip. A clip that never reached verification has
+    no similarity, and printing it must not be what ends a labelling session."""
+    try:
+        sim = f"{float(row['similarity']):.3f}"
+    except (TypeError, ValueError):
+        sim = "n/a"
+    return f"[{i}/{total}] {row['created_at'][11:19]}  sim={sim}  {row['duration_s']}s"
+
+
 def play(path):
     subprocess.run(["aplay", "-D", tts.SPEAKER_DEVICE, path],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -85,8 +95,7 @@ def main():
         path = os.path.join(EVAL_DIR, row["file"])
         if not os.path.exists(path):
             continue
-        print(f"[{i}/{len(todo)}] {row['created_at'][11:19]}  "
-              f"sim={float(row['similarity']):.3f}  {row['duration_s']}s")
+        print(describe(row, i, len(todo)))
         print(f"    {row['transcript']!r}")
         if row["label"]:
             print(f"    currently: {row['label']}")
@@ -104,6 +113,9 @@ def main():
                 break
             if answer in CHOICES:
                 row["label"] = CHOICES[answer]
+                # Written at once. On Sep 26 2026 a crash on the last clip lost
+                # thirteen labels that were only held in memory until the end.
+                save(rows)
                 break
             print("    m = me, o = other, u = unclear, s = skip, q = quit")
         print()
