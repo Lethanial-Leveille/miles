@@ -13,7 +13,7 @@ import timing
 from tts import join_for_speech, play, speak, start_synthesis
 from prompts import build_enhanced_prompt, TEXT_TURN_NOTE
 from database import (save_message, delete_message, get_seed_memories, get_episodic_memories,
-                      get_recent_messages, search_memories, memory_manifest,
+                      get_recent_messages, get_messages_after, search_memories, memory_manifest,
                       get_shareable_memories, effective_tier)
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
@@ -651,6 +651,20 @@ def _fingerprint(user_text, channel, tier, model, prompt, history, pending_alert
     return hashlib.sha256(material.encode()).hexdigest()
 
 
+def _history_for(tier, conversation_start, user_text):
+    """What a turn may see of what was said before it.
+
+    His turns get his recent history, as always. Anyone else gets only the
+    conversation they are part of, from conversation_start on: his history is
+    his, and the guest prompt tells Nova those facts are not in front of her,
+    which is only true if they are not. Without a start, only this message."""
+    if tier == "hokage":
+        return get_recent_messages(20)
+    if conversation_start is None:
+        return [{"role": "user", "content": user_text}]
+    return get_messages_after(conversation_start, 20)
+
+
 def _prompt_for(channel, tier):
     """The system prompt for this channel and tier, from the memories as they are now."""
     personal = tier == "hokage"
@@ -765,7 +779,8 @@ def _run_tools(tool_uses, model, tier):
 async def ask_nova_async(user_text: str, device: str = "pi",
                          channel: str = "voice",
                          tier: str = "hokage", on_text=None,
-                         speculation=None, named=False) -> TurnResult:
+                         speculation=None, named=False,
+                         conversation_start=None) -> TurnResult:
     """Run one turn.
 
     speculation, when given, is a speculative_turn.SpeculativeTurn that may
@@ -775,6 +790,9 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
     named is True when he opened this turn with the wake word; see
     _with_named_note. Only the voice loop knows, so only it passes True.
+
+    conversation_start is the last message id before this conversation began.
+    Below hokage it bounds the history; see _history_for.
 
     on_text, when given, is called with each piece of the reply as it is
     written, so a caller can show it arriving. It is how /chat/stream feeds the
@@ -798,7 +816,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     # Taken here, not inside build_request: consuming the alerts is a side
     # effect, and a speculative turn has to be able to build the same request
     # without one.
-    history = get_recent_messages(20)
+    history = _history_for(tier, conversation_start, user_text)
     pending = alerts.take_for_fold()
 
     # A speculative turn may already have made this call during the endpoint
@@ -1115,7 +1133,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
 def ask_nova(user_text: str, device: str = "pi",
              channel: str = "voice", tier: str = None, on_text=None,
-             speculation=None, named=False) -> TurnResult:
+             speculation=None, named=False,
+             conversation_start=None) -> TurnResult:
     # None means "look it up", so a demotion set in one turn is in force on the
     # next without the caller having to thread it through.
     loop = _thread_loop()
@@ -1123,6 +1142,7 @@ def ask_nova(user_text: str, device: str = "pi",
         return loop.run_until_complete(
             ask_nova_async(user_text, device=device, channel=channel,
                            tier=tier or effective_tier(), on_text=on_text,
-                           speculation=speculation, named=named))
+                           speculation=speculation, named=named,
+                           conversation_start=conversation_start))
     finally:
         _cancel_leftovers(loop)

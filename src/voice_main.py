@@ -16,6 +16,8 @@ import tts
 import actions
 import local_intent
 import speculative_turn
+from tools import registry, permits
+from database import latest_message_id
 import wake_gate
 from brain import ask_nova, TurnResult
 from database import init_db, log_wake_near_miss, save_message
@@ -144,7 +146,29 @@ def _run_local(match, user_text):
     return TurnResult(text=spoken, dismissed=dismissed)
 
 
-def run_turn(text, named=False):
+# A voice that does not verify as his is a guest, not an intruder: it gets
+# answers from general knowledge, and nothing above genin. See GUEST_BLOCK.
+GUEST_TIER = "genin"
+
+
+def _local_allowed(match, tier):
+    """Whether a local intent may answer for this tier.
+
+    Local intents skip Claude, and so skip the permission gate in brain.py. A
+    guest setting a timer or cancelling his reminder would be a WRITE at genin,
+    so a guest's match runs locally only if its tool is allowed at that tier, or
+    it is not a tool at all, like the time of day. Otherwise Claude answers, and
+    the gate says it is his to grant."""
+    if tier is None:
+        return True
+    try:
+        spec = registry.get(match.name)
+    except Exception:
+        return True
+    return permits(spec, tier)
+
+
+def run_turn(text, named=False, tier=None, conversation_start=None):
     """Run one turn, returning None if it could not be completed.
 
     The boundary is here rather than in brain.py because brain serves two
@@ -169,9 +193,10 @@ def run_turn(text, named=False):
         # boundary exists to absorb, and code sitting outside it would reopen
         # the hole this function was written to close.
         match = local_intent.classify(text)
-        if match is not None:
+        if match is not None and _local_allowed(match, tier):
             return _run_local(match, text)
-        return ask_nova(text, speculation=speculation, named=named)
+        return ask_nova(text, speculation=speculation, named=named, tier=tier,
+                        conversation_start=conversation_start)
     except anthropic.APIConnectionError as exc:
         # The exception says a connection failed, not which one. Ask locally so
         # she names the cause she has actually ruled everything else out for.
@@ -349,17 +374,23 @@ try:
                 print("Listening for 'hey nova'...", flush=True)
                 continue
 
-            if verify_result == audio.REJECTED:
-                print("Voice not recognized.", flush=True)
-                timing.abandon_turn()
-                tts.speak("[calmly] That capability requires voice authorization. I don't recognize your voiceprint.")
-                audio.flush_input()
-                print("Listening for 'hey nova'...", flush=True)
-                continue
+            # Not recognized is not refused. Until Sep 26 2026 this spoke "I
+            # don't recognize your voiceprint" and stopped; now someone else in
+            # his home gets a guest's answer: general knowledge, nothing above
+            # genin, and none of his history.
+            session_is_him = verify_result != audio.REJECTED
+            if not session_is_him:
+                print("Voice not recognized, answering as a guest.", flush=True)
+            speculative_turn.set_session(session_is_him)
+            # Taken before this turn saves anything, so a guest's history is
+            # this conversation and nothing before it.
+            conversation_start = latest_message_id()
 
             start  = time.time()
             # He said the wake word to start this, by definition.
-            result = run_turn(user_text, named=True)
+            result = run_turn(user_text, named=True,
+                              tier=None if session_is_him else GUEST_TIER,
+                              conversation_start=conversation_start)
 
             # Nothing to say and nothing to save. Back to the wake word rather
             # than into the follow up window, which would only collect more
@@ -455,9 +486,14 @@ try:
                 #
                 # A wake word restart is not session trusted: it is a fresh
                 # request and long enough to score, so it gets scored.
+                #
+                # Only his conversation is trusted on the session. A guest's
+                # follow up is scored, so a guest conversation stays a guest's
+                # unless he speaks long enough to be recognized.
                 followup_result = audio.verify_voice(followup_path, transcript=followup_text,
                                                       turn_type='followup',
-                                                      session_trusted=not said_wake,
+                                                      session_trusted=(not said_wake
+                                                                       and session_is_him),
                                                       recording_path=recording)
 
                 if followup_result == audio.NO_AUDIO:
@@ -469,16 +505,22 @@ try:
                     tts.speak("Sorry, say that again?")
                     continue
 
-                if followup_result == audio.REJECTED:
-                    print("Voice not recognized on follow up.", flush=True)
-                    timing.abandon_turn()
-                    tts.speak("[calmly] I don't recognize that voice. Returning to standby.")
-                    audio.flush_input()
-                    in_conversation = False
-                    break
+                # Whose conversation it is follows the latest judgement: a
+                # rejected follow up is a guest's turn, not the end of the
+                # conversation, and the short ones after it inherit that.
+                session_is_him = followup_result != audio.REJECTED
+                if not session_is_him:
+                    print("Voice not recognized on follow up, answering as a guest.",
+                          flush=True)
+                speculative_turn.set_session(session_is_him)
+                if said_wake:
+                    # A fresh turn, so a guest's history starts over too.
+                    conversation_start = latest_message_id()
 
                 start  = time.time()
-                result = run_turn(followup_text, named=said_wake)
+                result = run_turn(followup_text, named=said_wake,
+                                  tier=None if session_is_him else GUEST_TIER,
+                                  conversation_start=conversation_start)
 
                 if result is None:
                     audio.flush_input()

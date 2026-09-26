@@ -101,7 +101,15 @@ def test_too_little_voice_gets_nothing(gate):
 
 
 def test_a_short_follow_up_is_trusted_on_the_session_like_the_real_check(gate):
+    st.set_session(True)
     assert _consider("Thursday?", "followup", seconds=1.0, embedding=SOMEONE) is gate[0]
+
+
+def test_a_guests_conversation_is_never_trusted_on_the_session(gate):
+    """His personal prompt must not go out for a guest's short follow up."""
+    st.set_session(False)
+    assert _consider("Thursday?", "followup", seconds=1.0, embedding=SOMEONE) is None
+    assert gate == []
 
 
 def test_a_newer_speculation_replaces_and_cancels_the_older(gate):
@@ -294,7 +302,7 @@ def test_speaking_again_cancels_the_claude_call_too():
 def test_the_voice_turn_hands_it_over_and_always_cancels_it():
     source = ast.unparse(_function("voice_main.py", "run_turn"))
     assert "speculative_turn.take()" in source
-    assert "ask_nova(text, speculation=speculation, named=named)" in source
+    assert "ask_nova(text, speculation=speculation, named=named, tier=tier" in source
     assert "finally:" in source and "speculation.cancel()" in source.split("finally:")[1]
 
 
@@ -347,8 +355,8 @@ def test_the_note_reaches_the_request_and_the_fingerprint(memories):
 
 def test_the_voice_loop_names_first_turns_and_wake_word_follow_ups():
     source = (SRC / "voice_main.py").read_text()
-    assert "run_turn(user_text, named=True)" in source
-    assert "run_turn(followup_text, named=said_wake)" in source
+    assert "run_turn(user_text, named=True," in source
+    assert "run_turn(followup_text, named=said_wake," in source
 
 
 def test_the_prompt_and_the_ignore_tool_both_carry_the_rule():
