@@ -23,10 +23,36 @@ def _frames(n=8):
     return [b"\x00\x01" * 640 for _ in range(n)]
 
 
+class _FakeSession:
+    """Routes the shared connection through requests.post, which each test
+    patches, so nothing here can reach the network. Records opens and warms."""
+    opened = 0
+    warms = []
+
+    def __init__(self):
+        _FakeSession.opened += 1
+
+    def post(self, *a, **k):
+        return requests.post(*a, **k)
+
+    def get(self, *a, **k):
+        _FakeSession.warms.append(a[0])
+        return _Resp({})
+
+    def close(self):
+        pass
+
+
 @pytest.fixture(autouse=True)
 def key(monkeypatch):
     monkeypatch.setattr(dg, "DEEPGRAM_STT", True)
     monkeypatch.setattr(dg, "DEEPGRAM_API_KEY", "test-key-not-a-real-one")
+    monkeypatch.setattr(dg.requests, "Session", _FakeSession)
+    monkeypatch.setattr(dg, "_session", None)
+    monkeypatch.setattr(dg, "_last_answer", 0.0)
+    monkeypatch.setattr(dg, "_warming", False)
+    _FakeSession.opened = 0
+    _FakeSession.warms = []
 
 
 class _Resp:
@@ -150,3 +176,99 @@ def test_a_run_that_never_answers_gives_up(monkeypatch):
 
 def test_an_unreadable_file_asks_whisper():
     assert dg.transcribe_file("/nonexistent/path/to/clip.wav") is None
+
+
+# ── the connection, kept warm while he talks (Sep 25 2026) ──
+
+import time as _time
+
+
+def _wait_for(condition, seconds=1.0):
+    deadline = _time.monotonic() + seconds
+    while not condition() and _time.monotonic() < deadline:
+        _time.sleep(0.01)
+    return condition()
+
+
+def test_a_connection_answered_recently_is_reused(monkeypatch):
+    monkeypatch.setattr(dg.requests, "post", lambda *a, **k: _ok("one"))
+    assert dg.transcribe_bytes(b"x") == "one"
+    assert dg.transcribe_bytes(b"x") == "one"
+    assert _FakeSession.opened == 1
+
+
+def test_a_connection_idle_past_the_limit_is_replaced_not_tried(monkeypatch):
+    """Deepgram closes one idle for about 5s; trying it costs a failed request."""
+    monkeypatch.setattr(dg.requests, "post", lambda *a, **k: _ok("one"))
+    dg.transcribe_bytes(b"x")
+    monkeypatch.setattr(dg, "_last_answer", _time.monotonic() - dg._REUSE_WITHIN_S)
+    dg.transcribe_bytes(b"x")
+    assert _FakeSession.opened == 2
+
+
+def test_a_dropped_connection_is_retried_once_on_a_new_one(monkeypatch):
+    attempts = []
+    def post(*a, **k):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise requests.ConnectionError("RemoteDisconnected")
+        return _ok("second try")
+    monkeypatch.setattr(dg.requests, "post", post)
+    assert dg.transcribe_bytes(b"x") == "second try"
+    assert len(attempts) == 2
+
+
+def test_a_timeout_is_not_retried(monkeypatch):
+    """A retry after a timeout would double the wait before whisper takes over."""
+    attempts = []
+    def post(*a, **k):
+        attempts.append(1)
+        raise requests.ConnectTimeout("slow")
+    monkeypatch.setattr(dg.requests, "post", post)
+    assert dg.transcribe_bytes(b"x") is None
+    assert len(attempts) == 1
+
+
+def test_keeping_warm_sends_no_audio_and_is_rate_limited():
+    dg.keep_warm()
+    assert _wait_for(lambda: len(_FakeSession.warms) == 1)
+    dg.keep_warm()
+    dg.keep_warm()
+    _time.sleep(0.05)
+    assert _FakeSession.warms == [dg._WARM_URL], "one warm inside the window"
+    assert dg._WARM_URL != dg._ENDPOINT
+
+
+def test_nothing_is_warmed_without_a_key(monkeypatch):
+    monkeypatch.setattr(dg, "DEEPGRAM_API_KEY", None)
+    dg.keep_warm()
+    _time.sleep(0.05)
+    assert _FakeSession.warms == []
+
+
+def test_the_completion_hook_gets_the_transcript(monkeypatch):
+    monkeypatch.setattr(dg.requests, "post", lambda *a, **k: _ok("hook"))
+    heard = []
+    run = dg.start(_frames(), on_done=heard.append)
+    assert run.result() == "hook"
+    assert _wait_for(lambda: heard == ["hook"])
+
+
+def test_a_cancelled_run_does_not_call_the_hook(monkeypatch):
+    def slow(*a, **k):
+        _time.sleep(0.1)
+        return _ok("late")
+    monkeypatch.setattr(dg.requests, "post", slow)
+    heard = []
+    run = dg.start(_frames(), on_done=heard.append)
+    run.cancel()
+    _time.sleep(0.2)
+    assert heard == []
+
+
+def test_a_failing_hook_does_not_lose_the_transcript(monkeypatch):
+    monkeypatch.setattr(dg.requests, "post", lambda *a, **k: _ok("kept"))
+    def broken(text):
+        raise RuntimeError("hook bug")
+    run = dg.start(_frames(), on_done=broken)
+    assert run.result() == "kept"

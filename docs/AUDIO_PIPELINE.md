@@ -408,6 +408,18 @@ limit, so it is tried **before** the piecewise whisper path rather than after it
 
 `DEEPGRAM_STT = False` returns to fully local with nothing else to change.
 
+**The connection is kept warm while he talks, since Sep 25 2026.** Every request
+used to open its own connection, about 225ms of each one (380ms against 153ms
+reused), and Deepgram closes a connection idle for about 5s; a reuse at 5s
+failed with RemoteDisconnected. Both capture loops now call `keep_warm()` on
+speech frames, which sends a free request carrying no audio at most every 3s, and
+a connection is reused only inside 4s of its last response. Measured live on a
+phrase bank clip: 201 to 204ms warm against 266 to 452ms cold. A reused
+connection that turns out closed is retried once on a new one; a timeout is not,
+so a slow Deepgram never doubles the wait before whisper. Warming at the wake
+word instead was rejected: the ack and a median command put the request about
+3.5s after it, too close to the server's close.
+
 **Every recording leaves the Pi, including the false wakes**, which is how other
 people in the apartment end up transcribed. That was decided rather than
 overlooked, along with the `verify_voice` gate that was declined; both are in the
