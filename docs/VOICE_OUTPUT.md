@@ -173,8 +173,7 @@ rendered files keep their numbering.
 ### Bridges on slow tool turns, Sep 16 2026
 
 `bridge_calendar`, `bridge_health`, `bridge_weather` and `bridge_jobs` (added
-Sep 25 2026 for the Prowl tools) are said the moment a
-mapped tool starts on a voice turn, when Nova wrote no lead in of her own
+Sep 25 2026 for the Prowl tools) cover a mapped tool on a voice turn, when Nova wrote no lead in of her own
 (`brain._BRIDGES`). They play under `speak_lock`, so the answer waits for the
 line to end, which is why they are short: rendered at 0.84s to 1.66s, against a
 gap of about two seconds between a tool starting and its answer being ready.
@@ -185,6 +184,15 @@ They commit to nothing, because the result is not known yet. Timed as
 This reverses the Aug 11 decision to add no acknowledgment during tool
 execution, which was deferred until `tool_ms` could be read. It can now: tool
 turns were half of all turns, 5258ms before any sound and 8022ms to finish.
+
+**Only when the tool turns out to be slow, since Sep 25 2026.** The line used to
+start the moment the call began streaming, before the tool had run, so a
+calendar addition that takes about 5ms still said "Let me look at your
+calendar." and its read back waited behind a 1.5s clip. Now streaming only
+chooses the clip, and it plays if the tool is still running after
+`BRIDGE_DELAY_MS` (`brain._bridge_if_slow`). `_BRIDGES` still decides which clip
+fits which tool. The line sits where tool times split: calendar, Oura and
+weather reads run 500 to 1000ms, additions, reminders and memory under 50ms.
 
 ## Pronunciation
 
