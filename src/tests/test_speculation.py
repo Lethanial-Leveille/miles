@@ -86,6 +86,20 @@ def test_neither_loop_inlines_the_speculation(loop=None):
             f"maybe_speculate so both loops keep the same rules.")
 
 
+def test_a_deepgram_answer_stops_whisper_before_returning():
+    """Whisper left running after Deepgram answered held three cores through
+    recall and local intent, which more than doubled recall (87 to 209ms)."""
+    for node in ast.walk(_function("transcribe")):
+        if not (isinstance(node, ast.If) and "remote is not None" in ast.unparse(node.test)):
+            continue
+        body = [ast.unparse(s) for s in node.body]
+        returns = next(i for i, s in enumerate(body) if s.startswith("return"))
+        if any("speculation.stop_whisper()" in s for s in body[:returns]):
+            return
+    raise AssertionError("transcribe returns the Deepgram transcript without "
+                         "stopping the speculative whisper run")
+
+
 # ── behavioural: the real loops, when the mic is free ──
 
 def _mic_is_locked():

@@ -553,6 +553,19 @@ class _Speculation:
         except Exception:
             pass
 
+    def stop_whisper(self):
+        """Deepgram answered, so whisper's transcript will never be read.
+
+        Left running, it holds three cores past the endpoint at beam 5, which is
+        exactly when recall and local intent embed the transcript: recall
+        measured 87ms on a quiet CPU against 209ms beside it, Sep 25 2026. Only
+        the process stops. The early embedding is left alone, because
+        verify_voice still reads it."""
+        try:
+            self.proc.terminate()
+        except Exception:
+            pass
+
     def remote(self):
         """The Deepgram transcript, or None to fall back to whisper.
 
@@ -651,6 +664,7 @@ def transcribe(wav_path):
         if speculation is not None and not speculation.stale:
             remote = speculation.remote()
             if remote is not None:
+                speculation.stop_whisper()
                 print("(deepgram transcript)", flush=True)
                 return remote
             text = speculation.result()
