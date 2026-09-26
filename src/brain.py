@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import NamedTuple
 
 import anthropic
+import httpx
 import timing
 from tts import join_for_speech, play, speak, start_synthesis
 from prompts import build_enhanced_prompt, TEXT_TURN_NOTE
@@ -37,6 +38,62 @@ from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
                     HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN)
 
 claude = anthropic.AsyncAnthropic()
+
+# One event loop per thread, kept for the life of the process, with its own
+# client. ask_nova used to call asyncio.run, which builds a loop and throws it
+# away, while the module client kept its pooled connection from the loop before.
+# Reusing it raised "Event loop is closed", and the SDK retried after a backoff
+# of 0.4 to 0.5s, on every turn and silently, since nothing configures logging.
+# Measured Sep 25 2026 with count_tokens: about 590ms per call that way against
+# 75ms on a kept loop; first turns after a restart, which had no stale
+# connection, ran 300 to 390ms faster to first token. Per thread rather than one
+# shared loop because the server runs turns on worker threads concurrently with
+# the voice loop, and a turn's synchronous work would stall the other's stream.
+_thread_state = threading.local()
+
+# How long an idle connection is kept for the next turn. httpx drops it after
+# 5s by default, and turns are a median 37s apart, so every turn reconnected
+# (about 140ms against 75ms warm). Anthropic kept one open through 300s idle and
+# had closed it by 420s, measured Sep 25 2026; this stays under that with
+# margin, because a reuse that races the server's own close costs a retry.
+_KEEPALIVE_S = 240
+
+
+def _thread_loop():
+    if getattr(_thread_state, "loop", None) is None:
+        _thread_state.loop   = asyncio.new_event_loop()
+        _thread_state.claude = anthropic.AsyncAnthropic(
+            http_client=anthropic.DefaultAsyncHttpxClient(
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20,
+                                    keepalive_expiry=_KEEPALIVE_S)))
+    return _thread_state.loop
+
+
+def _claude():
+    """The persistent client when running on this thread's own loop, else the
+    module one. The module client is what the tests replace, and what anyone
+    driving ask_nova_async from a loop of their own must get, because this
+    thread's client holds connections that only its own loop can use."""
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is not None and running is getattr(_thread_state, "loop", None):
+        return _thread_state.claude
+    return claude
+
+
+def _cancel_leftovers(loop):
+    """What asyncio.run does on the way out, without closing the loop.
+
+    A turn that raised can leave a consumer task waiting on its queue forever.
+    asyncio.run used to cancel those; a loop that outlives the turn has to do
+    it itself, or they would wake inside the next turn."""
+    leftovers = [t for t in asyncio.all_tasks(loop) if not t.done()]
+    for task in leftovers:
+        task.cancel()
+    if leftovers:
+        loop.run_until_complete(asyncio.gather(*leftovers, return_exceptions=True))
 
 
 class TurnResult(NamedTuple):
@@ -626,7 +683,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     claude_start  = time.monotonic()
     first_token   = None
     sentence_seen = False
-    async with claude.messages.stream(
+    async with _claude().messages.stream(
         model=model,
         max_tokens=1000,
         system=system_param,
@@ -781,7 +838,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                 kwargs = {} if last_round or only_stored else {"tools": registry.api_schemas()}
 
                 round_text = ""
-                async with claude.messages.stream(
+                async with _claude().messages.stream(
                     model=model,
                     max_tokens=1000,
                     system=system_param,
@@ -912,5 +969,10 @@ def ask_nova(user_text: str, device: str = "pi",
              channel: str = "voice", tier: str = None, on_text=None) -> TurnResult:
     # None means "look it up", so a demotion set in one turn is in force on the
     # next without the caller having to thread it through.
-    return asyncio.run(ask_nova_async(user_text, device=device, channel=channel,
-                                      tier=tier or effective_tier(), on_text=on_text))
+    loop = _thread_loop()
+    try:
+        return loop.run_until_complete(
+            ask_nova_async(user_text, device=device, channel=channel,
+                           tier=tier or effective_tier(), on_text=on_text))
+    finally:
+        _cancel_leftovers(loop)
