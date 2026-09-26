@@ -247,16 +247,32 @@ def stream_audio(text, output_format=None):
     return chunks()
 
 
+def _report_underruns(lines):
+    """Forward aplay's underrun reports to the journal, and nothing else.
+
+    An underrun is the speaker running out of audio mid reply, heard as a pause
+    inside a sentence. On Sep 25 2026 he heard "Hello my name (pause) is Nova"
+    and there was no way to tell whether the stream had gone quiet or v3 had
+    phrased it that way, because aplay's stderr went to /dev/null."""
+    for line in lines:
+        text = line.decode(errors="replace").strip() if isinstance(line, bytes) else line.strip()
+        if "underrun" in text.lower():
+            print(f"  speaker ran dry: {text}", flush=True)
+
+
 def _open_aplay():
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         [
             "aplay", "-D", SPEAKER_DEVICE,
             "-f", "S16_LE", "-r", "22050", "-c", "1",
             "--buffer-size=8192", "--period-size=1024",
         ],
         stdin=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
+    # Read on a thread, or a full stderr pipe would block aplay itself.
+    threading.Thread(target=_report_underruns, args=(proc.stderr,), daemon=True).start()
+    return proc
 
 
 def play(synthesis, interrupt=None):
