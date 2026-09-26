@@ -187,6 +187,40 @@ def test_a_follow_up_after_a_lookup_still_offers_tools(turn):
     assert "tools" in turn.calls[1]
 
 
+def test_an_addition_is_read_back_by_code_with_no_second_call(turn, monkeypatch):
+    """create_calendar_event declares returns_to_model, but its announcement is
+    what gets said, and a second call would only reword it: a second of latency
+    spent risking the Sep 14 2026 defect, where what he heard was not what ran."""
+    said = "Added study block tomorrow from 2 PM to 3 PM."
+
+    def add(name, args):
+        brain.pending_action.announce(said)
+        return f"{said} This was read back to him word for word; he can say undo."
+
+    monkeypatch.setattr(registry, "call", add)
+    create = SimpleNamespace(type="tool_use", name="create_calendar_event", id="toolu_1",
+                             input={"summary": "study block", "start_time": "tomorrow at 2pm",
+                                    "duration_minutes": 60})
+    result, played = turn("voice", _FakeStream([], [create]))
+    assert len(turn.calls) == 1
+    assert played[-1] == said
+    assert result.text == said
+
+
+def test_a_failed_addition_still_goes_back_to_nova(turn, monkeypatch):
+    """An error announces nothing, so Nova has to say what went wrong."""
+    def fail(name, args):
+        raise ValueError("'tomorrow' names a day but not a time; ask him what time")
+
+    monkeypatch.setattr(registry, "call", fail)
+    create = SimpleNamespace(type="tool_use", name="create_calendar_event", id="toolu_1",
+                             input={"summary": "study block", "start_time": "tomorrow",
+                                    "duration_minutes": 60})
+    result, _ = turn("voice", _FakeStream([], [create]), _FakeStream(["What time tomorrow?"]))
+    assert len(turn.calls) == 2
+    assert result.text == "What time tomorrow?"
+
+
 def test_every_tool_says_what_it_is_doing():
     """A tool added without an entry would leave the app showing nothing."""
     assert set(brain._STAGE_WORDS) == set(registry.names())
