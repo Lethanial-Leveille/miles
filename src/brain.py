@@ -630,6 +630,30 @@ def _fingerprint(user_text, channel, tier, model, prompt, history, pending_alert
     return hashlib.sha256(material.encode()).hexdigest()
 
 
+def _prompt_for(channel, tier):
+    """The system prompt for this channel and tier, from the memories as they are now."""
+    personal = tier == "hokage"
+    seed_rows     = get_seed_memories() if personal else (
+                    get_shareable_memories() if tier == "jonin" else [])
+    episodic_rows = get_episodic_memories() if personal else []
+    return build_enhanced_prompt(seed_rows, episodic_rows, channel,
+                                 memory_manifest() if personal else [], tier=tier)
+
+
+def turn_fingerprint(user_text, channel, tier, model, history, pending_alerts):
+    """build_request's fingerprint without the rest of it: no recall, about 3ms.
+    What the real turn checks a speculation against."""
+    return _fingerprint(user_text, channel, tier, model, _prompt_for(channel, tier),
+                        history, pending_alerts)
+
+
+def _log_recall_later(user_text):
+    """A claimed speculation recalled with log_recall=False, so this turn has no
+    retrieval_log row yet. Written on a thread, off the path to first audio."""
+    threading.Thread(target=lambda: search_memories(
+        user_text, limit=RECALL_LIMIT, tier=2, log=True), daemon=True).start()
+
+
 def build_request(user_text, channel, tier, model, history, pending_alerts,
                   log_recall=True) -> TurnRequest:
     """The request for one turn, with no side effects.
@@ -647,12 +671,7 @@ def build_request(user_text, channel, tier, model, history, pending_alerts,
     verified voice, so this is effectively always hokage; multi speaker
     verification will pass a real tier through without touching this."""
     personal = tier == "hokage"
-    seed_rows       = get_seed_memories() if personal else (
-                      get_shareable_memories() if tier == "jonin" else [])
-    episodic_rows   = get_episodic_memories() if personal else []
-    enhanced_prompt = build_enhanced_prompt(
-        seed_rows, episodic_rows, channel,
-        memory_manifest() if personal else [], tier=tier)
+    enhanced_prompt = _prompt_for(channel, tier)
     fingerprint = _fingerprint(user_text, channel, tier, model, enhanced_prompt,
                                history, pending_alerts)
 
@@ -722,8 +741,14 @@ def _run_tools(tool_uses, model, tier):
 
 async def ask_nova_async(user_text: str, device: str = "pi",
                          channel: str = "voice",
-                         tier: str = "hokage", on_text=None) -> TurnResult:
+                         tier: str = "hokage", on_text=None,
+                         speculation=None) -> TurnResult:
     """Run one turn.
+
+    speculation, when given, is a speculative_turn.SpeculativeTurn that may
+    already have made this turn's first Claude call during the endpoint wait.
+    It is claimed only on an exact match and otherwise ignored; only the voice
+    loop passes one.
 
     on_text, when given, is called with each piece of the reply as it is
     written, so a caller can show it arriving. It is how /chat/stream feeds the
@@ -747,8 +772,24 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     # Taken here, not inside build_request: consuming the alerts is a side
     # effect, and a speculative turn has to be able to build the same request
     # without one.
-    request = build_request(user_text, channel, tier, model,
-                            get_recent_messages(20), alerts.take_for_fold())
+    history = get_recent_messages(20)
+    pending = alerts.take_for_fold()
+
+    # A speculative turn may already have made this call during the endpoint
+    # wait. It is used only if what it was built from is exactly what this turn
+    # would build from now; otherwise it is dropped and the call made here.
+    replay = None
+    if speculation is not None:
+        replay = speculation.claim(
+            turn_fingerprint(user_text, channel, tier, model, history, pending))
+    if replay is not None:
+        request = speculation.request
+        print(f"(speculative call claimed, sent "
+              f"{(time.monotonic() - speculation.opened_at) * 1000:.0f}ms ago)", flush=True)
+        if tier == "hokage":
+            _log_recall_later(user_text)
+    else:
+        request = build_request(user_text, channel, tier, model, history, pending)
     recent       = request.messages
     system_param = request.system
 
@@ -767,7 +808,9 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     claude_start  = time.monotonic()
     first_token   = None
     sentence_seen = False
-    async with _claude().messages.stream(**first_call_kwargs(request)) as stream:
+    stream_source = replay if replay is not None else _claude().messages.stream(
+        **first_call_kwargs(request))
+    async with stream_source as stream:
         # Iterating raw events rather than stream.text_stream. text_stream
         # yields only text, which is safe, but it also hides block boundaries,
         # so there is no way to tell that a tool call has started. Filtering
@@ -1043,13 +1086,15 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
 
 def ask_nova(user_text: str, device: str = "pi",
-             channel: str = "voice", tier: str = None, on_text=None) -> TurnResult:
+             channel: str = "voice", tier: str = None, on_text=None,
+             speculation=None) -> TurnResult:
     # None means "look it up", so a demotion set in one turn is in force on the
     # next without the caller having to thread it through.
     loop = _thread_loop()
     try:
         return loop.run_until_complete(
             ask_nova_async(user_text, device=device, channel=channel,
-                           tier=tier or effective_tier(), on_text=on_text))
+                           tier=tier or effective_tier(), on_text=on_text,
+                           speculation=speculation))
     finally:
         _cancel_leftovers(loop)

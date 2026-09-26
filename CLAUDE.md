@@ -111,7 +111,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (995 passing, 6 skipped, Sep 25 2026)
+│   └── tests/                 # pytest suite (1025 passing, 6 skipped, Sep 25 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -246,6 +246,8 @@ of the value itself.
 [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#speculative-transcription)
 - `SPECULATIVE_TRANSCRIBE = True`, `SPECULATIVE_SILENCE_MS = 210`,
   `SPECULATIVE_THREADS = 3`
+- `SPECULATIVE_CLAUDE = True` (the first Claude call opens during the endpoint wait
+  and the real turn claims it; `speculative_turn.py`)
 
 ### Model and prompt — why: [BRAIN.md](docs/BRAIN.md)
 - `MODEL_A = "claude-haiku-4-5"` — **this is the production model**

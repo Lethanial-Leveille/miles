@@ -15,6 +15,7 @@ import timing
 import tts
 import actions
 import local_intent
+import speculative_turn
 import wake_gate
 from brain import ask_nova, TurnResult
 from database import init_db, log_wake_near_miss, save_message
@@ -157,6 +158,11 @@ def run_turn(text):
     exception should be able to end the process: an unhandled one escapes to
     systemd, which restarts under Restart=always, and the room sees a chime
     followed by silence with no way to tell that anything went wrong."""
+    # The Claude call a speculation may already have made during the endpoint
+    # wait. ask_nova uses it only on an exact match. Cancelled in finally on
+    # every way out, claimed or not: after a claim the stream has finished and
+    # the cancel does nothing, and on any other exit it stops the generation.
+    speculation = speculative_turn.take()
     try:
         # Local first, and inside the try rather than before it. A bad regex or
         # an unparseable duration in here is exactly the kind of exception the
@@ -165,7 +171,7 @@ def run_turn(text):
         match = local_intent.classify(text)
         if match is not None:
             return _run_local(match, text)
-        return ask_nova(text)
+        return ask_nova(text, speculation=speculation)
     except anthropic.APIConnectionError as exc:
         # The exception says a connection failed, not which one. Ask locally so
         # she names the cause she has actually ruled everything else out for.
@@ -179,6 +185,9 @@ def run_turn(text):
         timing.abandon_turn()
         _say_cached('error')
         return None
+    finally:
+        if speculation is not None:
+            speculation.cancel()
 
 
 def speak_pending_alerts():

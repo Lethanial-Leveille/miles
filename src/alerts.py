@@ -75,6 +75,17 @@ def take_for_fold(max_age=FOLD_MAX_AGE_S):
     return _take(lambda now, a: now - a.fired_at <= max_age, "folded")
 
 
+def peek_for_fold(max_age=FOLD_MAX_AGE_S):
+    """What take_for_fold would return now, left in place and unlogged.
+
+    For the speculative turn, which builds its request before the endpoint and
+    may be thrown away. Taking would lose an alert with the discarded turn; the
+    real turn takes, and a speculation built on a different set is not used."""
+    now = time.monotonic()
+    with _lock:
+        return [a for a in _pending if now - a.fired_at <= max_age]
+
+
 def take_for_speech():
     """Everything still queued, to be announced on its own.
 
