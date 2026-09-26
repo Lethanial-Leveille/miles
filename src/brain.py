@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import re
 import threading
 import time
@@ -440,7 +442,7 @@ def _trim_history(messages: list) -> list:
     return trimmed
 
 
-def _with_recalled(messages: list, query: str) -> list:
+def _with_recalled(messages: list, query: str, log: bool = True) -> list:
     """Attach any tier two memories the transcript matches to the final user turn.
 
     Same placement argument as the clock below. This changes every turn, so it
@@ -458,7 +460,7 @@ def _with_recalled(messages: list, query: str) -> list:
     if not messages or messages[-1]["role"] != "user":
         return messages
 
-    hits = search_memories(query, limit=RECALL_LIMIT, tier=2, log=True)
+    hits = search_memories(query, limit=RECALL_LIMIT, tier=2, log=log)
     if not hits:
         return messages
 
@@ -596,6 +598,74 @@ def _with_alerts(messages: list, pending: list) -> list:
     }]
 
 
+class TurnRequest(NamedTuple):
+    """Everything a turn sends to Claude, and a fingerprint of what it was made from."""
+    model: str
+    system: object
+    messages: list
+    fingerprint: str
+
+
+def _fingerprint(user_text, channel, tier, model, prompt, history, pending_alerts):
+    """What a request was built from, as one comparable string.
+
+    A speculative turn builds its request before the endpoint, and the real turn
+    may only use it if nothing it was made from has changed since. Inputs
+    rather than the finished request, so checking costs a prompt build and a
+    history read (about 3ms) instead of recall again (about 87ms). A new memory
+    changes the prompt through the manifest, so it changes this too.
+
+    The clock is left out on purpose. It is stamped to the minute and a
+    speculation runs less than a second early."""
+    material = json.dumps({
+        "user_text": user_text, "channel": channel, "tier": tier, "model": model,
+        "prompt": prompt, "history": history,
+        "alerts": [a.summary for a in pending_alerts],
+    }, sort_keys=True)
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
+def build_request(user_text, channel, tier, model, history, pending_alerts,
+                  log_recall=True) -> TurnRequest:
+    """The request for one turn, with no side effects.
+
+    Nothing here saves a message, consumes an alert, advances the confirmation
+    clock or plays anything; the caller does those, so a speculative turn can
+    build exactly the request the real one will, before the endpoint. history
+    is get_recent_messages(20) ending in this user message, and pending_alerts
+    is what the caller took, or for a speculation, peeked. log_recall=False
+    keeps a speculation that may be discarded out of retrieval_log.
+
+    Everything personal is gated on tier here rather than asked for in the
+    prompt. Below hokage the corpus is never assembled, so no phrasing,
+    insistence, or injection can reach it. Today the only path to hokage is
+    verified voice, so this is effectively always hokage; multi speaker
+    verification will pass a real tier through without touching this."""
+    personal = tier == "hokage"
+    seed_rows       = get_seed_memories() if personal else (
+                      get_shareable_memories() if tier == "jonin" else [])
+    episodic_rows   = get_episodic_memories() if personal else []
+    enhanced_prompt = build_enhanced_prompt(
+        seed_rows, episodic_rows, channel,
+        memory_manifest() if personal else [], tier=tier)
+    fingerprint = _fingerprint(user_text, channel, tier, model, enhanced_prompt,
+                               history, pending_alerts)
+
+    # Folded before the clock, so all three land inside the same final user turn.
+    recent = _with_alerts(_trim_history(history), pending_alerts)
+    recent = _with_recalled(recent, user_text, log=log_recall) if personal else recent
+    recent = _with_current_time(recent)
+    recent = _with_text_note(recent, channel)
+
+    # Cache the system prompt. It is the stable prefix: the seed corpus and
+    # persona change rarely, while `recent` changes every turn and therefore
+    # has to sit after the breakpoint.
+    system = ([{"type": "text", "text": enhanced_prompt,
+                "cache_control": {"type": "ephemeral"}}]
+              if PROMPT_CACHING else enhanced_prompt)
+    return TurnRequest(model, system, recent, fingerprint)
+
+
 def _run_tools(tool_uses, model, tier):
     """Execute every tool the model called, in order, logging each one.
 
@@ -660,24 +730,13 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     pending_action.begin_turn()
 
     user_message_id = save_message("user", user_text, device=device)
-    # Everything personal is gated on tier here rather than asked for in the
-    # prompt. Below hokage the corpus is never assembled, so no phrasing,
-    # insistence, or injection can reach it. Today the only path to hokage is
-    # verified voice, so this is effectively always hokage; multi speaker
-    # verification will pass a real tier through without touching this.
-    personal = tier == "hokage"
-    seed_rows       = get_seed_memories() if personal else (
-                      get_shareable_memories() if tier == "jonin" else [])
-    episodic_rows   = get_episodic_memories() if personal else []
-    enhanced_prompt = build_enhanced_prompt(
-        seed_rows, episodic_rows, channel,
-        memory_manifest() if personal else [], tier=tier)
-    # Folded before the clock, so all three land inside the same final user turn.
-    recent          = _with_alerts(_trim_history(get_recent_messages(20)),
-                                   alerts.take_for_fold())
-    recent          = _with_recalled(recent, user_text) if personal else recent
-    recent          = _with_current_time(recent)
-    recent          = _with_text_note(recent, channel)
+    # Taken here, not inside build_request: consuming the alerts is a side
+    # effect, and a speculative turn has to be able to build the same request
+    # without one.
+    request = build_request(user_text, channel, tier, model,
+                            get_recent_messages(20), alerts.take_for_fold())
+    recent       = request.messages
+    system_param = request.system
 
     sentence_queue = asyncio.Queue()
     router         = StreamRouter(sentence_queue)
@@ -687,15 +746,6 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
     tts_task = asyncio.create_task(
         _consumer_for(channel, device)(sentence_queue, spoken_parts, leaks_seen))
-
-    # Cache the system prompt. It is the stable prefix: the seed corpus and
-    # persona change rarely, while `recent` changes every turn and therefore
-    # has to sit after the breakpoint.
-    system_param = (
-        [{"type": "text", "text": enhanced_prompt,
-          "cache_control": {"type": "ephemeral"}}]
-        if PROMPT_CACHING else enhanced_prompt
-    )
 
     accumulated   = ""
     bridge        = None

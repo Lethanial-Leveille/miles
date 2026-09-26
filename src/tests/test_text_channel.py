@@ -136,7 +136,8 @@ def test_a_voice_turn_gets_no_note():
 
 
 def test_the_note_is_used_in_the_turn():
-    assert "_with_text_note(recent, channel)" in inspect.getsource(brain.ask_nova_async)
+    assert "_with_text_note(recent, channel)" in inspect.getsource(brain.build_request)
+    assert "build_request(" in inspect.getsource(brain.ask_nova_async)
 
 
 def test_the_reply_is_streamed_as_it_is_written(turn):
