@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import time
+import threading
 import ctypes
 import fcntl
 import warnings
@@ -563,11 +564,15 @@ class _Speculation:
         exactly when recall and local intent embed the transcript: recall
         measured 87ms on a quiet CPU against 209ms beside it, Sep 25 2026. Only
         the process stops. The early embedding is left alone, because
-        verify_voice still reads it."""
+        verify_voice still reads it.
+
+        Collected on a thread: a terminated child stays a zombie until someone
+        waits on it, and waiting here would put its shutdown on the turn."""
         try:
             self.proc.terminate()
         except Exception:
-            pass
+            return
+        threading.Thread(target=self.proc.wait, daemon=True).start()
 
     def remote(self):
         """The Deepgram transcript, or None to fall back to whisper.
