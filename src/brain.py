@@ -62,13 +62,18 @@ _thread_state = threading.local()
 _KEEPALIVE_S = 240
 
 
+def _new_client():
+    """A client for one long lived loop, keeping idle connections _KEEPALIVE_S."""
+    return anthropic.AsyncAnthropic(
+        http_client=anthropic.DefaultAsyncHttpxClient(
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20,
+                                keepalive_expiry=_KEEPALIVE_S)))
+
+
 def _thread_loop():
     if getattr(_thread_state, "loop", None) is None:
         _thread_state.loop   = asyncio.new_event_loop()
-        _thread_state.claude = anthropic.AsyncAnthropic(
-            http_client=anthropic.DefaultAsyncHttpxClient(
-                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20,
-                                    keepalive_expiry=_KEEPALIVE_S)))
+        _thread_state.claude = _new_client()
     return _thread_state.loop
 
 
@@ -666,6 +671,15 @@ def build_request(user_text, channel, tier, model, history, pending_alerts,
     return TurnRequest(model, system, recent, fingerprint)
 
 
+def first_call_kwargs(request: TurnRequest) -> dict:
+    """The arguments of a turn's first Claude call, in one place.
+
+    A speculative turn opens this same call before the endpoint, and the real
+    turn may replay it only if nothing differs, so both build it here."""
+    return dict(model=request.model, max_tokens=1000, system=request.system,
+                messages=request.messages, tools=registry.api_schemas())
+
+
 def _run_tools(tool_uses, model, tier):
     """Execute every tool the model called, in order, logging each one.
 
@@ -753,13 +767,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     claude_start  = time.monotonic()
     first_token   = None
     sentence_seen = False
-    async with _claude().messages.stream(
-        model=model,
-        max_tokens=1000,
-        system=system_param,
-        messages=recent,
-        tools=registry.api_schemas(),
-    ) as stream:
+    async with _claude().messages.stream(**first_call_kwargs(request)) as stream:
         # Iterating raw events rather than stream.text_stream. text_stream
         # yields only text, which is safe, but it also hides block boundaries,
         # so there is no way to tell that a tool call has started. Filtering
