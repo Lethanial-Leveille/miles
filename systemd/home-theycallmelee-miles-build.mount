@@ -1,0 +1,16 @@
+[Unit]
+Description=M.I.L.E.S. scratch audio in RAM, off the SD card
+# Every turn writes command.wav and speculative.wav here, and the mic lock
+# lives here. The SD card has stalled for up to 44s at a time (INCIDENTS.md,
+# Sep 25 2026), and nothing in build/ needs to survive a reboot.
+Before=miles-voice.service miles-server.service
+
+[Mount]
+What=tmpfs
+Where=/home/theycallmelee/miles/build
+Type=tmpfs
+# A 30s command is under 1MB; 64MB leaves room for enrollment and split pieces.
+Options=size=64M,mode=0755,uid=1000,gid=1000,noatime,nosuid,nodev
+
+[Install]
+WantedBy=local-fs.target

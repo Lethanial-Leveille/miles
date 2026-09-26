@@ -33,6 +33,7 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 25 2026 | The SD card stalled mid turn and a reply took 48 seconds | [below](#the-sd-card-stalled-mid-turn-sep-25-2026) |
 | Sep 24 2026 | Pruning by age deleted half the hand labelled wake clips | [below](#pruning-by-age-ate-the-labelling-sep-24-2026) |
 | Sep 16 2026 | Cancelling a timer set a new one | [below](#cancelling-a-timer-set-a-new-one-sep-16-2026) |
 | Sep 15 2026 | Moving two lessons took eight turns | [below](#moving-two-lessons-took-eight-turns-sep-15-2026) |
@@ -53,6 +54,54 @@ session real work.
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
 
 ---
+
+## The SD card stalled mid turn (Sep 25 2026)
+
+"How's my job search going?" logged `total_perceived_ms` 48073. It was not a
+timing bug; he waited that long. The journal line broke it down as `endpoint
+1201 + stt 740 + verify 44210 + llm 976 + tts 627`, and the forty four seconds
+sat between two lines:
+
+```
+18:58:44.659  You: How's my job search going?
+18:59:25      kernel: mmc0: Card stuck being busy! __mmc_poll_for_busy
+18:59:28.870  Voice similarity: 0.666
+```
+
+mmc0 is the SD card, which holds the system, the code, the models and the
+database. The kernel log reaches back to the Sep 5 boot and records four stalls:
+
+| Stall | During a turn? |
+|---|---|
+| Sep 5 2026 16:23:01 | no |
+| Sep 6 2026 01:38:11 | yes: a follow up logged `verify_ms` 34728, turn ended 01:38:18 |
+| Sep 13 2026 14:40:55 | no |
+| Sep 25 2026 18:59:25 | yes: `verify_ms` 44210, the turn above |
+
+Both slow verifications in that window line up with a stall. A 42229ms one on
+Aug 16 predates the kernel log and cannot be checked. The card is a Samsung
+(manufacturer 0x1b) dated 12/2024.
+
+**Why verification, twice.** Nothing on the verify path writes before "Voice
+similarity" prints, so what blocked was most likely a read of something not in
+memory: encoder code or model pages. That is inference; nothing logs which call
+blocked. It is not "the first embedding after a restart": the Sep 6 stall hit a
+process that had verified normally ten minutes earlier, which is also why a
+warm up embedding at start was declined as the fix.
+
+**Why it will not stay in verification.** The database commits with
+`synchronous=FULL` right after that print. A stall three seconds later would
+have held the turn at the commit instead.
+
+**What changed.** `build/`, where every turn writes its WAVs and the mic lock
+lives, moved to tmpfs through `systemd/home-theycallmelee-miles-build.mount`.
+The files kept there by hand went to `data/from_build_2026-09-25/`. The real
+fix is taking the system and `data/` off the card, planned as an NVMe boot.
+
+**The lesson.** A stage that takes forty times its median is a fault, not a
+slow day. `verify_ms` reads 4ms at p50 and 19ms at p90; `timing_log` holds
+three rows above 30 seconds, and none of them was looked at until one became a
+48 second reply.
 
 ## Pruning by age ate the labelling (Sep 24 2026)
 
