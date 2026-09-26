@@ -121,6 +121,11 @@ def _vectors():
     return _example_vectors
 
 
+def is_warm():
+    """Whether classify can run without paying the first encode (10.8s cold)."""
+    return _example_vectors is not None
+
+
 def warm():
     """Encode the examples now rather than on the first real command.
 

@@ -517,6 +517,11 @@ WAKE_GATED_MAX_FILES = 300
 # started earlier. Trailing silence is all that differs, and it carries nothing.
 SPECULATIVE_TRANSCRIBE = True
 
+# Open the turn's first Claude call during the endpoint wait, from the Deepgram
+# transcript of the speculation, and let the real turn claim it at the endpoint.
+# See speculative_turn.py. False returns to calling Claude after the endpoint.
+SPECULATIVE_CLAUDE = True
+
 # How much silence before speculating. Bounded on both sides: earlier means more
 # overlap but more discarded work, and the overlap can never exceed
 # SILENCE_LIMIT minus this.

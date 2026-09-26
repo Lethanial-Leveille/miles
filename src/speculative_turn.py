@@ -18,16 +18,25 @@ so Anthropic stops generating.
 per thread in brain.py: a pooled connection belongs to the loop that opened it,
 and a loop that lives on keeps its connection warm between speculations.
 
-Not wired into the voice loop yet. That is the next step, with the gates that
-decide when a speculation is allowed to start.
+**Started only when the real turn would reach Claude with this exact text.**
+consider() follows voice_main step by step: the wake phrase split and the noise
+check in the order each path applies them, local intent, and verification of the
+early embedding by the same rule verify_voice uses. A voice that does not verify
+as his gets no speculation, so his personal prompt is never sent for it.
 """
 
 import asyncio
 import threading
 import time
 
+import alerts
 import brain
+import local_intent
 import tts
+import verification
+from config import MODEL_A, MODEL_AB_TEST, SPECULATIVE_CLAUDE
+from database import get_recent_messages
+from parsing import is_noise_transcript, split_after_wake_phrase
 
 _worker_lock = threading.Lock()
 _loop = None
@@ -171,6 +180,7 @@ class SpeculativeTurn:
         self._buffer = _Buffer()
         self._cancelled = threading.Event()
         self.fingerprint = None
+        self.request = None      # the TurnRequest, for the turn that claims it
         self.started_at = time.monotonic()
         self.opened_at = None    # when the Claude request went out
         self._future = asyncio.run_coroutine_threadsafe(
@@ -181,6 +191,7 @@ class SpeculativeTurn:
             request = await asyncio.to_thread(make_request)
             if self._cancelled.is_set():
                 raise Cancelled()
+            self.request = request
             self.fingerprint = request.fingerprint
             # The first sentence will want ElevenLabs about 1.5s from now.
             tts.warm()
@@ -218,3 +229,86 @@ class SpeculativeTurn:
             self.cancel()
             return None
         return _Replay(self)
+
+
+# ── when one is allowed to start, and handing it over ──
+
+_current_lock = threading.Lock()
+_current = None
+
+
+def user_text_for(text, turn_type):
+    """(the text the real turn would send, session_trusted), or None when the
+    turn would not reach Claude with it.
+
+    The order matters and differs by path, exactly as in voice_main: a first
+    turn splits off the wake phrase and then checks for noise; a follow up
+    checks for noise first, and a wake phrase in it makes a fresh turn that is
+    scored rather than trusted on the session."""
+    if text is None:
+        return None
+    if turn_type == "initial":
+        said, rest = split_after_wake_phrase(text)
+        if said and not rest:
+            return None
+        text = rest if said else text
+        return None if is_noise_transcript(text) else (text, False)
+    if is_noise_transcript(text):
+        return None
+    said, rest = split_after_wake_phrase(text)
+    if said:
+        return (rest, False) if rest else None
+    return text, True
+
+
+def consider(text, turn_type, embedded_seconds, embedding, voiceprint):
+    """Start a speculative turn for this transcript if the real one would call
+    Claude with it, and return it; otherwise None. Called on the Deepgram
+    thread the moment a speculative transcript arrives."""
+    global _current
+    # A/B alternation advances a counter when the model is chosen, so there is
+    # no way to know the real turn's model in advance. It is off in production.
+    if not SPECULATIVE_CLAUDE or MODEL_AB_TEST:
+        return None
+    # Before the intent examples are encoded, classify would spend seconds.
+    if not local_intent.is_warm():
+        return None
+    derived = user_text_for(text, turn_type)
+    if derived is None:
+        return None
+    user_text, session_trusted = derived
+    if local_intent.classify(user_text) is not None:
+        return None
+    verdict = verification.decide(embedded_seconds, embedding, voiceprint, session_trusted)
+    if verdict.outcome != verification.VERIFIED:
+        return None
+
+    def make_request():
+        # The real turn saves his message and then reads the last twenty rows,
+        # so this is the last nineteen plus his message, never saved here.
+        history = get_recent_messages(19) + [{"role": "user", "content": user_text}]
+        return brain.build_request(user_text, "voice", brain.effective_tier(), MODEL_A,
+                                   history, alerts.peek_for_fold(), log_recall=False)
+
+    turn = SpeculativeTurn(make_request)
+    with _current_lock:
+        previous, _current = _current, turn
+    if previous is not None:
+        previous.cancel()
+    print(f"(speculating on {user_text!r})", flush=True)
+    return turn
+
+
+def take():
+    """The pending speculation, handed to the real turn, or None."""
+    global _current
+    with _current_lock:
+        turn, _current = _current, None
+    return turn
+
+
+def discard():
+    """Cancel anything pending. Called whenever a new recording starts."""
+    turn = take()
+    if turn is not None:
+        turn.cancel()

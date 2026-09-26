@@ -96,6 +96,7 @@ from audio_segments import audio_ctx_for, segment_bounds
 from wake_listener import WakeListener
 import wake_capture
 import deepgram_stt
+import speculative_turn
 from database import keep_voiceprint_sample, log_verification
 import timing
 
@@ -534,25 +535,59 @@ class _Speculation:
     def __init__(self, frames, turn_type='initial'):
         _write_wav(frames, SPECULATIVE_WAV)
         self.stale = False
+        self.turn_type = turn_type
+        self.turn = None          # the speculative Claude call, once started
+        self._lock = threading.Lock()
         self.proc = subprocess.Popen(
             _whisper_cmd(SPECULATIVE_WAV, threads=SPECULATIVE_THREADS),
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        # From the frames rather than SPECULATIVE_WAV, which the next speculation
-        # overwrites while this request may still be reading it. Same hazard
-        # early_verify.prepare exists to avoid.
-        self.remote_run = deepgram_stt.start(frames)
         # The voice embedding starts beside it, on the same frames; see
-        # early_verify.py. A failure here only loses the head start.
+        # early_verify.py. A failure here only loses the head start. Started
+        # before the Deepgram request, because the speculative Claude call is
+        # decided on both the moment the transcript arrives.
         try:
             prepended = wake_word_audio() if turn_type == 'initial' else None
             self.early = early_verify.start(frames, prepended)
         except Exception as exc:
             print(f"Early verification unavailable: {exc}", flush=True)
             self.early = None
+        # From the frames rather than SPECULATIVE_WAV, which the next speculation
+        # overwrites while this request may still be reading it. Same hazard
+        # early_verify.prepare exists to avoid.
+        self.remote_run = deepgram_stt.start(frames, on_done=self._on_transcript)
+
+    def _on_transcript(self, text):
+        """The Deepgram transcript is in: maybe open the Claude call now, while
+        endpointing is still waiting out the silence. On the request's thread.
+
+        The embedding usually finished long before Deepgram; if it has not, no
+        speculation, rather than holding this thread for it."""
+        if self.stale or self.early is None:
+            return
+        try:
+            wav, embedding = self.early.result(timeout=0.3)
+        except Exception:
+            return
+        turn = speculative_turn.consider(text, self.turn_type,
+                                         len(wav) / RESEMBLYZER_SR, embedding, voiceprint)
+        if turn is None:
+            return
+        # He may have spoken again while it was being decided. cancel() reads
+        # self.turn under the same lock, so one of the two always cancels it.
+        with self._lock:
+            stale = self.stale
+            if not stale:
+                self.turn = turn
+        if stale:
+            turn.cancel()
 
     def cancel(self):
         """He spoke again, so this covers only part of the turn."""
-        self.stale = True
+        with self._lock:
+            self.stale = True
+            turn = self.turn
+        if turn is not None:
+            turn.cancel()
         if self.early is not None:
             self.early.cancel()
         if self.remote_run is not None:
@@ -613,8 +648,12 @@ _early_verification = None
 
 
 def cancel_speculation():
-    """Drop any pending run. Safe to call when there is nothing pending."""
+    """Drop any pending run. Safe to call when there is nothing pending.
+
+    Also drops a speculative Claude call left from an earlier recording: every
+    recording starts here, so nothing can be claimed across two of them."""
     global _pending_speculation, _early_verification
+    speculative_turn.discard()
     _early_verification = None
     if _pending_speculation is not None:
         _pending_speculation.cancel()
