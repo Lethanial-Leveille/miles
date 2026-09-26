@@ -12,7 +12,7 @@ from database import get_pronunciations
 from config import (
     ELEVENLABS_API_KEY, TTS_VOICE_ID,
     DEFAULT_TTS_MODEL, TTS_OUTPUT_FORMAT, TTS_APP_OUTPUT_FORMAT, TTS_PHONEME_TAGS,
-    TTS_VOICE_SETTINGS, SPEAKER_NAME_HINT, speak_lock,
+    TTS_VOICE_SETTINGS, SPEAKER_NAME_HINT, TTS_HEDGE_AFTER_MS, speak_lock,
 )
 
 CHIME_PATH = os.path.expanduser("~/miles/assets/wake_chime.wav")
@@ -140,7 +140,14 @@ class Synthesis:
 
     The stream is drained on a daemon thread into a queue. A failure is kept
     and reported by the player, so it surfaces where it always did rather than
-    dying quietly on a background thread."""
+    dying quietly on a background thread.
+
+    A request with no audio after TTS_HEDGE_AFTER_MS is sent again, and
+    whichever answers first is played; the other closes its stream as soon as a
+    winner exists. On Sep 25 2026 v3 took 16.4s to a first chunk live and 12.9s
+    in a test whose very next request took 0.5s: one unlucky request, not a slow
+    service. The threshold sits above p95 of the first byte (1199ms), so it
+    fires on the tail and almost never on a normal reply."""
 
     _DONE = object()
 
@@ -161,16 +168,65 @@ class Synthesis:
             output_format=output_format or TTS_OUTPUT_FORMAT,
             **({"seed": seed} if seed is not None else {}),
         )
-        threading.Thread(target=self._drain, daemon=True).start()
+        self._lock = threading.Lock()
+        self._winner = None       # the attempt whose audio is being played
+        self._started = 0         # attempts sent
+        self._ended = 0           # attempts that have stopped, for any reason
+        self._finished = False    # _DONE has been queued
+        self._attempt()
+        if TTS_HEDGE_AFTER_MS is not None:
+            threading.Thread(target=self._hedge, daemon=True).start()
 
-    def _drain(self):
+    def _attempt(self):
+        with self._lock:
+            number = self._started
+            self._started += 1
+        threading.Thread(target=self._drain, args=(number,), daemon=True).start()
+
+    def _hedge(self):
+        time.sleep(TTS_HEDGE_AFTER_MS / 1000.0)
+        with self._lock:
+            if self._winner is not None or self._finished:
+                return
+        print(f"  no audio after {TTS_HEDGE_AFTER_MS}ms, sending the request "
+              f"again", flush=True)
+        self._attempt()
+
+    def _drain(self, number):
         try:
             for chunk in _elevenlabs.text_to_speech.stream(**self._request):
-                if chunk:
-                    self._chunks.put(chunk)
+                if not chunk:
+                    continue
+                with self._lock:
+                    if self._winner is None:
+                        self._winner = number
+                        if number:
+                            print("  the resent request answered first", flush=True)
+                    mine = self._winner == number
+                # Returning closes this stream, which frees the request slot
+                # the plan counts against the other.
+                if not mine:
+                    return
+                self._chunks.put(chunk)
         except Exception as e:
-            self.error = e
+            with self._lock:
+                if self._winner in (None, number):
+                    self.error = e
         finally:
+            self._end(number)
+
+    def _end(self, number):
+        """Queue _DONE once: when the winner ends, or when every attempt has
+        ended without one."""
+        with self._lock:
+            self._ended += 1
+            if self._finished:
+                return
+            done = (self._winner == number
+                    or (self._winner is None and self._ended == self._started))
+            if done:
+                self._finished = True
+        if done:
             self._chunks.put(self._DONE)
 
     def chunks(self):

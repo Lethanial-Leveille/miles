@@ -605,6 +605,12 @@ TTS_OUTPUT_FORMAT    = "pcm_22050"   # raw S16_LE mono, piped straight to aplay
 # whole point of sending it.
 TTS_APP_OUTPUT_FORMAT = "mp3_44100_64"
 
+# A synthesis request with no audio after this many ms is sent again, and the
+# first to answer is played. First byte since Sep 13 2026, 136 requests: p50
+# 628ms, p95 1199ms, p99 5272ms, worst 16376ms. At 1500 about 4 percent resend,
+# and they are the ones that would have left him in silence. None turns it off.
+TTS_HEDGE_AFTER_MS = 1500
+
 # eleven_v3 since Sep 13 2026, chosen by ear.
 #
 # On flash_v2 every reply sounded like a narrator stringing words together.

@@ -110,7 +110,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (963 passing, 6 skipped, Sep 25 2026)
+│   └── tests/                 # pytest suite (973 passing, 6 skipped, Sep 25 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -268,6 +268,8 @@ of the value itself.
 - `TTS_OUTPUT_FORMAT = "pcm_22050"` (raw S16_LE mono, piped to aplay)
 - `TTS_APP_OUTPUT_FORMAT = "mp3_44100_64"` (what `/speak` sends the app; PCM is
   free down a local pipe and wasteful down the tunnel)
+- `TTS_HEDGE_AFTER_MS = 1500` (a request with no audio by then is sent again; first to
+  answer plays)
 - `TTS_PHONEME_TAGS = True`
 - `SPEAKER_NAME_HINT = "AB13X"` (resolved by name at runtime in tts.py)
 - `PHRASE_DIR = ~/miles/data/phrases`, gitignored. `PHRASES` in `phrasebank.py`
