@@ -784,8 +784,9 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             turn_fingerprint(user_text, channel, tier, model, history, pending))
     if replay is not None:
         request = speculation.request
-        print(f"(speculative call claimed, sent "
-              f"{(time.monotonic() - speculation.opened_at) * 1000:.0f}ms ago)", flush=True)
+        head_start_ms = (time.monotonic() - speculation.opened_at) * 1000.0
+        timing.mark('claude_head_start_ms', head_start_ms)
+        print(f"(speculative call claimed, sent {head_start_ms:.0f}ms ago)", flush=True)
         if tier == "hokage":
             _log_recall_later(user_text)
     else:

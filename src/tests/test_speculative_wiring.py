@@ -295,3 +295,19 @@ def test_the_voice_turn_hands_it_over_and_always_cancels_it():
     assert "speculative_turn.take()" in source
     assert "ask_nova(text, speculation=speculation)" in source
     assert "finally:" in source and "speculation.cancel()" in source.split("finally:")[1]
+
+
+def test_a_claim_records_how_early_the_call_went_out(turn, monkeypatch):
+    marks = {}
+    monkeypatch.setattr(brain.timing, "mark", lambda stage, ms: marks.setdefault(stage, ms))
+    speculation = _Speculation(_real_fingerprint())
+    speculation.opened_at -= 0.5
+    turn(speculation)
+    assert 450 <= marks["claude_head_start_ms"] < 2000
+
+
+def test_an_unclaimed_turn_records_no_head_start(turn, monkeypatch):
+    marks = {}
+    monkeypatch.setattr(brain.timing, "mark", lambda stage, ms: marks.setdefault(stage, ms))
+    turn(_Speculation("stale"))
+    assert "claude_head_start_ms" not in marks

@@ -61,6 +61,12 @@ Changes made against this baseline, one at a time so each shows up on its own:
   ([AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#speculative-transcription)).
   Expected to take most of the 287ms `transcribe_ms`; not yet measured live.
 
+- Sep 25 2026: the first Claude call opens during the endpoint wait and the real
+  turn claims it (`speculative_turn.py`). **Timed as `claude_head_start_ms`**
+  (migration 26): how long before the claim the call went out, NULL when nothing
+  was claimed. `claude_ttft_ms` keeps meaning the wait from the claim, so on a
+  claimed turn it is only what was left of the call. Not yet measured live.
+
 Early reading, five turns only, not a figure to quote: `verify_ms` 3 to 22ms
 where the speculation held.
 
