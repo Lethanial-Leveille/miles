@@ -303,6 +303,32 @@ def stream_audio(text, output_format=None):
     return chunks()
 
 
+_last_warm = [0.0]
+
+
+def warm():
+    """Open the ElevenLabs connection ahead of the first sentence.
+
+    The client drops an idle connection after 5s and turns are a median 37s
+    apart, so every reply's first request used to reconnect: 106 to 121ms cold
+    against 49 to 65ms warm, measured Sep 25 2026. Called when a speculative
+    turn starts, about 1.5s before its first sentence can exist. The key cannot
+    list models and gets a 401, which is still a full round trip on the same
+    connection, and costs nothing. Rate limited, and never raises."""
+    now = time.monotonic()
+    if now - _last_warm[0] < 3.0:
+        return
+    _last_warm[0] = now
+
+    def ping():
+        try:
+            _elevenlabs.models.list()
+        except Exception:
+            pass
+
+    threading.Thread(target=ping, daemon=True).start()
+
+
 def _report_underruns(lines):
     """Forward aplay's underrun reports to the journal, and nothing else.
 

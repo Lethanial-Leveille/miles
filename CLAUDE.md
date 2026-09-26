@@ -89,6 +89,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── speaker_encoder.py     # Encoder abstraction behind verify_voice
 │   ├── early_verify.py        # voice embedding started beside the speculative transcript
 │   ├── verification.py        # the verify decision alone: early and late ask the same rule
+│   ├── speculative_turn.py    # Claude's first call opened before the endpoint, claimed after
 │   ├── embeddings.py          # Sentence embeddings for retrieval and intent
 │   ├── tts.py                 # ElevenLabs synthesis, speaker resolution, aplay
 │   ├── phrasebank.py          # Pre rendered Victoria, played from disk, no network
@@ -110,7 +111,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (984 passing, 6 skipped, Sep 25 2026)
+│   └── tests/                 # pytest suite (995 passing, 6 skipped, Sep 25 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
