@@ -10,9 +10,10 @@ import numpy as np
 
 
 class WakeListener:
-    def __init__(self, predict, threshold, chunk_samples=1280):
+    def __init__(self, predict, threshold, chunk_samples=1280, reset=None):
         self._predict = predict
         self._threshold = threshold
+        self._reset = reset
         self._chunk_bytes = chunk_samples * 2   # int16 is two bytes a sample
         self._buffer = b""
 
@@ -20,7 +21,10 @@ class WakeListener:
         """Add one capture frame. True when the wake word was just heard.
 
         The buffer is cleared on a detection, so the audio that held the wake
-        word cannot fire it a second time on the next frame."""
+        word cannot fire it a second time on the next frame. The model is reset
+        too: it smooths its score over recent chunks, so without a reset the
+        same "hey nova" kept scoring above the line. On Sep 26 2026 one fired
+        eight times in 640ms, restarting the recording and chiming each time."""
         self._buffer += frame
         while len(self._buffer) >= self._chunk_bytes:
             chunk = self._buffer[:self._chunk_bytes]
@@ -28,5 +32,7 @@ class WakeListener:
             scores = self._predict(np.frombuffer(chunk, dtype=np.int16))
             if max(scores.values(), default=0.0) > self._threshold:
                 self._buffer = b""
+                if self._reset is not None:
+                    self._reset()
                 return True
         return False

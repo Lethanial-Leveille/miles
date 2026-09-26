@@ -51,3 +51,31 @@ def test_the_threshold_is_exclusive_like_the_main_loop():
     """voice_main treats a score equal to WAKE_THRESHOLD as a miss."""
     listener = WakeListener(lambda chunk: {"hey_nova": 0.4}, 0.4)
     assert listener.feed(_frame(1280)) is False
+
+
+def test_a_detection_resets_the_model_so_one_wake_fires_once():
+    """openWakeWord smooths its score over recent chunks. Without a reset the same
+    "hey nova" scored above the line on the chunks after it: on Sep 26 2026 one
+    fired eight times in 640ms, restarting the recording and chiming each time."""
+    class Model:
+        def __init__(self):
+            self.level = 0.0
+        def predict(self, chunk):
+            return {"hey_nova": self.level}
+        def reset(self):
+            self.level = 0.0
+
+    model = Model()
+    listener = WakeListener(model.predict, 0.4, reset=model.reset)
+    chunk = b"\x00\x00" * 1280
+    model.level = 0.9
+    fired = [listener.feed(chunk) for _ in range(8)]
+    assert fired == [True] + [False] * 7
+
+
+def test_the_recording_listener_is_given_the_models_reset():
+    import ast, pathlib
+    source = (pathlib.Path(__file__).resolve().parent.parent / "audio.py").read_text()
+    fn = next(n for n in ast.walk(ast.parse(source))
+              if isinstance(n, ast.FunctionDef) and n.name == "_recording_wake")
+    assert "reset=recording_wake_model.reset" in ast.unparse(fn)
