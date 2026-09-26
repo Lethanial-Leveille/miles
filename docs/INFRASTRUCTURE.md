@@ -80,6 +80,15 @@ for u in miles-voice miles-server miles-tunnel miles-health miles-wifi; do
 done
 ```
 
+The tmpfs mount for `build/` is a unit too, since Sep 25 2026, and is checked the
+same way:
+
+```bash
+diff -q /etc/systemd/system/home-theycallmelee-miles-build.mount \
+        ~/miles/systemd/home-theycallmelee-miles-build.mount
+findmnt ~/miles/build    # tmpfs, or build/ is back on the SD card
+```
+
 Editing under `/etc` and forgetting to copy back is the drift this invites.
 Change the repo copy first, then install it.
 
