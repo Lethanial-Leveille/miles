@@ -280,6 +280,10 @@ def record_command(on_wake=None):
             # He spoke through the pause, so anything started on it covers only
             # part of the turn. Discard and let the next pause try again.
             cancel_speculation()
+
+            # Keeps the Deepgram connection open while he talks, so the request
+            # at the pause does not pay a handshake. Rate limited inside.
+            deepgram_stt.keep_warm()
         else:
             silent_chunks += 1
 
@@ -372,6 +376,7 @@ def listen_for_followup(timeout=10, on_wake=None):
             silent_chunks = 0
             last_speech_at = time.monotonic()
             cancel_speculation()
+            deepgram_stt.keep_warm()
         else:
             silent_chunks += 1
             maybe_speculate(frames, silent_chunks, spec_chunks,

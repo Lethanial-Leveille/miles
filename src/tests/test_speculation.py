@@ -70,6 +70,14 @@ def test_capture_loop_cancels_speculation(loop):
         f"can be collected as if it covered the whole turn.")
 
 
+@pytest.mark.parametrize("loop", CAPTURE_LOOPS)
+def test_capture_loop_keeps_deepgram_warm_while_he_talks(loop):
+    """Both loops, for the reason this file exists: speculation reached only one
+    of them for as long as it had existed."""
+    calls = {ast.unparse(n.func) for n in ast.walk(_function(loop)) if isinstance(n, ast.Call)}
+    assert "deepgram_stt.keep_warm" in calls
+
+
 def test_neither_loop_inlines_the_speculation(loop=None):
     """The helper exists because inlining is what let the two drift apart.
 

@@ -26,6 +26,7 @@ longer than a socket read.
 
 import io
 import threading
+import time
 import wave
 
 import requests
@@ -34,6 +35,22 @@ from config import (DEEPGRAM_STT, DEEPGRAM_API_KEY, DEEPGRAM_MODEL,
                     DEEPGRAM_TIMEOUT_S, RATE, CHANNELS)
 
 _ENDPOINT = "https://api.deepgram.com/v1/listen"
+
+# Free and carries no audio. Only here to open or refresh the connection.
+_WARM_URL = "https://api.deepgram.com/v1/projects"
+
+# A new connection costs about 225ms of every request (380ms against 153ms
+# reused, measured Sep 25 2026), and Deepgram closes one that sits idle for
+# about 5s: a reuse at 5s failed with RemoteDisconnected. So a connection is
+# reused only inside 4s of its last response, and kept warm while he talks by
+# a request every 3s.
+_REUSE_WITHIN_S = 4.0
+_REWARM_AFTER_S = 3.0
+
+_lock = threading.Lock()
+_session = None
+_last_answer = 0.0     # monotonic time the connection last finished a response
+_warming = False
 
 # punctuate, and deliberately not smart_format. Smart format rewrites numbers as
 # digits, and Nova's spoken replies and the eval truths are both written in words,
@@ -63,22 +80,90 @@ def _wav_bytes(frames):
     return buf.getvalue()
 
 
+def _session_for(fresh=False):
+    """The shared connection when it is recent enough to trust, else a new one.
+
+    Past _REUSE_WITHIN_S the old one is closed rather than tried, because the
+    server has likely dropped it and finding that out costs a failed request."""
+    global _session
+    with _lock:
+        stale = time.monotonic() - _last_answer >= _REUSE_WITHIN_S
+        if _session is None or fresh or stale:
+            if _session is not None:
+                _session.close()
+            _session = requests.Session()
+        return _session
+
+
+def _answered():
+    global _last_answer
+    with _lock:
+        _last_answer = time.monotonic()
+
+
+def _headers(content_type=None):
+    headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
+    if content_type:
+        headers["Content-Type"] = content_type
+    return headers
+
+
+def keep_warm():
+    """Open or refresh the connection while he is still talking.
+
+    Called on speech frames by both capture loops and rate limited here, so it
+    costs a thread start at most every _REWARM_AFTER_S. Sends no audio: the
+    recording still leaves the Pi only at the pause, as before."""
+    global _warming
+    if not available():
+        return
+    with _lock:
+        if _warming or time.monotonic() - _last_answer < _REWARM_AFTER_S:
+            return
+        _warming = True
+    threading.Thread(target=_warm, daemon=True).start()
+
+
+def _warm():
+    global _warming
+    try:
+        _session_for().get(_WARM_URL, headers=_headers(), timeout=DEEPGRAM_TIMEOUT_S)
+        _answered()
+    except requests.RequestException:
+        pass  # the transcription request opens its own connection, as it always did
+    finally:
+        with _lock:
+            _warming = False
+
+
+def _post(audio, fresh):
+    return _session_for(fresh).post(
+        _ENDPOINT,
+        params=dict(_PARAMS, model=DEEPGRAM_MODEL),
+        headers=_headers("audio/wav"),
+        data=audio, timeout=DEEPGRAM_TIMEOUT_S)
+
+
 def transcribe_bytes(audio):
     """One request. The transcript, or None on any failure whatsoever.
 
     None and the empty string mean different things here. None is "ask whisper";
     an empty string is Deepgram saying it heard no words, which on a false wake
-    is the correct answer and better than whisper's invented sentence."""
+    is the correct answer and better than whisper's invented sentence.
+
+    A reused connection that turns out closed is retried once on a new one. A
+    timeout is not, so a slow Deepgram can never double the wait."""
     if not available():
         return None
     try:
-        r = requests.post(
-            _ENDPOINT,
-            params=dict(_PARAMS, model=DEEPGRAM_MODEL),
-            headers={"Authorization": f"Token {DEEPGRAM_API_KEY}",
-                     "Content-Type": "audio/wav"},
-            data=audio, timeout=DEEPGRAM_TIMEOUT_S)
+        try:
+            r = _post(audio, fresh=False)
+        except requests.Timeout:
+            raise
+        except requests.ConnectionError:
+            r = _post(audio, fresh=True)
         r.raise_for_status()
+        _answered()
         alts = r.json()["results"]["channels"][0]["alternatives"]
     except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
         print(f"Deepgram unavailable, using whisper: {exc}", flush=True)
@@ -89,10 +174,11 @@ def transcribe_bytes(audio):
 class Run:
     """A request in flight on its own thread."""
 
-    def __init__(self, audio):
+    def __init__(self, audio, on_done=None):
         self._text = None
         self._done = threading.Event()
         self._cancelled = False
+        self._on_done = on_done
         self._thread = threading.Thread(target=self._work, args=(audio,),
                                         daemon=True)
         self._thread.start()
@@ -102,6 +188,14 @@ class Run:
             self._text = transcribe_bytes(audio)
         finally:
             self._done.set()
+        # For the speculative turn, which starts the moment the transcript
+        # exists rather than when someone next asks for it. Not called for a
+        # run already cancelled, and a failure in it never reaches the result.
+        if self._on_done is not None and not self._cancelled:
+            try:
+                self._on_done(self._text)
+            except Exception as exc:
+                print(f"Deepgram completion hook failed: {exc}", flush=True)
 
     def cancel(self):
         """Stop waiting on it. The request itself is left to finish and be
@@ -137,12 +231,14 @@ def transcribe_file(path):
     return transcribe_bytes(audio)
 
 
-def start(frames):
-    """Begin a request on captured frames. None when it is not worth trying."""
+def start(frames, on_done=None):
+    """Begin a request on captured frames. None when it is not worth trying.
+    on_done, when given, is called with the transcript (or None) on the
+    request's own thread as soon as it arrives."""
     if not available():
         return None
     try:
-        return Run(_wav_bytes(frames))
+        return Run(_wav_bytes(frames), on_done)
     except Exception as exc:
         print(f"Deepgram could not start: {exc}", flush=True)
         return None
