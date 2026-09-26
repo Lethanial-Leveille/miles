@@ -272,6 +272,8 @@ of the value itself.
 - `PHRASE_DIR = ~/miles/data/phrases`, gitignored. `PHRASES` in `phrasebank.py`
   is the versioned source of truth; the WAVs are derived from it.
 - `ACK_SPOKEN_CHANCE = 0.75`
+- `BRIDGE_DELAY_MS = 400` (a bridge line plays only if the tool is still running
+  after this)
 - Voice settings: `stability=1.0`, `similarity_boost=0.75`, `style=0.00`,
   `speed=1.00` (v3 ignores it), `use_speaker_boost` unset. **Changing any of
   these means re rendering the whole phrase bank.**

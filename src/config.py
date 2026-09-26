@@ -754,6 +754,13 @@ PHRASE_DIR = os.path.expanduser("~/miles/data/phrases")
 # wake word and the command. Mixing keeps the fast case the common one.
 ACK_SPOKEN_CHANCE = 0.75
 
+# How long a tool may run before a bridge line covers it. Below this the answer
+# is close behind, and a 1.5s clip in front of it only delays it: a calendar
+# addition takes about 5ms, and its read back waited behind "Let me look at your
+# calendar." Tool times in tool_call_log, Sep 25 2026: reads of the calendar,
+# Oura and weather run 500 to 1000ms, additions, reminders and memory under 50ms.
+BRIDGE_DELAY_MS = 400
+
 # ── Local intent ──
 # Cosine against the canonical phrasings in local_intent.EXAMPLES. Both the
 # lexical gate and this have to agree before anything fires.

@@ -35,7 +35,8 @@ import prowl_tools    # noqa: F401
 import pending_action # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
-                    HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN)
+                    HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN,
+                    BRIDGE_DELAY_MS)
 
 claude = anthropic.AsyncAnthropic()
 
@@ -359,6 +360,24 @@ _BRIDGES = {
 }
 
 
+async def _bridge_if_slow(tool_future, key):
+    """Play the bridge only if the tool is still running after BRIDGE_DELAY_MS.
+
+    It used to start when the call began streaming, before the tool had run at
+    all, so a calendar addition that takes 5ms still said "Let me look at your
+    calendar." for a second and a half, and the read back waited behind it. A
+    fast tool now answers in silence and only a slow one is covered. Returns the
+    playback future, or None when nothing played. It plays under speak_lock, so
+    the answer waits for it to finish."""
+    if key is None:
+        return None
+    done, _ = await asyncio.wait({tool_future}, timeout=BRIDGE_DELAY_MS / 1000.0)
+    if done:
+        return None
+    return asyncio.get_running_loop().run_in_executor(
+        None, lambda: phrasebank.play(key, bridge=True))
+
+
 def _bridge_for(event):
     """The bridge key for a tool call starting, or None."""
     if event.type != "content_block_start" or event.content_block.type != "tool_use":
@@ -680,6 +699,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
     accumulated   = ""
     bridge        = None
+    bridge_key    = None
     claude_start  = time.monotonic()
     first_token   = None
     sentence_seen = False
@@ -702,15 +722,13 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # written argument has no path to TTS by construction.
         async for event in stream:
             _emit(on_text, "stage", _stage_for(event))
-            # Spoken the moment a slow tool starts, so the room is not silent for
-            # the five seconds a tool turn used to take before any sound. Only
-            # when Nova wrote no lead in of her own, and only once. It plays
-            # under speak_lock, so the answer waits for it to finish.
+            # Chosen here, played only if the tool turns out to be slow; see
+            # _bridge_if_slow. Only when Nova wrote no lead in of her own, and
+            # only once.
             key = (_bridge_for(event)
-                   if _plays_in_the_room(channel, device) and bridge is None else None)
+                   if _plays_in_the_room(channel, device) and bridge_key is None else None)
             if key is not None and not accumulated.strip():
-                bridge = loop.run_in_executor(
-                    None, lambda k=key: phrasebank.play(k, bridge=True))
+                bridge_key = key
             if event.type != "content_block_delta":
                 continue
             if event.delta.type != "text_delta":
@@ -775,6 +793,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # was the bridge sentence playing through the speaker.
         tool_future = loop.run_in_executor(None, _run_tools, tool_uses, model, tier)
         tool_start  = time.monotonic()
+        bridge      = await _bridge_if_slow(tool_future, bridge_key)
         results     = await tool_future
         timing.note_tool((time.monotonic() - tool_start) * 1000.0)
         await tts_task

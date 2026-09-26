@@ -245,11 +245,31 @@ def test_dismissing_shows_no_stage(turn):
 
 # ── the spoken bridge on slow tool turns (Sep 16 2026) ──
 
-def test_a_slow_tool_on_voice_is_bridged_before_the_answer(turn):
+def _tool_taking(monkeypatch, seconds):
+    """A tool that runs this long. The delay is shrunk so the test stays fast;
+    what matters is which side of it the tool lands on."""
+    import time
+    monkeypatch.setattr(brain, "BRIDGE_DELAY_MS", 20)
+    monkeypatch.setattr(registry, "call",
+                        lambda name, args: (time.sleep(seconds), "ran")[1])
+
+
+def test_a_slow_tool_on_voice_is_bridged_before_the_answer(turn, monkeypatch):
+    _tool_taking(monkeypatch, 0.2)
     weather = SimpleNamespace(type="tool_use", name="get_weather", id="toolu_1", input={})
     result, played = turn("voice", _FakeStream([], [weather]), _FakeStream(["It's 75 degrees."]))
     assert played == ["bridge:bridge_weather", "It's 75 degrees."]
     assert result.text == "It's 75 degrees.", "the bridge is filler, not part of the answer"
+
+
+def test_a_fast_tool_with_a_bridge_plays_none(turn, monkeypatch):
+    """Sep 25 2026: a 5ms calendar addition said "Let me look at your calendar."
+    before its read back, which only made the read back wait."""
+    _tool_taking(monkeypatch, 0)
+    weather = SimpleNamespace(type="tool_use", name="get_weather", id="toolu_1", input={})
+    result, played = turn("voice", _FakeStream([], [weather]), _FakeStream(["It's 75 degrees."]))
+    assert played == ["It's 75 degrees."]
+
 
 
 def test_no_bridge_when_nova_wrote_her_own_lead_in(turn):
