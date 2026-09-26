@@ -144,7 +144,7 @@ def _run_local(match, user_text):
     return TurnResult(text=spoken, dismissed=dismissed)
 
 
-def run_turn(text):
+def run_turn(text, named=False):
     """Run one turn, returning None if it could not be completed.
 
     The boundary is here rather than in brain.py because brain serves two
@@ -171,7 +171,7 @@ def run_turn(text):
         match = local_intent.classify(text)
         if match is not None:
             return _run_local(match, text)
-        return ask_nova(text, speculation=speculation)
+        return ask_nova(text, speculation=speculation, named=named)
     except anthropic.APIConnectionError as exc:
         # The exception says a connection failed, not which one. Ask locally so
         # she names the cause she has actually ruled everything else out for.
@@ -358,7 +358,8 @@ try:
                 continue
 
             start  = time.time()
-            result = run_turn(user_text)
+            # He said the wake word to start this, by definition.
+            result = run_turn(user_text, named=True)
 
             # Nothing to say and nothing to save. Back to the wake word rather
             # than into the follow up window, which would only collect more
@@ -477,7 +478,7 @@ try:
                     break
 
                 start  = time.time()
-                result = run_turn(followup_text)
+                result = run_turn(followup_text, named=said_wake)
 
                 if result is None:
                     audio.flush_input()

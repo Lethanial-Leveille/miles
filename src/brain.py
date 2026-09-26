@@ -476,6 +476,26 @@ def _with_recalled(messages: list, query: str, log: bool = True) -> list:
     }]
 
 
+NAMED_TURN_NOTE = "[He said your name to start this.]"
+
+
+def _with_named_note(messages: list, named: bool) -> list:
+    """On a turn he opened with the wake word, say so in the final user turn.
+
+    The wake phrase is stripped before the transcript reaches Claude, so a
+    question asked by name looked exactly like room chatter caught in the follow
+    up window. On Sep 26 2026, with friends talking, "Is Trump a good president?"
+    and a question about a Porsche around the Nurburgring, both asked after
+    "hey nova", were ignored as not addressed to her. Same placement as the
+    clock, after the cache breakpoint; the database keeps the raw message."""
+    if not named or not messages or messages[-1]["role"] != "user":
+        return messages
+    return messages[:-1] + [{
+        **messages[-1],
+        "content": f"{messages[-1]['content']}\n\n{NAMED_TURN_NOTE}",
+    }]
+
+
 def _with_current_time(messages: list) -> list:
     """Append the current date and time to the final user turn.
 
@@ -611,7 +631,8 @@ class TurnRequest(NamedTuple):
     fingerprint: str
 
 
-def _fingerprint(user_text, channel, tier, model, prompt, history, pending_alerts):
+def _fingerprint(user_text, channel, tier, model, prompt, history, pending_alerts,
+                 named=False):
     """What a request was built from, as one comparable string.
 
     A speculative turn builds its request before the endpoint, and the real turn
@@ -625,7 +646,7 @@ def _fingerprint(user_text, channel, tier, model, prompt, history, pending_alert
     material = json.dumps({
         "user_text": user_text, "channel": channel, "tier": tier, "model": model,
         "prompt": prompt, "history": history,
-        "alerts": [a.summary for a in pending_alerts],
+        "alerts": [a.summary for a in pending_alerts], "named": named,
     }, sort_keys=True)
     return hashlib.sha256(material.encode()).hexdigest()
 
@@ -640,11 +661,12 @@ def _prompt_for(channel, tier):
                                  memory_manifest() if personal else [], tier=tier)
 
 
-def turn_fingerprint(user_text, channel, tier, model, history, pending_alerts):
+def turn_fingerprint(user_text, channel, tier, model, history, pending_alerts,
+                     named=False):
     """build_request's fingerprint without the rest of it: no recall, about 3ms.
     What the real turn checks a speculation against."""
     return _fingerprint(user_text, channel, tier, model, _prompt_for(channel, tier),
-                        history, pending_alerts)
+                        history, pending_alerts, named)
 
 
 def _log_recall_later(user_text):
@@ -655,7 +677,7 @@ def _log_recall_later(user_text):
 
 
 def build_request(user_text, channel, tier, model, history, pending_alerts,
-                  log_recall=True) -> TurnRequest:
+                  log_recall=True, named=False) -> TurnRequest:
     """The request for one turn, with no side effects.
 
     Nothing here saves a message, consumes an alert, advances the confirmation
@@ -673,11 +695,12 @@ def build_request(user_text, channel, tier, model, history, pending_alerts,
     personal = tier == "hokage"
     enhanced_prompt = _prompt_for(channel, tier)
     fingerprint = _fingerprint(user_text, channel, tier, model, enhanced_prompt,
-                               history, pending_alerts)
+                               history, pending_alerts, named)
 
     # Folded before the clock, so all three land inside the same final user turn.
     recent = _with_alerts(_trim_history(history), pending_alerts)
     recent = _with_recalled(recent, user_text, log=log_recall) if personal else recent
+    recent = _with_named_note(recent, named)
     recent = _with_current_time(recent)
     recent = _with_text_note(recent, channel)
 
@@ -742,13 +765,16 @@ def _run_tools(tool_uses, model, tier):
 async def ask_nova_async(user_text: str, device: str = "pi",
                          channel: str = "voice",
                          tier: str = "hokage", on_text=None,
-                         speculation=None) -> TurnResult:
+                         speculation=None, named=False) -> TurnResult:
     """Run one turn.
 
     speculation, when given, is a speculative_turn.SpeculativeTurn that may
     already have made this turn's first Claude call during the endpoint wait.
     It is claimed only on an exact match and otherwise ignored; only the voice
     loop passes one.
+
+    named is True when he opened this turn with the wake word; see
+    _with_named_note. Only the voice loop knows, so only it passes True.
 
     on_text, when given, is called with each piece of the reply as it is
     written, so a caller can show it arriving. It is how /chat/stream feeds the
@@ -781,7 +807,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     replay = None
     if speculation is not None:
         replay = speculation.claim(
-            turn_fingerprint(user_text, channel, tier, model, history, pending))
+            turn_fingerprint(user_text, channel, tier, model, history, pending, named))
     if replay is not None:
         request = speculation.request
         head_start_ms = (time.monotonic() - speculation.opened_at) * 1000.0
@@ -790,7 +816,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         if tier == "hokage":
             _log_recall_later(user_text)
     else:
-        request = build_request(user_text, channel, tier, model, history, pending)
+        request = build_request(user_text, channel, tier, model, history, pending,
+                                named=named)
     recent       = request.messages
     system_param = request.system
 
@@ -1088,7 +1115,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
 def ask_nova(user_text: str, device: str = "pi",
              channel: str = "voice", tier: str = None, on_text=None,
-             speculation=None) -> TurnResult:
+             speculation=None, named=False) -> TurnResult:
     # None means "look it up", so a demotion set in one turn is in force on the
     # next without the caller having to thread it through.
     loop = _thread_loop()
@@ -1096,6 +1123,6 @@ def ask_nova(user_text: str, device: str = "pi",
         return loop.run_until_complete(
             ask_nova_async(user_text, device=device, channel=channel,
                            tier=tier or effective_tier(), on_text=on_text,
-                           speculation=speculation))
+                           speculation=speculation, named=named))
     finally:
         _cancel_leftovers(loop)

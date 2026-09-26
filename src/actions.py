@@ -542,6 +542,8 @@ def cancel_reminder_tool(content):
         "or speech that only makes sense as part of an exchange you cannot "
         "see. The follow up window stays open after a turn, so it does pick up "
         "the room.\n\n"
+        "Never call this for a clear question or request in a message marked "
+        "\"[He said your name to start this.]\": he asked you by name.\n\n"
         "Say NOTHING alongside this call. Not an explanation, not an offer to "
         "help, not a single word. Announcing that you are not part of a "
         "conversation is itself joining it, and it is worse than silence "

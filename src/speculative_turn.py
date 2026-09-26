@@ -238,13 +238,14 @@ _current = None
 
 
 def user_text_for(text, turn_type):
-    """(the text the real turn would send, session_trusted), or None when the
-    turn would not reach Claude with it.
+    """(the text the real turn would send, session_trusted, named), or None when
+    the turn would not reach Claude with it.
 
     The order matters and differs by path, exactly as in voice_main: a first
     turn splits off the wake phrase and then checks for noise; a follow up
     checks for noise first, and a wake phrase in it makes a fresh turn that is
-    scored rather than trusted on the session."""
+    scored rather than trusted on the session. named follows voice_main too: a
+    first turn always, a follow up only when it held the wake phrase."""
     if text is None:
         return None
     if turn_type == "initial":
@@ -252,13 +253,13 @@ def user_text_for(text, turn_type):
         if said and not rest:
             return None
         text = rest if said else text
-        return None if is_noise_transcript(text) else (text, False)
+        return None if is_noise_transcript(text) else (text, False, True)
     if is_noise_transcript(text):
         return None
     said, rest = split_after_wake_phrase(text)
     if said:
-        return (rest, False) if rest else None
-    return text, True
+        return (rest, False, True) if rest else None
+    return text, True, False
 
 
 def consider(text, turn_type, embedded_seconds, embedding, voiceprint):
@@ -276,7 +277,7 @@ def consider(text, turn_type, embedded_seconds, embedding, voiceprint):
     derived = user_text_for(text, turn_type)
     if derived is None:
         return None
-    user_text, session_trusted = derived
+    user_text, session_trusted, named = derived
     if local_intent.classify(user_text) is not None:
         return None
     verdict = verification.decide(embedded_seconds, embedding, voiceprint, session_trusted)
@@ -288,7 +289,8 @@ def consider(text, turn_type, embedded_seconds, embedding, voiceprint):
         # so this is the last nineteen plus his message, never saved here.
         history = get_recent_messages(19) + [{"role": "user", "content": user_text}]
         return brain.build_request(user_text, "voice", brain.effective_tier(), MODEL_A,
-                                   history, alerts.peek_for_fold(), log_recall=False)
+                                   history, alerts.peek_for_fold(), log_recall=False,
+                                   named=named)
 
     turn = SpeculativeTurn(make_request)
     with _current_lock:
