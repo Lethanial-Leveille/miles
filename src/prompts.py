@@ -413,9 +413,12 @@ def build_enhanced_prompt(seed_rows, episodic_rows, channel="voice",
         personal_blocks = (HOW_TO_TREAT_HIM, USING_WHAT_YOU_KNOW,
                            NOT_ADDRESSED_TO_YOU, MEMORY_INSTRUCTIONS)
     elif trusted:
-        personal_blocks = (TRUSTED_BLOCK, USING_WHAT_YOU_KNOW)
+        personal_blocks = (TRUSTED_BLOCK, USING_WHAT_YOU_KNOW, NOT_ADDRESSED_TO_YOU)
     else:
-        personal_blocks = (GUEST_BLOCK,)
+        # Guests are reachable by voice since Sep 26 2026, and a false wake on
+        # other people talking now lands here, so staying quiet for speech not
+        # aimed at her applies to them as much as to him.
+        personal_blocks = (GUEST_BLOCK, NOT_ADDRESSED_TO_YOU)
 
     middle = "\n\n".join(
         block for block in (*personal_blocks, capability_block, tool_speech_block,

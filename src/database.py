@@ -1442,6 +1442,30 @@ def get_recent_messages(limit=20):
     return [{"role": role, "content": content} for role, content in rows]
 
 
+def latest_message_id():
+    """The newest conversation_history id, or 0 when there is none. Taken when a
+    conversation starts, so a guest's history can begin after it."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT MAX(id) FROM conversation_history").fetchone()
+    conn.close()
+    return row[0] or 0
+
+
+def get_messages_after(after_id, limit=20):
+    """Messages saved after after_id, oldest first, at most limit of them.
+
+    What a guest turn gets instead of get_recent_messages: only the conversation
+    it is part of. His own history is his; the guest prompt says those facts are
+    not in front of Nova, and this is what makes that true."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT role, content FROM conversation_history WHERE id > ? "
+        "ORDER BY id DESC LIMIT ?", (after_id, limit)).fetchall()
+    conn.close()
+    rows.reverse()
+    return [{"role": role, "content": content} for role, content in rows]
+
+
 def get_history(limit: int = 50, offset: int = 0) -> list:
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()

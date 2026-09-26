@@ -236,6 +236,17 @@ class SpeculativeTurn:
 _current_lock = threading.Lock()
 _current = None
 
+# Whether the conversation in progress is his. A follow up is trusted on the
+# session only when it is: a guest's conversation stays a guest's, and a
+# speculation must never send his personal prompt for a guest's words.
+_session_is_him = False
+
+
+def set_session(is_him):
+    """Called by voice_main each time it decides whose conversation this is."""
+    global _session_is_him
+    _session_is_him = bool(is_him)
+
 
 def user_text_for(text, turn_type):
     """(the text the real turn would send, session_trusted, named), or None when
@@ -278,6 +289,7 @@ def consider(text, turn_type, embedded_seconds, embedding, voiceprint):
     if derived is None:
         return None
     user_text, session_trusted, named = derived
+    session_trusted = session_trusted and _session_is_him
     if local_intent.classify(user_text) is not None:
         return None
     verdict = verification.decide(embedded_seconds, embedding, voiceprint, session_trusted)

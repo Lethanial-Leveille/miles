@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 25 2026 (30) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 26 2026 (1043) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 26 2026 (1061) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on the tool schemas plus `build_enhanced_prompt` output, since tools sit inside the cached prefix, vs the 4096 floor | Sep 25 2026 (17774: tools 7103, system 10670) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
@@ -1425,6 +1425,26 @@ spoken bridge either.
 what comes back, and `NOVA_APP_BACKEND.md` in that repo still says the backend
 speaks every chat turn because TTS "is not gated on channel". The gating claim
 was already wrong and is now wrong twice over.
+
+### An unrecognized voice is a guest, not refused (Sep 26 2026) (DONE)
+
+He wants friends to be able to ask Nova things, with her knowing it is not him
+and gating anything personal. An unrecognized voice used to hear "I don't
+recognize your voiceprint" and nothing else.
+
+**Chosen:** a rejected verification runs the turn at genin with `GUEST_BLOCK`.
+The retry band still asks him to repeat, because a near miss is usually him. A
+guest sees only the conversation since its wake word (`get_messages_after`),
+never his history; the guest prompt says those facts are not in front of her,
+and before this change they were, in the history. Local intents run for a guest
+only if their tool is allowed at genin, since they skip the permission gate.
+Whose conversation it is follows the latest scored turn, and only his is
+trusted on the session, so a guest's short follow ups stay a guest's. Guests
+also get `NOT_ADDRESSED_TO_YOU`, because a false wake on friends talking is a
+guest turn now.
+
+**Why this needs ECAPA:** under Resemblyzer nearly everyone verifies as him (EER
+21.5%), so guest mode only becomes real with the encoder switch.
 
 ### Prowl is relabeled on the Pi, never recomputed (Sep 25 2026) (DONE)
 

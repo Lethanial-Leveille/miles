@@ -99,8 +99,12 @@ def capture(monkeypatch, channel, tier, recalled, alerts):
 
 
 def _built(channel, tier, recalled, alerts):
+    # Below hokage a turn sees only its own conversation; with no start given,
+    # only this message (brain._history_for).
+    history = (list(HISTORY) if tier == "hokage"
+               else [{"role": "user", "content": "how did I sleep"}])
     request = brain.build_request(
-        "how did I sleep", channel, tier, "claude-haiku-4-5", list(HISTORY),
+        "how did I sleep", channel, tier, "claude-haiku-4-5", history,
         [SimpleNamespace(summary=a) for a in alerts])
     return request, json.loads(json.dumps(
         {"model": request.model, "system": request.system, "messages": request.messages},
