@@ -619,6 +619,29 @@ def _migration_026_claude_head_start(conn):
     conn.execute("ALTER TABLE timing_log ADD COLUMN claude_head_start_ms REAL")
 
 
+def _migration_027_presence_log(conn):
+    """Every change in what the presence radar reports: present, absent, silent.
+
+    Changes only, not the ten frames a second, so a quiet evening is a handful
+    of rows. Silent is its own state, never folded into absent: it means the
+    sensor stopped talking, and a room nobody can see into is not an empty one.
+
+    The reading at the change is kept so the log can be tuned from later. How
+    long a false absent lasts while he sits still, or sleeps, is what decides
+    how slow leaving should be, and that is a number to measure, not guess."""
+    conn.execute("""
+        CREATE TABLE presence_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            state TEXT NOT NULL,
+            moving_cm INTEGER,
+            moving_energy INTEGER,
+            still_cm INTEGER,
+            still_energy INTEGER
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -646,6 +669,7 @@ MIGRATIONS = [
     (24, _migration_024_timers_are_rows),
     (25, _migration_025_bridge_timing),
     (26, _migration_026_claude_head_start),
+    (27, _migration_027_presence_log),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -1014,6 +1038,23 @@ def log_wake_near_miss(score, threshold):
         conn.execute(
             "INSERT INTO wake_log (created_at, score, threshold) VALUES (?, ?, ?)",
             (datetime.now().isoformat(), float(score), float(threshold)))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def log_presence(state, report=None):
+    """Record a presence change. Never raises: it runs on the radar's thread
+    inside the voice process, and a logging failure must not reach either."""
+    try:
+        fields = (report.moving_cm, report.moving_energy,
+                  report.still_cm, report.still_energy) if report else (None,) * 4
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO presence_log (created_at, state, moving_cm, moving_energy,"
+            " still_cm, still_energy) VALUES (?, ?, ?, ?, ?, ?)",
+            (datetime.now().isoformat(), state, *fields))
         conn.commit()
         conn.close()
     except Exception:
