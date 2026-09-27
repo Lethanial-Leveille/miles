@@ -414,6 +414,38 @@ never to repeat a figure from earlier in the conversation. Without that rule she
 answered "how did I sleep" from history that still held the wrong figure, and the
 fixed tool was never called.
 
+### The rest of the world comes from web search (Sep 27 2026)
+
+On Sep 27 2026, "What was the score of the UF game today?" was answered "I don't
+have access to live sports scores." Anthropic's web search tool now covers
+anything current: scores, news, prices, hours, releases. `web_search.py` offers
+it and does nothing else, because the search runs on Anthropic's side inside the
+same streaming call. So it has no function, no tier (a guest gets it too, since
+what it reaches is public) and no `tool_call_log` row; the journal prints
+`web search: N request(s)` instead.
+
+- **The basic `web_search_20250305` variant**, because it is the one Haiku 4.5
+  supports. The dynamic filtering variants need a larger model.
+- **The registry holds it apart** (`register_server_tool`). It is in
+  `api_schemas()`, after the sorted local tools so the cached prefix stays
+  fixed, and in the prompt's tool list, which says the list is complete. It is
+  not in `names()`, so the executor and the tier gate never see it.
+- **Nothing extra keeps results off the speaker.** The stream loop speaks only
+  `text_delta`; search results and citations arrive as other block and delta
+  types.
+- **A search splits the reply into text blocks**, and the deltas carry no space
+  across them. The first probe returned `"…game score.The Florida Gators beat…"`,
+  which the sentence splitter holds as one sentence. `_block_gap` feeds a space
+  when a new text block starts.
+- **`pause_turn` is logged, not resumed.** `max_uses` of 2 keeps it rare; the log
+  line is how to find out whether it is rare enough.
+
+Measured once, bare, with no Nova prompt: first text 0.84s, the search 1.04s to
+2.73s, done at 3.16s, 10.8k input tokens. The lead in Haiku wrote before
+searching ("I'll search for the most recent Florida Gators football game
+score.") is longer than the prompt's short phrase rule asks for; watch whether
+the real prompt holds it down.
+
 ### Calendar times are resolved in code
 
 The model passes phrases, and `calendar_tools.parse_when` resolves them against

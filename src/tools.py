@@ -135,6 +135,13 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolSpec] = {}
+        # Tools Anthropic runs inside the Claude call, like web search. Kept
+        # apart from _tools on purpose: the executor, the tier gate and names()
+        # must never see them, because there is nothing here to execute. They
+        # still belong in the registry, since the prompt's tool list is built
+        # from it and a tool missing from that list is one Nova believes she
+        # does not have.
+        self._server: dict[str, tuple[dict, str]] = {}
 
     # ── registration ──
 
@@ -213,6 +220,20 @@ class ToolRegistry:
                     f"tool {name!r} marks {field!r} required but does not define it"
                 )
 
+    def register_server_tool(self, schema: dict, summary: str) -> None:
+        """Offer a tool that runs on Anthropic's side, never here.
+
+        schema goes to the API untouched. summary is its line in the prompt's
+        tool list, written the way the local tools' summaries are."""
+        name = schema.get("name")
+        if not isinstance(name, str) or not _NAME_RULE.match(name):
+            raise ToolError(f"server tool name {name!r} is not a valid tool name")
+        if name in self._tools or name in self._server:
+            raise ToolError(f"tool {name!r} is already registered")
+        if not summary.strip():
+            raise ToolError(f"server tool {name!r} needs a summary")
+        self._server[name] = (schema, summary)
+
     # ── lookup ──
 
     def get(self, name: str) -> ToolSpec:
@@ -239,8 +260,12 @@ class ToolRegistry:
         system prompt in the cached prefix, so if this list ever reordered,
         every byte after it would move and every cache hit would silently
         disappear. Sorting makes the output depend only on which tools exist,
-        never on the order they happened to be imported in."""
-        return [self._tools[name].api_schema() for name in self.names()]
+        never on the order they happened to be imported in.
+
+        Server tools follow the local ones, sorted the same way, for the same
+        reason."""
+        local = [self._tools[name].api_schema() for name in self.names()]
+        return local + [self._server[name][0] for name in sorted(self._server)]
 
     def capability_prose(self) -> str:
         """The capability block for the system prompt, generated from the
@@ -261,6 +286,7 @@ class ToolRegistry:
             "",
         ]
         lines += [f"- {self._tools[name].summary}" for name in self.names()]
+        lines += [f"- {self._server[name][1]}" for name in sorted(self._server)]
         lines += [
             "",
             "If something you are asked for is not on this list, you do not have "

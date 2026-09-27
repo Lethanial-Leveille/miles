@@ -35,6 +35,7 @@ import calendar_tools # noqa: F401
 import oura_tools     # noqa: F401
 import prowl_tools    # noqa: F401
 import pending_action # noqa: F401
+import web_search     # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
                     HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN,
@@ -341,6 +342,13 @@ _STAGE_WORDS = {
 }
 
 
+# Tools Anthropic runs (web_search.py). Apart from _STAGE_WORDS because that
+# map must match the local registry exactly.
+_SERVER_STAGE_WORDS = {
+    "web_search": "Searching the web",
+}
+
+
 # The pre rendered line said when one of these tools starts on a voice turn.
 # Not every tool: remember and the control tools finish at once, and a timer
 # answers itself. A test requires every entry to be a registered tool and every
@@ -397,9 +405,28 @@ def _stage_for(event):
 
     Read from content_block_start, which arrives before the tool's arguments
     are written, so the app can say what is happening as early as possible."""
-    if event.type != "content_block_start" or event.content_block.type != "tool_use":
+    if event.type != "content_block_start":
         return None
-    return _STAGE_WORDS.get(event.content_block.name)
+    block = event.content_block
+    if block.type == "tool_use":
+        return _STAGE_WORDS.get(block.name)
+    if block.type == "server_tool_use":
+        return _SERVER_STAGE_WORDS.get(block.name)
+    return None
+
+
+def _block_gap(event, so_far):
+    """A space to feed when a new text block starts, or "".
+
+    A search splits the reply into text blocks: a lead in, the search, then the
+    answer. The deltas carry no space across that boundary, so "Let me check."
+    ran into "The Gators" and the sentence splitter, which needs whitespace
+    after the full stop, held both as one sentence."""
+    if event.type != "content_block_start" or event.content_block.type != "text":
+        return ""
+    if not so_far or so_far[-1].isspace():
+        return ""
+    return " "
 
 
 def _emit(on_text, kind, text):
@@ -876,6 +903,11 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                    if _plays_in_the_room(channel, device) and bridge_key is None else None)
             if key is not None and not accumulated.strip():
                 bridge_key = key
+            gap = _block_gap(event, accumulated)
+            if gap:
+                accumulated += gap
+                _emit(on_text, "delta", gap)
+                await router.feed(gap)
             if event.type != "content_block_delta":
                 continue
             if event.delta.type != "text_delta":
@@ -911,6 +943,18 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     usage = final_message.usage
     timing.note_cache(getattr(usage, 'cache_read_input_tokens', None) or 0,
                       getattr(usage, 'cache_creation_input_tokens', None) or 0)
+    # A search never reaches the executor, so tool_call_log cannot show it;
+    # the journal is where a slow turn gets explained.
+    searches = getattr(getattr(usage, 'server_tool_use', None),
+                       'web_search_requests', 0) or 0
+    if searches:
+        print(f"  web search: {searches} request(s), "
+              f"{usage.input_tokens} input tokens", flush=True)
+    # The server stops its own search loop with pause_turn when it runs long.
+    # Nothing resumes it yet: max_uses keeps it rare, and this line is how we
+    # find out whether it is rare enough.
+    if getattr(final_message, 'stop_reason', None) == "pause_turn":
+        print("  web search paused the turn; the reply may be cut short", flush=True)
 
     # Tags are stripped and discarded rather than saved. The prompt teaches the
     # remember tool now, so a bracket tag reaching here is a leak, not an
@@ -1013,6 +1057,11 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                 ) as stream2:
                     async for event in stream2:
                         _emit(on_text, "stage", _stage_for(event))
+                        gap = _block_gap(event, round_text)
+                        if gap:
+                            round_text += gap
+                            _emit(on_text, "delta", gap)
+                            await router2.feed(gap)
                         if event.type != "content_block_delta":
                             continue
                         if event.delta.type != "text_delta":

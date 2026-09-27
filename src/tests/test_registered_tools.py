@@ -16,6 +16,7 @@ import calendar_tools # noqa: F401  registers the calendar tools
 import oura_tools     # noqa: F401  registers the Oura tools
 import prowl_tools    # noqa: F401  registers the Prowl tools
 import pending_action # noqa: F401  registers confirm_pending_action
+import web_search     # noqa: F401  offers web_search, run by Anthropic
 from tools import Permission, permits, registry
 
 EXPECTED = {
@@ -129,16 +130,37 @@ def test_only_read_tools_make_a_second_call():
             assert spec.permission is Permission.READ, name
 
 
+# Offered to Claude but run by Anthropic, so absent from names() and EXPECTED.
+SERVER_TOOLS = ["web_search"]
+
+
 def test_schemas_are_sorted_and_api_shaped():
+    """Local tools first, then server tools, each sorted, so the cached prefix
+    never moves. A server tool is the API's own shape: a type, no schema."""
     schemas = registry.api_schemas()
-    assert [s["name"] for s in schemas] == sorted(EXPECTED)
-    for s in schemas:
+    local, server = schemas[:len(EXPECTED)], schemas[len(EXPECTED):]
+    assert [s["name"] for s in local] == sorted(EXPECTED)
+    for s in local:
         assert set(s) == {"name", "description", "input_schema"}
+    assert [s["name"] for s in server] == SERVER_TOOLS
+    for s in server:
+        assert "type" in s and "input_schema" not in s
+
+
+def test_server_tools_never_reach_the_executor():
+    """The executor looks tools up by name. A search reaching it would raise
+    unknown tool, which is right: there is nothing here to run."""
+    for name in SERVER_TOOLS:
+        assert name not in registry
+        assert name not in registry.names()
 
 
 def test_capability_block_lists_every_tool():
+    """Server tools included. Missing from this list, web search is a tool
+    Nova is told she does not have."""
     prose = registry.capability_prose()
-    assert prose.count("\n- ") == len(EXPECTED)
+    assert prose.count("\n- ") == len(EXPECTED) + len(SERVER_TOOLS)
+    assert "Search the web" in prose
     assert "only tools you have" in prose
 
 
