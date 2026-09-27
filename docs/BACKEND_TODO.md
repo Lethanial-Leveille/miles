@@ -981,6 +981,43 @@ presence of a known phone MAC (unreliable, randomized MACs); a PIR sensor
 similar mmWave module over UART, which detects a stationary person and is the
 right answer if this is built. Mic activity alone is not presence.
 
+**Hardware installed Sep 27 2026. No service reads it yet.** An LD2410C sits on
+the desk, wired to the GPIO header: VCC to pin 2 (5V), GND to pin 6, sensor TX
+to pin 10 (GPIO15, RXD), sensor RX to pin 8 (GPIO14, TXD), OUT unused. The UART
+on those pins is off by default on a Pi 5, so `/boot/firmware/config.txt` now
+ends with `dtparam=uart0=on`, which gives `/dev/ttyAMA0`. Do not use
+raspi-config's serial option for this; on a Pi 5 it configures the separate
+debug port (`ttyAMA10`, where the console lives). `python3-serial` is installed
+from apt, because the services run on system Python. Protocol: 256000 baud,
+8N1, about ten frames a second, header `f4 f3 f2 f1`, footer `f8 f7 f6 f5`,
+little endian. Report type `0x02` is normal, `0x01` is engineering mode with
+energy per gate appended. A throwaway decoder lives at `~/ld2410_test.py`,
+outside the repo.
+
+**Its settings live in the module's flash, not in this repo.** Set by hand in
+Hi Link's HLKRadarTool app over Bluetooth, password `HiLink`:
+
+| Setting | Value | Why |
+|---|---|---|
+| Gate 0 moving and still threshold | 80 (default 50) | The empty room read 51 to 64 in gate 0 with the fan unplugged and 100 with it on. After this, 3 to 19 with the fan on |
+| Detection range | 3.75 m, gates 0 to 5 | The sensor looks straight at the door. At 4.5 m (which still included gate 6) someone standing in the open doorway or the hallway counted as present |
+| Gate size | 0.75 m | Default. 0.2 m would shrink the whole range under 2 m and lose the bed |
+| Unmanned duration | 5 s | Default. How long after the last detection it reports nobody |
+| Everything else | Factory default | |
+
+Validated by walking out, standing in the open doorway, and walking back in: nobody
+outside and in the doorway (a doorway signal of 41 was correctly ignored),
+detected at about 4.25 m on the way in. The bed reads 1.5 to 2.3 m. The closet is
+on the far wall and is outside the range, on purpose.
+
+**What is left.** During tuning the UART went silent whenever the app was
+connected to the module, so any reader must tolerate long silences. Whatever service reads it should write these
+settings over the UART at startup, so the repo becomes the source of truth and a
+module reset or replacement does not silently undo them. Before writing that
+service, design what present means over time (5 s is the module's opinion;
+Nova likely wants minutes) and how it combines with speaker verification,
+because radar sees a person, not Lethanial.
+
 ---
 
 ## Quick reference
