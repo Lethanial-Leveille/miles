@@ -316,6 +316,18 @@ def capsule_name(device_name):
     """A microphone's identity, with the boot specific address removed."""
     return _HW_ADDRESS.sub('', device_name or '').strip()
 
+# ── Presence radar ──
+# An LD2410C on the GPIO UART (dtparam=uart0=on). Logging only for now: nothing
+# Nova does reads it yet. Wiring and tuning: BACKEND_TODO.md, Presence detection.
+PRESENCE_SENSOR      = True
+PRESENCE_PORT        = "/dev/ttyAMA0"
+PRESENCE_BAUD        = 256000
+
+# No valid frame for this long is logged as silent, never as absent. It reports
+# about ten a second, and it stops altogether while the HLKRadarTool app is
+# connected, which is the case this exists for: not seeing is not nobody.
+PRESENCE_SILENT_S    = 3.0
+
 # ── Paths ──
 # q8_0 rather than the fp16 base.en, quantized locally from it with
 # whisper-quantize. Same model and same weights, stored as 8 bit integers with
