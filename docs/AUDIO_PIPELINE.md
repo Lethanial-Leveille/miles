@@ -869,7 +869,26 @@ buffer does not change in between.
 
 ## Speaker verification and enrollment
 
-Resemblyzer, 256 dimensional cosine similarity against the stored voiceprint.
+**ECAPA since Sep 27 2026** (SpeechBrain spkrec-ecapa-voxceleb, 192 dimensions),
+replacing Resemblyzer, which could not keep anyone out: on 28 labelled impostor
+clips (his sister on Aug 12, two friends on Sep 26) its EER was 21.5% and the
+highest impostor scored above his median. The switch and a fresh enrollment were
+one operation, since the two encoders' spaces are unrelated.
+
+Against the new enrollment voiceprint: impostors median 0.004, max 0.088; his
+archived clips median 0.436. `VERIFY_THRESHOLD` 0.15 lets no labelled impostor
+in and sends 12.2% of his archived clips to guest, an overestimate because the
+archive is only presumed his and its lowest clips score in impostor range.
+Below the threshold a voice is answered as a guest, not refused; see the
+decision log. Embedding is slower, 591ms p50 against 224ms, and up to 1.5s on a
+15s clip.
+
+The enrollment keeps its audio in `models/enrollment_audio` since this switch,
+so a future encoder can be re-embedded without re-enrolling. Its outlier check
+is per encoder: the Resemblyzer floor of 0.70 flagged half of a sound ECAPA
+enrollment as bad.
+
+Before the switch: Resemblyzer, 256 dimensional cosine similarity against the stored voiceprint.
 Two structural fixes landed Sep 6 2026, both of which had quietly broken the
 ability to analyze or rebuild a voiceprint at all: the per sample mic label
 carried a shifting ALSA card number, and enrollment discarded its own audio.

@@ -86,10 +86,10 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 25 2026 (30) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 26 2026 (1061) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 27 2026 (1062) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on the tool schemas plus `build_enhanced_prompt` output, since tools sit inside the cached prefix, vs the 4096 floor | Sep 25 2026 (17774: tools 7103, system 10670) |
-| `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Aug 11 2026 (0.5) |
+| `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Sep 27 2026 (0.15, ecapa) |
 | Speaker device resolution | `grep -n SPEAKER src/config.py src/tts.py` | Aug 11 2026 (by name, not device string) |
 | Which modules exist | `ls src/*.py` | Aug 11 2026 (20 modules) |
 | Schema version | `grep -c "^    (" src/database.py` around `MIGRATIONS` | Aug 11 2026 (13) |
@@ -1443,8 +1443,10 @@ trusted on the session, so a guest's short follow ups stay a guest's. Guests
 also get `NOT_ADDRESSED_TO_YOU`, because a false wake on friends talking is a
 guest turn now.
 
-**Why this needs ECAPA:** under Resemblyzer nearly everyone verifies as him (EER
-21.5%), so guest mode only becomes real with the encoder switch.
+**Why this needs ECAPA:** under Resemblyzer nearly everyone verified as him (EER
+21.5%), so guest mode only became real with the encoder switch, done Sep 27 2026
+with a fresh enrollment. Against the enrollment voiceprint, 27 labelled impostor
+clips scored max 0.088 and his clips median 0.436; the threshold is 0.15.
 
 ### Prowl is relabeled on the Pi, never recomputed (Sep 25 2026) (DONE)
 

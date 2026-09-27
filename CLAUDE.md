@@ -80,7 +80,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── parsing.py             # Memory tag extraction, noise transcripts
 │   ├── actions.py             # Weather, timer, reminder handlers, reminder poller
 │   ├── alerts.py              # Pending alert queue and fold into the next turn
-│   ├── audio.py               # Mic, wake word, VAD, Whisper, Resemblyzer
+│   ├── audio.py               # Mic, wake word, VAD, Whisper, speaker verification
 │   ├── audio_segments.py      # Whisper window by clip length; cutting long recordings
 │   ├── deepgram_stt.py        # the online transcript, with whisper as the floor
 │   ├── wake_listener.py       # hears the wake word during a recording
@@ -112,7 +112,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1061 passing, 6 skipped, Sep 26 2026)
+│   └── tests/                 # pytest suite (1062 passing, 6 skipped, Sep 27 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -191,7 +191,8 @@ of the value itself.
 - `CHUNK = 1280` (80ms frames, required by openWakeWord)
 - `RATE = 16000`, `CHANNELS = 1`
 - `WAKE_THRESHOLD = 0.4`
-- `VERIFY_THRESHOLD = 0.5`
+- `VERIFY_THRESHOLD = 0.15` (ECAPA; per encoder in `VERIFY_THRESHOLDS`, Resemblyzer's
+  was 0.5. Below it a voice is answered as a guest, not refused)
 - `VAD_MODE = 2` (webrtcvad)
 - `VAD_PREROLL_MS = 300`, `VAD_ONSET_FRAMES = 2`
 - `SILENCE_LIMIT = 1.2`
@@ -203,7 +204,8 @@ of the value itself.
 - `MIC_NAME_HINT = "Seiren"`. `MIC_MIXER_CARD` is **derived** from it at import
   by `_resolve_mixer_card`, never written literally, and is `None` on a miss so
   callers report "cannot check" rather than measuring the wrong device.
-- `SPEAKER_ENCODER = "resemblyzer"`
+- `SPEAKER_ENCODER = "ecapa"` (since Sep 27 2026; Resemblyzer voiceprint kept in
+  `models/resemblyzer_backup_2026-09-26` for rollback)
 - `MIN_VOICED_SECONDS = 4.0`, `ENROLL_RECORD_SECONDS = 10`
 
 ### Whisper — why: [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#whisper)
@@ -313,7 +315,7 @@ STT: Deepgram Nova 3 online, falling back to whisper.cpp (base.en, beam search a
 5, NEON ARM optimizations, capped audio context) whenever it does not answer.
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
-Voice auth: Resemblyzer (256 dim cosine similarity).
+Voice auth: SpeechBrain ECAPA (192 dim cosine similarity); an unverified voice is a guest.
 Memory: SQLite WAL mode, schema migrations to version 26.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.

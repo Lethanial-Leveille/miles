@@ -25,13 +25,14 @@ WAKE_THRESHOLD = 0.4
 # ── Speaker encoder ──
 # Which model turns a waveform into a voiceprint. See src/speaker_encoder.py.
 #
-# Still resemblyzer, and that is a staging decision rather than a preference.
-# ECAPA is measurably far better here (EER 4.8% against 22.3%, and an impostor
-# max of 0.179 against 0.843 on 23 labelled clips of his sister), but swapping
-# it invalidates the voiceprint outright: the two produce 192 and 256 dimensions
-# in unrelated spaces, so the swap and a re enrollment are one operation, not
-# two. Flip this only in the same session as running enroll.py.
-SPEAKER_ENCODER = "resemblyzer"
+# ECAPA since Sep 27 2026, switched in the same session as a fresh enrollment,
+# because the two encoders produce 192 and 256 dimensions in unrelated spaces and
+# a voiceprint from one is meaningless to the other. Resemblyzer could not keep
+# anyone out: EER 21.5% on 28 labelled impostor clips from three people, impostor
+# max 0.812 above his median. ECAPA: EER 7.7%, impostor max 0.210 against his
+# median 0.516. The Resemblyzer voiceprint is kept in
+# models/resemblyzer_backup_2026-09-26 for rollback.
+SPEAKER_ENCODER = "ecapa"
 
 # Per encoder, because the scales are not interchangeable and migrating the
 # number is the single most likely way to break this.
@@ -40,15 +41,15 @@ SPEAKER_ENCODER = "resemblyzer"
 # genuine median. It also accepts his sister most of the time, which is the
 # whole reason for the swap.
 #
-# ecapa 0.30: NOT YET DERIVED FROM THIS SETUP. The measured landmark is 0.179,
-# which excluded all 23 impostor clips at a 5.3% cost to him, but that was one
-# person on one evening in the old room against a centroid built from archived
-# clips rather than from enrollment. 0.30 sits above it with margin and below
-# his 0.542 median. Re-derive it against a real enrollment before trusting it,
-# and replace this comment with the numbers when you do.
+# ecapa 0.15: derived Sep 27 2026 against the enrollment voiceprint itself.
+# 27 labelled impostor clips (his sister, two friends) scored median 0.004, max
+# 0.088; 82 of his clips scored median 0.436. At 0.15 no impostor gets in and
+# 12.2% of his clips fall to guest, an overestimate: the archive is only
+# presumed his, and its lowest clips score about 0.00, which is impostor range.
+# A wrong rejection costs him a guest's answer for one turn, not a refusal.
 VERIFY_THRESHOLDS = {
     "resemblyzer": 0.5,
-    "ecapa": 0.30,
+    "ecapa": 0.15,
 }
 VERIFY_THRESHOLD = VERIFY_THRESHOLDS[SPEAKER_ENCODER]
 
