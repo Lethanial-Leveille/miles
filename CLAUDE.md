@@ -46,7 +46,9 @@ Raspberry Pi 5 (8GB), headless Raspberry Pi OS Lite 64 bit. Razer Seiren V3 Mini
 USB microphone, found dynamically by name in PyAudio rather than hardcoded to a
 card number, since ALSA card numbers shift on reboot. Amazon Basics USB speakers
 via QianLink USB to 3.5mm adapter, also resolved by name at runtime in `tts.py`
-using `SPEAKER_NAME_HINT` rather than a fixed device string. Development machine
+using `SPEAKER_NAME_HINT` rather than a fixed device string. An LD2410C mmWave
+presence radar on the GPIO UART (`dtparam=uart0=on`, `/dev/ttyAMA0`); wiring and
+tuning in [BACKEND_TODO.md](docs/BACKEND_TODO.md#presence-detection). Development machine
 is a MacBook connected via VS Code Remote SSH at theycallmelee@miles.local, local
 network only. Remote SSH via Cloudflare Tunnel is planned and not yet configured.
 
@@ -85,6 +87,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── deepgram_stt.py        # the online transcript, with whisper as the floor
 │   ├── wake_listener.py       # hears the wake word during a recording
 │   ├── mic_watchdog.py        # exits when the mic stops delivering, so systemd reopens it
+│   ├── ld2410.py              # the presence radar's report frames, decoded from its serial stream
+│   ├── presence.py            # reads the radar on a thread, logs present/absent/silent changes
 │   ├── wake_gate.py           # drops a wake that arrived too quiet to be him
 │   ├── wake_capture.py        # what to evict when a capture directory is full
 │   ├── speaker_encoder.py     # Encoder abstraction behind verify_voice
@@ -303,6 +307,13 @@ of the value itself.
   `review_pending_memory` to `hokage`.
 - `CONFIRM_WINDOW_S = 120` (in `pending_action.py`, not `config.py`)
 
+### Presence radar — why: [BACKEND_TODO.md](docs/BACKEND_TODO.md#presence-detection)
+- `PRESENCE_SENSOR = True`, `PRESENCE_PORT = "/dev/ttyAMA0"`, `PRESENCE_BAUD = 256000`
+- `PRESENCE_SILENT_S = 3.0` (no frame this long is logged as silent, never absent)
+- Logging only, to `presence_log`. Nothing Nova does reads it yet. The module's
+  own thresholds and range live in its flash, set by app; the table is in
+  BACKEND_TODO.md
+
 ### Storage and other
 - `DB_PATH = ~/miles/data/miles.db`
 - `ARCHIVE_RECORDINGS = True`, `ARCHIVE_DIR = ~/miles/data/recordings`,
@@ -325,7 +336,7 @@ STT: Deepgram Nova 3 online, falling back to whisper.cpp (base.en, beam search a
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: SpeechBrain ECAPA (192 dim cosine similarity); an unverified voice is a guest.
-Memory: SQLite WAL mode, schema migrations to version 26.
+Memory: SQLite WAL mode, schema migrations to version 27.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.

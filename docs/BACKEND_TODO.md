@@ -981,7 +981,9 @@ presence of a known phone MAC (unreliable, randomized MACs); a PIR sensor
 similar mmWave module over UART, which detects a stationary person and is the
 right answer if this is built. Mic activity alone is not presence.
 
-**Hardware installed Sep 27 2026. No service reads it yet.** An LD2410C sits on
+**Hardware installed Sep 27 2026. Logged since then, not yet acted on.**
+`presence.py` reads it inside miles-voice and writes each change to
+`presence_log`; nothing Nova does reads that yet. An LD2410C sits on
 the desk, wired to the GPIO header: VCC to pin 2 (5V), GND to pin 6, sensor TX
 to pin 10 (GPIO15, RXD), sensor RX to pin 8 (GPIO14, TXD), OUT unused. The UART
 on those pins is off by default on a Pi 5, so `/boot/firmware/config.txt` now
@@ -992,7 +994,7 @@ from apt, because the services run on system Python. Protocol: 256000 baud,
 8N1, about ten frames a second, header `f4 f3 f2 f1`, footer `f8 f7 f6 f5`,
 little endian. Report type `0x02` is normal, `0x01` is engineering mode with
 energy per gate appended. A throwaway decoder lives at `~/ld2410_test.py`,
-outside the repo.
+outside the repo. The port is opened exclusively, so stop miles-voice to use it.
 
 **Its settings live in the module's flash, not in this repo.** Set by hand in
 Hi Link's HLKRadarTool app over Bluetooth, password `HiLink`:
