@@ -11,6 +11,7 @@ import alerts
 import audio
 import netcheck
 import phrasebank
+import presence
 import timing
 import tts
 import actions
@@ -25,7 +26,8 @@ from parsing import is_noise_transcript, split_after_wake_phrase
 from config import (CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS,
                     FOLLOWUP_TIMEOUT, ACK_SPOKEN_CHANCE, RATE,
                     WAKE_MISS_FLOOR, WAKE_MISS_PREROLL_MS,
-                    WAKE_LEVEL_FLOOR)
+                    WAKE_LEVEL_FLOOR, PRESENCE_SENSOR, PRESENCE_PORT,
+                    PRESENCE_BAUD, PRESENCE_SILENT_S)
 
 # Wire the speak callback so timer/reminder alerts play audio
 
@@ -56,6 +58,11 @@ fired = actions.poll_reminders()
 if fired:
     print(f"{fired} reminder(s) came due while Nova was offline.", flush=True)
 actions.start_reminder_poller()
+
+# Here rather than in the server for the reason the poller is: the alerts that
+# presence will decide about are spoken from this process. Logging only for now.
+if PRESENCE_SENSOR:
+    presence.start_reader(PRESENCE_PORT, PRESENCE_BAUD, PRESENCE_SILENT_S)
 
 # Load the embedding model off the critical path.
 #
