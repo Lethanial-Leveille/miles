@@ -105,6 +105,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── calendar_tools.py      # Google Calendar reads, freebusy, changes with undo, app view
 │   ├── oura_tools.py          # Oura readiness, sleep, heart rate, activity
 │   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
+│   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
 │   ├── timing.py              # Per turn latency instrumentation
 │   ├── brain.py               # ask_nova orchestrator
@@ -112,7 +113,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1062 passing, 6 skipped, Sep 27 2026)
+│   └── tests/                 # pytest suite (1092 passing, 6 skipped, Sep 27 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -254,6 +255,11 @@ of the value itself.
 - `SPECULATIVE_CLAUDE = True` (the first Claude call opens during the endpoint wait
   and the real turn claims it; `speculative_turn.py`)
 
+### Barge in — why: `config.py` comments and [BACKEND_TODO.md](docs/BACKEND_TODO.md)
+- `BARGE_IN = False`, `BARGE_IN_THRESHOLD = 0.30` (wake word only, no echo
+  cancellation. Built and never switched on; `play()` in `tts.py` checks the
+  interrupt only after a sentence is fully written, so fix that before enabling)
+
 ### Model and prompt — why: [BRAIN.md](docs/BRAIN.md)
 - `MODEL_A = "claude-haiku-4-5"` — **this is the production model**
 - `MODEL_B = "claude-sonnet-4-5-20250929"`
@@ -302,6 +308,9 @@ of the value itself.
 - `ARCHIVE_RECORDINGS = True`, `ARCHIVE_DIR = ~/miles/data/recordings`,
   `ARCHIVE_MAX_FILES = 600` (~150MB, a few weeks of normal use, oldest pruned first)
 - `DEFAULT_LOCATION = "Gainesville"`
+- `WEB_SEARCH = True`, `WEB_SEARCH_TOOL_TYPE = "web_search_20250305"` (the
+  variant Haiku 4.5 supports), `WEB_SEARCH_MAX_USES = 2`, located in Gainesville.
+  Why: [BRAIN.md](docs/BRAIN.md#the-rest-of-the-world-comes-from-web-search-sep-27-2026)
 - `REMINDER_POLL_S = 5`, `REMINDER_LATE_S = 3600` (both in `actions.py`, not
   `config.py`)
 
@@ -321,6 +330,7 @@ Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.
 Jobs: Prowl (tracker.lethanial.com), its MILES surface, token auth.
+Live info: Anthropic's web search tool, run server side inside the Claude call.
 Backend: FastAPI + uvicorn + python-jose + passlib (bcrypt) + python-dotenv.
 Tunnel: cloudflared (dashboard managed).
 Process management: systemd.
@@ -368,12 +378,14 @@ Landed since v0.7.1, unreleased:
   played aloud, so the app can ask for spoken formatting and synthesize it itself
 - Prowl job search tools: summary, applications, discoveries, and accepting one
   discovered job after a spoken yes
+- Web search for anything current (scores, news, hours), run by Anthropic
 
 ## What Is Next
 
 - SSH via Cloudflare Tunnel: ssh.lethanial.com + Cloudflare Access policy
 - v0.8+: Morning briefings (Fall 2026), Mac control, HealthKit, EventKit,
-  MusicKit, WeatherKit migration, barge in detection, parallel processing
+  MusicKit, WeatherKit migration, barge in (wake word version built, off;
+  full barge in needs AEC), parallel processing
 
 ## Coding Preferences
 

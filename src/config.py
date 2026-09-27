@@ -706,6 +706,23 @@ VOICE_SERIOUS = VoiceSettings(
 WEATHER_API_KEY  = os.environ.get("WEATHER_API_KEY")
 DEFAULT_LOCATION = "Gainesville"
 
+# Anthropic's own web search, run on their side inside the same Claude call, so
+# there is no key here and nothing on the Pi executes it. Added Sep 27 2026
+# after "What was the score of the UF game today?" was answered with "I don't
+# have access to live sports scores."
+#
+# The basic 20250305 variant because it is the one Haiku 4.5 supports; the
+# newer dynamic filtering variants need a larger model. Two searches is enough
+# to retry one bad query, and caps what a single turn can spend and wait for.
+# False removes the tool from every request and from the prompt's tool list.
+WEB_SEARCH = True
+WEB_SEARCH_TOOL_TYPE = "web_search_20250305"
+WEB_SEARCH_MAX_USES = 2
+WEB_SEARCH_LOCATION = {
+    "type": "approximate", "city": "Gainesville", "region": "Florida",
+    "country": "US", "timezone": "America/New_York",
+}
+
 # ALSA card numbers shift between boots, so the speaker is resolved by name
 # at runtime in tts.py rather than hardcoded here. This is just the name to
 # search for in /proc/asound/cards.
