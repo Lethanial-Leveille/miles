@@ -81,8 +81,16 @@ TEMP_ENROLL = os.path.expanduser("~/miles/build/enroll_temp.wav")
 # 0.70 sits below any same speaker sample observed and well above real
 # impostor range, so it now catches only a genuinely broken recording and
 # leaves the relative test to do the real work.
-OUTLIER_SIMILARITY = 0.70   # absolute floor: broken recording
-OUTLIER_MARGIN     = 0.08   # or this far below the median sample
+#
+# Per encoder since Sep 27 2026, for the same reason the verify thresholds are:
+# the scales are not interchangeable. Under ECAPA twelve good samples agreed at
+# 0.60 to 0.73, against impostors near 0.0 to 0.2, and the resemblyzer floor of
+# 0.70 flagged half of them and printed a warning that the enrollment was weak.
+# It was not: the voiceprint it built kept out all 27 labelled impostors.
+OUTLIER_FLOORS  = {"resemblyzer": 0.70, "ecapa": 0.45}  # broken recording
+OUTLIER_MARGINS = {"resemblyzer": 0.08, "ecapa": 0.10}  # this far below the median
+OUTLIER_SIMILARITY = OUTLIER_FLOORS[SPEAKER_ENCODER]
+OUTLIER_MARGIN     = OUTLIER_MARGINS[SPEAKER_ENCODER]
 
 # Every phrase runs roughly twenty five words, which is about seven seconds of
 # voiced audio at the measured rate of 0.29s per word. That clears

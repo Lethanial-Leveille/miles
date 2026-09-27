@@ -143,11 +143,18 @@ def test_the_live_thresholds_are_exactly_what_they_were():
     VERIFY_RETRY_THRESHOLD and VOICEPRINT_LEARN_MIN_SIMILARITY became ratios of
     the accept bar rather than absolutes. Under resemblyzer they must still
     produce 0.45 and 0.75, the values that were tuned against real rejections,
-    or this refactor quietly retuned the live system."""
-    assert config.SPEAKER_ENCODER == "resemblyzer"
-    assert config.VERIFY_THRESHOLD == 0.5
-    assert config.VERIFY_RETRY_THRESHOLD == pytest.approx(0.45)
-    assert config.VOICEPRINT_LEARN_MIN_SIMILARITY == pytest.approx(0.75)
+    so a rollback to it restores exactly what ran before."""
+    assert config.VERIFY_THRESHOLDS["resemblyzer"] == 0.5
+    assert config.VERIFY_THRESHOLDS["resemblyzer"] * config.VERIFY_RETRY_RATIO == pytest.approx(0.45)
+    assert config.VERIFY_THRESHOLDS["resemblyzer"] * config.VOICEPRINT_LEARN_RATIO == pytest.approx(0.75)
+
+
+def test_ecapa_is_live_at_the_threshold_derived_from_his_enrollment():
+    """Switched Sep 27 2026 with a fresh enrollment. 0.15 keeps every labelled
+    impostor out (max 0.088) against the enrollment voiceprint; changing it
+    should mean re-measuring, which is why the number is pinned here."""
+    assert config.SPEAKER_ENCODER == "ecapa"
+    assert config.VERIFY_THRESHOLD == 0.15
 
 
 def test_the_bands_scale_with_the_encoder():
