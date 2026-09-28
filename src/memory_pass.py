@@ -20,9 +20,10 @@ import threading
 
 import anthropic
 
+import embeddings
 import memory_tool
 import prompts
-from config import MEMORY_PASS, MEMORY_PASS_MODEL
+from config import MEMORY_PASS, MEMORY_PASS_MODEL, MEMORY_DUPLICATE_SIMILARITY
 from database import (get_seed_memories, get_episodic_memories,
                       get_pending_memories, get_recent_messages, log_tool_call)
 from tools import registry
@@ -94,6 +95,8 @@ def notice(user_text, when):
         # Seen from Sonnet 5 in the replay: a call with no content at all.
         if not content or content.casefold() in waiting:
             continue
+        if _already_known(content):
+            continue
         arguments = {"content": content, "certainty": "inferred",
                      "temporary": bool(block.input.get("temporary")),
                      "until": block.input.get("until") or None}
@@ -102,6 +105,31 @@ def notice(user_text, when):
         waiting.add(content.casefold())
         stored.append(content)
     return stored
+
+
+def _already_known(content):
+    """True when a stored or waiting memory says this in other words.
+
+    The prompt already tells the pass to skip what the list says, and on Sep 28
+    2026 it queued "Obsession, Odyssey, and Spider-Man: Brand New Day are his
+    top three movies of 2026" two seconds after the turn stored "Obsession is
+    one of his top three movies of 2026, along with Odyssey and Spider-Man:
+    Brand New Day." at 0.94. Only a near rewording is caught; anything less
+    certain is left to his review, because at lower scores a duplicate and a
+    different fact look the same (MEMORY_DUPLICATE_SIMILARITY).
+
+    False when the comparison cannot run. A missed duplicate costs one discard
+    in the app; a missed fact is gone."""
+    try:
+        match = embeddings.nearest(content)
+    except Exception as exc:
+        print(f"Memory pass could not check for duplicates: {exc}", flush=True)
+        return False
+    if match is None or match[2] < MEMORY_DUPLICATE_SIMILARITY:
+        return False
+    print(f"Memory pass skipped a rewording of #{match[0]} ({match[2]:.2f}): "
+          f"{content}", flush=True)
+    return True
 
 
 def notice_later(user_text, when):

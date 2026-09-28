@@ -710,6 +710,33 @@ prompt, and only the newest twenty learned ones are. Recall now searches
 everything and excludes what the prompt already holds (`brain._resident_ids`).
 There were eighteen that day, so none had been lost yet.
 
+### Duplicates are not merged automatically, measured Sep 28 2026
+
+He asked for closely related memories to be grouped. Similarity cannot decide
+it: real duplicates scored 0.79 to 0.94 and plainly different facts 0.76 to
+0.83. A contradiction scores low, not high: "Not a horror fan." against the
+film ranked top three was 0.31.
+
+Haiku as the judge, shown the three nearest stored facts and asked same,
+updates or new, over real pairs from the database:
+
+| Truth | Right | Wrong |
+|---|---|---|
+| Different facts, the 56 closest active pairs | 18 new | 10 same, 28 updates |
+| Duplicates, 4 | 2 same | 2 updates |
+| Real supersedes, 33 | 13 updates | 20 same |
+
+Two in three different facts would have been dropped or overwritten: "Mother's
+older brother has three sons" was judged an update of "Mother's eldest sister
+has two children". A few of the 56 were duplicates nobody had found, which
+does not rescue it. **Do not wire a model judge into `remember` without beating
+this table.**
+
+What was built instead: `scripts/memory.py similar` lists the pairs from 0.75 up
+for him to merge by hand with `fix` and `forget`, and the memory pass alone skips
+a fact at 0.9 or more from one stored or waiting, where only a rewording has
+been seen. A fact he asks her to remember is never checked this way.
+
 ### Conflicts are found in code
 
 `find_schedule_conflicts` sweeps every selected calendar except holidays, drops

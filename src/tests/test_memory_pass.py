@@ -15,7 +15,7 @@ def _call(**inputs):
 
 
 @pytest.fixture
-def run_pass(db, monkeypatch):
+def run_pass(db, monkeypatch, fake_embeddings):
     """Runs one pass against a throwaway database with a scripted reply."""
     sent = {}
 
@@ -109,3 +109,35 @@ def test_the_turn_starts_it_only_for_him():
     source = inspect.getsource(brain.ask_nova_async)
     assert 'if tier == "hokage" and not ignored:' in source
     assert "memory_pass.notice_later(user_text" in source
+
+
+def test_a_rewording_of_a_stored_fact_is_not_queued(run_pass):
+    """Sep 28 2026: the turn stored his top three films and, two seconds later,
+    the pass queued the same three in other words."""
+    database.save_memory("Andrew's test is on Saturday.", source="explicit")
+    stored, _ = run_pass(_call(content="On Saturday is Andrew's test."))
+    assert stored == [] and _pending() == []
+
+
+def test_a_different_fact_about_the_same_thing_is_still_queued(run_pass):
+    database.save_memory("Andrew's test is on Saturday.", source="explicit")
+    stored, _ = run_pass(_call(content="Andrew's test is on Sunday."))
+    assert stored == ["Andrew's test is on Sunday."]
+
+
+def test_a_failed_comparison_still_queues_the_fact(run_pass, monkeypatch):
+    """A missed duplicate costs one discard; a missed fact is gone."""
+    def broken(*a, **k):
+        raise RuntimeError("no model")
+    monkeypatch.setattr(memory_pass.embeddings, "nearest", broken)
+    stored, _ = run_pass(_call(content="Andrew's test is on Saturday."))
+    assert stored == ["Andrew's test is on Saturday."]
+
+
+def test_similar_pairs_lists_close_active_memories_closest_first(db, fake_embeddings):
+    import embeddings
+    a = database.save_memory("Leg extensions stay in his programme.", source="explicit")
+    b = database.save_memory("Leg extensions stay in his programme for knees.", source="explicit")
+    database.save_memory("Obsession is a favourite film.", source="explicit")
+    pairs = embeddings.similar_pairs(0.75, db_path=database.DB_PATH)
+    assert [(p[1][0], p[2][0]) for p in pairs] == [(a, b)]

@@ -642,6 +642,26 @@ def _migration_027_presence_log(conn):
     """)
 
 
+def _migration_028_memory_pair_dismissals(conn):
+    """Pairs of memories he has said are different facts, so the duplicate list
+    stops asking about them.
+
+    Kept in a table, not worked out again, because it cannot be worked out:
+    measured Sep 28 2026, "Mother has two brothers" and "Mother's eldest sister
+    has two children" score as close as a real duplicate. Only his answer
+    separates them, and an answer that is not kept is asked for again forever.
+
+    The lower id first, so a pair has one spelling and the primary key holds."""
+    conn.execute("""
+        CREATE TABLE memory_pair_dismissals (
+            low_id INTEGER NOT NULL,
+            high_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (low_id, high_id)
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -670,6 +690,7 @@ MIGRATIONS = [
     (25, _migration_025_bridge_timing),
     (26, _migration_026_claude_head_start),
     (27, _migration_027_presence_log),
+    (28, _migration_028_memory_pair_dismissals),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -1437,6 +1458,73 @@ def approve_memory(memory_id: int) -> bool:
     conn.commit()
     conn.close()
     return updated > 0
+
+
+def dismiss_memory_pair(a: int, b: int) -> None:
+    """Record that these two memories are different facts. Idempotent.
+
+    Keyed on ids, so a pair whose memory is later fixed, which makes a new id,
+    can be listed again. That is deliberate: the text he judged is not the text
+    that is there now."""
+    low, high = sorted((int(a), int(b)))
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT OR IGNORE INTO memory_pair_dismissals (low_id, high_id, created_at) "
+        "VALUES (?, ?, ?)", (low, high, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+
+def dismissed_memory_pairs() -> set:
+    """Every dismissed pair, as frozensets of two ids."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute("SELECT low_id, high_id FROM memory_pair_dismissals").fetchall()
+    conn.close()
+    return {frozenset(row) for row in rows}
+
+
+def merge_memories(keep_id: int, drop_id: int, content: str):
+    """Two memories become one: keep_id is superseded by content, and drop_id is
+    deleted. Returns the new id, or None when either id is not active or pending.
+
+    One transaction, because the two halves are only safe together. A replace
+    without the delete leaves both facts; a delete without the replace loses one.
+    Over a tunnel from a phone the connection can drop between two requests, so
+    the app sends one.
+
+    drop_id may be pending: a pending fact that updates a stored one is merged
+    into it rather than approved beside it. The dropped row's embedding goes with
+    it; the new row's is written by the next search."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        found = dict(c.execute(
+            "SELECT id, status FROM memories WHERE id IN (?, ?)",
+            (keep_id, drop_id)).fetchall())
+        if (keep_id == drop_id or found.get(keep_id) not in ("active", "pending")
+                or found.get(drop_id) not in ("active", "pending")):
+            return None
+        source, category, confidence, volatile, references_date = c.execute(
+            "SELECT source, category, confidence, volatile, references_date "
+            "FROM memories WHERE id = ?", (keep_id,)).fetchone()
+        now = datetime.now().isoformat()
+        # Active whatever keep_id was: he wrote or approved this text himself.
+        c.execute(
+            """INSERT INTO memories
+               (content, category, source, created_at, references_date, volatile,
+                confidence, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'active')""",
+            (content.strip(), category, source, now, references_date, volatile, confidence))
+        new_id = c.lastrowid
+        c.execute("UPDATE memories SET status = 'superseded', superseded_by = ?, "
+                  "superseded_at = ? WHERE id = ?", (new_id, now, keep_id))
+        c.execute("DELETE FROM memories WHERE id = ?", (drop_id,))
+        c.execute("DELETE FROM memory_embeddings WHERE memory_id = ?", (drop_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"Memories {keep_id} and {drop_id} merged into {new_id}: {content}", flush=True)
+    return new_id
 
 
 def delete_memory(memory_id: int) -> bool:

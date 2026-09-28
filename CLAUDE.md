@@ -70,6 +70,7 @@ warnings it cost before Sep 6 2026, is in
 | [docs/LATENCY.md](docs/LATENCY.md) | Before quoting any latency number, or changing anything for speed |
 | [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) | Touching systemd, the tunnel, the API, env vars, or reminders |
 | [docs/INCIDENTS.md](docs/INCIDENTS.md) | Something broke, or you are about to change a guard that has never fired |
+| [docs/APP_HANDOFF_DUPLICATES.md](docs/APP_HANDOFF_DUPLICATES.md) | Building the duplicate memory screens in miles-app |
 
 ## Repo Structure
 
@@ -105,6 +106,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── tools.py               # Tool registry, @tool decorator, schema generation
 │   ├── memory_tool.py         # remember tool, with supersede and expiry
 │   ├── memory_pass.py         # notices facts after each turn, queued for review
+│   ├── memory_merge.py        # drafts one sentence from two memories, for him to edit
 │   ├── system_state.py        # get_system_state tool: uptime, temp, latency, commit
 │   ├── tier_tool.py           # lower_access tool: demotion by voice, never escalation
 │   ├── calendar_tools.py      # Google Calendar reads, freebusy, changes with undo, app view
@@ -118,7 +120,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1108 passing, 6 skipped, Sep 28 2026)
+│   └── tests/                 # pytest suite (1140 passing, 6 skipped, Sep 28 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -127,10 +129,11 @@ warnings it cost before Sep 6 2026, is in
 │   ├── VOICE_OUTPUT.md        # Voice settings, phrase bank, pronunciation
 │   ├── LATENCY.md             # The turn budget and every timing measurement
 │   ├── INFRASTRUCTURE.md      # Services, tunnel, API, env vars, reminders
-│   └── INCIDENTS.md           # What broke, dated, with the evidence
+│   ├── INCIDENTS.md           # What broke, dated, with the evidence
+│   └── APP_HANDOFF_DUPLICATES.md # the app side of duplicate memory review
 ├── scripts/                      # Operator tools, run by hand from the repo root,
 │                              # or on a timer. Nothing in src/ imports any of these
-│   ├── memory.py              # list/fix/chain/temporary on stored memories
+│   ├── memory.py              # list/fix/chain/temporary/similar/keep-both on memories
 │   ├── retrieval.py           # review and label what retrieval returned
 │   ├── people.py              # people, tiers, birthdays
 │   ├── voiceprint.py          # improve the voiceprint from real use
@@ -275,6 +278,10 @@ of the value itself.
 - `MEMORY_PASS = True`, `MEMORY_PASS_MODEL = "claude-haiku-4-5"` (background
   noticing, after the reply; `MAX_PER_MESSAGE = 3` in `memory_pass.py`)
 - `HISTORY_ASSISTANT_WORDS = 30`
+- `MEMORY_DUPLICATE_SIMILARITY = 0.9` (the memory pass skips only a near rewording;
+  lower starts dropping real facts), `MEMORY_SIMILAR_LIST = 0.75` (what
+  `memory.py similar` lists for merging by hand). Why:
+  [BRAIN.md](docs/BRAIN.md#duplicates-are-not-merged-automatically-measured-sep-28-2026)
 
 ### Conversation loop — why: [BRAIN.md](docs/BRAIN.md#local-intent)
 - `MAX_FOLLOWUP_TURNS = 6`, `FOLLOWUP_TIMEOUT = 3.0`
@@ -341,7 +348,7 @@ STT: Deepgram Nova 3 online, falling back to whisper.cpp (base.en, beam search a
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: SpeechBrain ECAPA (192 dim cosine similarity); an unverified voice is a guest.
-Memory: SQLite WAL mode, schema migrations to version 27.
+Memory: SQLite WAL mode, schema migrations to version 28.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.

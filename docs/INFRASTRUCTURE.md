@@ -229,7 +229,8 @@ REST: /auth/login, /auth/refresh, /chat, /chat/stream, /speak, /history,
 
 Memories: GET and POST /memories, GET /memories/pending,
 POST /memories/{id}/approve, PATCH /memories/{id}, GET /memories/{id}/history,
-DELETE /memories/{id}
+DELETE /memories/{id}, GET /memories/similar, POST /memories/similar/dismiss,
+POST /memories/merge/draft, POST /memories/merge
 
 Reminders and timers: GET /reminders, DELETE /reminders/{id}
 
@@ -280,6 +281,19 @@ minutes (`ACCESS_TOKEN_EXPIRE_MINUTES` in `auth.py`). No refresh token is issued
   still removes the row outright, which breaks the chain of anything it
   superseded. Left as it was; see BACKEND_TODO.md.
 - `POST /memories` stores text as typed, explicit and active; a duplicate is 409.
+- **Duplicates, Sep 28 2026.** `GET /memories/similar` lists active pairs from
+  `MEMORY_SIMILAR_LIST` up, older as `a`, minus pairs he kept both of.
+  `POST /memories/similar/dismiss` `{a_id, b_id}` is keep both, stored in
+  `memory_pair_dismissals` and shared with `memory.py keep-both`.
+  `POST /memories/merge/draft` `{a_id, b_id}` returns `{content, drafted}` and
+  stores nothing; `drafted` is false when the model was unreachable and the
+  content is the longer memory. `POST /memories/merge` `{keep_id, drop_id,
+  content}` supersedes keep_id and deletes drop_id in one transaction; drop_id
+  may be pending, which is how a pending fact replaces the one it updates. 404
+  unless both are current and different. `GET /memories/pending` items carry
+  `similar_to` (`{id, content, similarity}` or null). These routes are declared
+  before the `/memories/{id}` ones: FastAPI tries routes in order and "similar"
+  in the id's place would fail validation rather than fall through.
 - `GET /reminders` lists timers too, told apart by `kind`.
 - `GET /status/details` is `get_system_state` plus whether each service is
   active. The service check lives in `server.py` so it cannot change what Nova
