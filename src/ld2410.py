@@ -5,12 +5,15 @@ frame or hold one and a half. So parse() takes a buffer, returns every complete
 report in it, and hands back the tail for the next read to extend.
 
 Pure bytes in and out, never the port, so it is tested without the hardware.
+send and config_mode take the port as a parameter for the same reason.
 Wiring, tuning and why the module is set the way it is: BACKEND_TODO.md,
 Presence detection.
 """
 
 import struct
+import time
 from collections import namedtuple
+from contextlib import contextmanager
 
 HEADER = b"\xf4\xf3\xf2\xf1"
 FOOTER = b"\xf8\xf7\xf6\xf5"
@@ -152,6 +155,34 @@ def parse_acks(buf):
         word, status = struct.unpack_from("<HH", buf, data_start)
         acks.append(Ack(word & ~_ACK_BIT, status == 0, buf[data_start + 4:end - len(CMD_FOOTER)]))
         buf = buf[end:]
+
+
+def send(port, frame, want, timeout_s=1.0):
+    """Write one command and wait for its acknowledgement. Reports may still be
+    arriving around it; parse_acks skips them. port is anything with read and
+    write, so this is tested without the hardware."""
+    port.write(frame)
+    buf = b""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        acks, buf = parse_acks(buf + port.read(64))
+        for ack in acks:
+            if ack.command == want:
+                return ack
+    raise RuntimeError(f"the radar did not acknowledge command {want:#06x}")
+
+
+@contextmanager
+def config_mode(port):
+    """Commands are only accepted in config mode, and the module sends no
+    reports while in it. So leaving is in a finally: a crash between the two
+    would otherwise leave the sensor mute until it loses power."""
+    if not send(port, enable_config(), ENABLE_CONFIG).ok:
+        raise RuntimeError("the radar refused to enter config mode")
+    try:
+        yield
+    finally:
+        send(port, command(END_CONFIG), END_CONFIG)
 
 
 def decode_params(data):

@@ -1008,6 +1008,7 @@ it back to gate 8 on Sep 27 2026.
 | Gate 0 moving and still threshold | 80 (default 50) | The empty room read 51 to 64 in gate 0 with the fan unplugged and 100 with it on. After this, 3 to 19 with the fan on |
 | Gate 2 still threshold | 10 (default 40) | The bed. Lying still read 8 to 34, median 12, aimed at the door, and was never detected. Aimed at the bed: 18 to 100, median 42. Empty room max 4 |
 | Gate 3 still threshold | 10 (default 40) | The far half of the bed. Lying still: min 7, median 18. Empty room max 3 |
+| Gate 5 moving threshold | 35 (default 15) | Overnight Sep 27 to 28, small movements at 360 to 375 cm (16 to 30) set off most of the false presence while he slept. Walking in reads 100 |
 | Range | gate 5 (default 8), about 3.75 m | Stops short of the door and hallway |
 | Unmanned duration | 5 s | Default. How long after the last detection it reports nobody |
 | Aim | toward the bed | Not a module setting, and the biggest single change. Aimed at the door, the bed was at the edge of the beam |
@@ -1017,6 +1018,18 @@ Validated Sep 27 2026 20:08 to 20:15: present on the bed for 2 minutes 24
 seconds without a gap, absent within seconds of leaving and for the 3.5 minutes
 out, present again at 375 cm on the way in. Before the gate 2 change the bed
 flickered every 20 seconds and once went 19 minutes unseen.
+
+**Sleep is not solved.** Against Oura (in bed 01:59 to 10:08, Sep 28 2026) the
+module held him 30% of the night: 20% in deep sleep, 28% while not moving, 71%
+while tossing. Awake in bed afterwards it held 96%, and a 30 minute nap the
+evening before, deep sleep included, held 100%, so the sensor can see him
+asleep from where it is and the difference is probably how he lies. At each
+overnight loss gate 2 read a still energy of 6 to 10 against a threshold of 10.
+Since Sep 28 the service keeps engineering mode on and writes the energy per
+gate once a minute to `presence_energy` (`PRESENCE_ENERGY_LOG`), so a night can
+be lined up with Oura's sleep stages. Decide from that whether a lower threshold
+has room above the empty room's level, or whether the sensor has to move higher
+and look down at the bed.
 
 **Corrected.** An earlier version of this table said the range was 3.75 m
 from the app and that a doorway test at 15:00 proved it. The first UART read

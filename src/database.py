@@ -662,6 +662,32 @@ def _migration_028_memory_pair_dismissals(conn):
     """)
 
 
+def _migration_029_presence_energy(conn):
+    """The radar's energy in every gate, summarised once a minute.
+
+    presence_log says what the module decided; this says what it saw, which is
+    what a threshold is chosen from. On Sep 28 2026 the module held him for
+    30% of a night Oura says he spent asleep in bed, and whether that is a
+    threshold or a sensor position cannot be told from decisions alone.
+
+    Each column is a JSON list, one number per gate, 0 to 8. The median is
+    kept beside min and max because one stray frame sets either extreme, and
+    a sleeping chest is a question of what a gate usually reads."""
+    conn.execute("""
+        CREATE TABLE presence_energy (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            frames INTEGER NOT NULL,
+            present_frames INTEGER NOT NULL,
+            moving_med TEXT NOT NULL,
+            moving_max TEXT NOT NULL,
+            still_min TEXT NOT NULL,
+            still_med TEXT NOT NULL,
+            still_max TEXT NOT NULL
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -691,6 +717,7 @@ MIGRATIONS = [
     (26, _migration_026_claude_head_start),
     (27, _migration_027_presence_log),
     (28, _migration_028_memory_pair_dismissals),
+    (29, _migration_029_presence_energy),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -1076,6 +1103,22 @@ def log_presence(state, report=None):
             "INSERT INTO presence_log (created_at, state, moving_cm, moving_energy,"
             " still_cm, still_energy) VALUES (?, ?, ?, ?, ?, ?)",
             (datetime.now().isoformat(), state, *fields))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def log_presence_energy(summary):
+    """Record one window of per gate energy. Never raises, like log_presence."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO presence_energy (created_at, frames, present_frames, moving_med,"
+            " moving_max, still_min, still_med, still_max) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (datetime.now().isoformat(), summary["frames"], summary["present_frames"],
+             *(json.dumps(summary[key]) for key in
+               ("moving_med", "moving_max", "still_min", "still_med", "still_max"))))
         conn.commit()
         conn.close()
     except Exception:
