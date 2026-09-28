@@ -34,6 +34,7 @@ import system_state   # noqa: F401
 import tier_tool      # noqa: F401
 import calendar_tools # noqa: F401
 import oura_tools     # noqa: F401
+import hevy_tools     # noqa: F401
 import prowl_tools    # noqa: F401
 import pending_action # noqa: F401
 import web_search     # noqa: F401
@@ -329,10 +330,14 @@ _STAGE_WORDS = {
     "find_schedule_conflicts": "Looking for conflicts",
     "get_job_application":     "Opening that application",
     "get_job_search_summary":  "Checking your job search",
+    "get_lift_history":        "Looking at that lift",
     "get_oura_activity":       "Reading your activity",
     "get_oura_heartrate":      "Reading your heart rate",
     "get_oura_readiness":      "Reading your readiness",
     "get_oura_sleep":          "Reading your sleep",
+    "get_recent_workouts":     "Checking your workouts",
+    "get_routines":            "Reading your routines",
+    "get_session_plan":        "Planning your session",
     "get_system_state":        "Checking on the Pi",
     "get_upcoming_events":     "Checking your calendar",
     "get_weather":             "Checking the weather",

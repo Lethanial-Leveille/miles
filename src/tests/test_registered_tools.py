@@ -14,6 +14,7 @@ import system_state   # noqa: F401  registers get_system_state
 import tier_tool      # noqa: F401  registers lower_access
 import calendar_tools # noqa: F401  registers the calendar tools
 import oura_tools     # noqa: F401  registers the Oura tools
+import hevy_tools     # noqa: F401  registers the Hevy tools
 import prowl_tools    # noqa: F401  registers the Prowl tools
 import pending_action # noqa: F401  registers confirm_pending_action
 import web_search     # noqa: F401  offers web_search, run by Anthropic
@@ -45,6 +46,10 @@ EXPECTED = {
     "get_oura_sleep":          (Permission.READ,           True),
     "get_oura_heartrate":      (Permission.READ,           True),
     "get_oura_activity":       (Permission.READ,           True),
+    "get_recent_workouts":     (Permission.READ,           True),
+    "get_lift_history":        (Permission.READ,           True),
+    "get_routines":            (Permission.READ,           True),
+    "get_session_plan":        (Permission.READ,           True),
     "get_job_search_summary":  (Permission.READ,           True),
     "list_job_applications":   (Permission.READ,           True),
     "get_job_application":     (Permission.READ,           True),
@@ -63,6 +68,7 @@ HOKAGE_ONLY = {
     "find_schedule_conflicts", "plan_sessions", "rename_calendar_events",
     "undo_last_change", "get_job_search_summary", "list_job_applications",
     "get_job_application", "list_discovered_jobs", "accept_discovered_job",
+    "get_recent_workouts", "get_lift_history", "get_routines", "get_session_plan",
 }
 
 # WRITE tools that legitimately cost a second round trip, with the reason.
