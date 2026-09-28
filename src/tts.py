@@ -156,6 +156,9 @@ class Synthesis:
         self.text = text
         self.error = None
         self.requested_at = time.monotonic()
+        # Everything played, kept for spoken_archive. A long reply is about
+        # 1.3MB, held only until the turn ends.
+        self.audio = bytearray()
         self._chunks = queue.Queue()
         self._request = dict(
             voice_id=TTS_VOICE_ID,
@@ -235,6 +238,7 @@ class Synthesis:
             chunk = self._chunks.get()
             if chunk is self._DONE:
                 return
+            self.audio += chunk
             yield chunk
 
 

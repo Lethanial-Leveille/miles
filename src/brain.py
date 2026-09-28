@@ -22,6 +22,7 @@ from database import log_tool_call
 import alerts
 import memory_pass
 import phrasebank
+import spoken_archive
 
 # Imported for its side effect: registering the tools. Without it the registry
 # is empty, the capability block is blank, and Nova silently has no
@@ -234,6 +235,7 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
     played_first_request = [False]
     feeder = asyncio.create_task(feed())
     played = 0
+    spoken = []   # (text sent, audio, silence before it), for spoken_archive
     try:
         while True:
             item = await ready.get()
@@ -247,6 +249,9 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
             finally:
                 slots.release()
             played += 1
+            audio = getattr(synthesis, "audio", None)
+            if audio:
+                spoken.append((synthesis.text, bytes(audio), waited_ms))
             # For the rest of the reply, the silence heard before it. The first
             # sentence's wait is already logged as tts_ttfb_ms.
             if played > 1 and waited_ms is not None:
@@ -259,6 +264,11 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
                 break
     finally:
         feeder.cancel()
+        if spoken:
+            # A thread, not the executor: this also runs when the turn is
+            # cancelled, and nothing about saving a copy should wait on that.
+            threading.Thread(target=spoken_archive.save_reply,
+                             args=(spoken,), daemon=True).start()
 
 
 async def _collect_text(queue: asyncio.Queue, text_parts: list, leaks_seen: set) -> None:
