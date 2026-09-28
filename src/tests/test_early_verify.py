@@ -71,3 +71,22 @@ def test_verify_prepares_audio_the_same_way_as_the_early_run():
 def test_a_resumed_sentence_drops_the_early_embedding():
     assert "self.early.cancel()" in _source("_Speculation")
     assert "_early_verification = None" in _source("cancel_speculation")
+
+
+def test_long_speech_is_cut_to_the_cap(monkeypatch):
+    # ECAPA's cost grows with length and the head start does not, so anything
+    # past the cap used to land on his wait.
+    monkeypatch.setattr(early_verify.speaker_encoder, "trim", lambda wav, source_sr: wav)
+    monkeypatch.setattr(early_verify, "VERIFY_MAX_SECONDS", 2.0)
+    sr = early_verify.speaker_encoder.SR
+    command = np.arange(5 * sr, dtype=np.int16)
+    out = early_verify.prepare(command)
+    assert len(out) == 2 * sr
+    assert out[0] == 0.0  # the start is kept, not the end
+
+
+def test_no_cap_embeds_everything(monkeypatch):
+    monkeypatch.setattr(early_verify.speaker_encoder, "trim", lambda wav, source_sr: wav)
+    monkeypatch.setattr(early_verify, "VERIFY_MAX_SECONDS", None)
+    command = np.zeros(3 * early_verify.speaker_encoder.SR, dtype=np.int16)
+    assert len(early_verify.prepare(command)) == len(command)

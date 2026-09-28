@@ -120,7 +120,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1140 passing, 6 skipped, Sep 28 2026)
+│   └── tests/                 # pytest suite (1142 passing, 6 skipped, Sep 28 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -217,6 +217,8 @@ of the value itself.
   callers report "cannot check" rather than measuring the wrong device.
 - `SPEAKER_ENCODER = "ecapa"` (since Sep 27 2026; Resemblyzer voiceprint kept in
   `models/resemblyzer_backup_2026-09-26` for rollback)
+- `VERIFY_MAX_SECONDS = 10.0` (verification embeds only the first ten seconds of
+  trimmed speech; ECAPA on a whole long turn cost up to 2.8s of wait)
 - `MIN_VOICED_SECONDS = 4.0`, `ENROLL_RECORD_SECONDS = 10`
 
 ### Whisper — why: [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#whisper)
@@ -264,6 +266,8 @@ of the value itself.
   `SPECULATIVE_THREADS = 3`
 - `SPECULATIVE_CLAUDE = True` (the first Claude call opens during the endpoint wait
   and the real turn claims it; `speculative_turn.py`)
+- `WHISPER_FALLBACK_AFTER_MS = 1000` (speculative whisper starts only when Deepgram
+  fails or has not answered by then)
 
 ### Barge in — why: `config.py` comments and [BACKEND_TODO.md](docs/BACKEND_TODO.md)
 - `BARGE_IN = False`, `BARGE_IN_THRESHOLD = 0.30` (wake word only, no echo

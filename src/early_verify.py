@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 import speaker_encoder
-from config import RATE, SPEAKER_ENCODER
+from config import RATE, SPEAKER_ENCODER, VERIFY_MAX_SECONDS
 
 # One at a time. Two encoder runs would compete with each other and with
 # whisper for the same four cores.
@@ -31,7 +31,13 @@ def prepare(command, prepended=None):
     against the old path based version on four real recordings: identical
     samples, embedding cosine 1.0."""
     samples = command if prepended is None else np.concatenate([prepended, command])
-    return speaker_encoder.trim(samples.astype(np.float32) / 32768.0, source_sr=RATE)
+    wav = speaker_encoder.trim(samples.astype(np.float32) / 32768.0, source_sr=RATE)
+    # Capped after the trim, so the limit counts speech rather than silence,
+    # and here rather than in the encoder, so early and late still score the
+    # same samples. See VERIFY_MAX_SECONDS for the measurement.
+    if VERIFY_MAX_SECONDS is None:
+        return wav
+    return wav[:int(VERIFY_MAX_SECONDS * speaker_encoder.SR)]
 
 
 def _embed(command, prepended):

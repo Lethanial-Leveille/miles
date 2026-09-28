@@ -65,6 +65,17 @@ VERIFY_THRESHOLD = VERIFY_THRESHOLDS[SPEAKER_ENCODER]
 VERIFY_RETRY_RATIO = 0.90
 VERIFY_RETRY_THRESHOLD = VERIFY_THRESHOLD * VERIFY_RETRY_RATIO
 
+# Verification embeds at most this much trimmed speech, the start of it. ECAPA
+# costs about 100ms per second of audio on this Pi, and the early run gets
+# roughly a second's head start, so on Sep 28 2026 every long turn waited 1.2 to
+# 2.8s on verification alone. Measured that day on 49 archived clips over 12s:
+# the full clip took a median 1742ms, the first 10s about 970ms flat. Scores
+# moved a median 0.027 down; 3 of 49 went from him to guest, all old clips that
+# already sat at 0.18 to 0.21, and none of the Sep 27 and 28 clips moved near
+# the line. 10 matches ENROLL_RECORD_SECONDS, what the voiceprint was built on.
+# None embeds everything.
+VERIFY_MAX_SECONDS = 10.0
+
 # Wake scores at or above this are logged when they fail to fire. Below it the
 # model is correctly ignoring the room and there is nothing to learn.
 #

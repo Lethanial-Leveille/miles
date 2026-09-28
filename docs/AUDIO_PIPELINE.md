@@ -883,6 +883,20 @@ Below the threshold a voice is answered as a guest, not refused; see the
 decision log. Embedding is slower, 591ms p50 against 224ms, and up to 1.5s on a
 15s clip.
 
+**Capped at `VERIFY_MAX_SECONDS` since Sep 28 2026.** That slowdown grows with
+length, about 100ms per second of speech, and the early run's head start does
+not. Resemblyzer's 150ms always fit inside it; ECAPA on a long turn did not, and
+the Sep 28 planning conversation waited 1.2 to 2.8s per turn on verification
+alone (`verify_ms` in `timing_log`, which had been a median 24ms). Now only the
+first stretch of trimmed speech is embedded. On 49 archived clips over 12s the
+full clip took a median 1742ms and the capped one about 970ms whatever the
+length; scores moved a median 0.027 down, and 3 of 49 crossed from him to guest,
+all old clips already at 0.18 to 0.21. Scores only fall on average, so the cap
+cannot make an impostor easier to accept, though only one labelled impostor clip
+was long enough to test. The cap is applied in `early_verify.prepare`, so the
+early and late paths still score identical samples, and embedded seconds in the
+verification log now top out at the cap.
+
 The enrollment keeps its audio in `models/enrollment_audio` since this switch,
 so a future encoder can be re-embedded without re-enrolling. Its outlier check
 is per encoder: the Resemblyzer floor of 0.70 flagged half of a sound ECAPA
