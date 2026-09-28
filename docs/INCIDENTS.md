@@ -33,6 +33,7 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Sep 28 2026 | Nothing learned since Sep 13 could be found by meaning, and learned memories past twenty would have been unreachable | [below](#memories-could-not-be-found-sep-28-2026) |
 | Sep 26 2026 | The mic stopped delivering and she was deaf for twenty minutes, every service active | [below](#deaf-with-every-service-active-sep-26-2026) |
 | Sep 25 2026 | The SD card stalled mid turn and a reply took 48 seconds | [below](#the-sd-card-stalled-mid-turn-sep-25-2026) |
 | Sep 24 2026 | Pruning by age deleted half the hand labelled wake clips | [below](#pruning-by-age-ate-the-labelling-sep-24-2026) |
@@ -53,6 +54,36 @@ session real work.
 | Sep 6 2026 | One capsule recorded itself as three microphones; enrollment threw away its audio | [below](#two-guards-that-could-not-do-their-jobs-sep-6-2026) |
 | Aug 13 2026 | Nova confabulated a security tool call that never happened | [BRAIN.md](BRAIN.md#nova-knows-the-transcript-is-not-his-words) |
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
+
+---
+
+## Memories could not be found (Sep 28 2026)
+
+He named Obsession, a horror film, one of his three favourite films of 2026, and
+Nova answered "Not really your lane though, horror's not your thing." Search had
+returned seed #90, "Not a horror fan.", on all three of his movie questions that
+morning. Chasing why found two defects, neither of which had ever raised
+anything.
+
+**No vector for anything learned since Sep 13.** `embeddings.backfill` was the
+only thing that wrote vectors, and nothing called it; it had been run by hand.
+24 active memories had none, every one he had told Nova in two weeks, so search
+by meaning could not find them, and keyword search alone had to. Found by
+joining `memories` to `memory_embeddings`. Fixed by backfilling inside
+`search_memories`, active and pending, so every writer is covered.
+
+**Learned memories past the newest twenty were reachable nowhere.** Recall
+searched tier two on the belief that tier one is all in the prompt. A learned
+memory is tier one, and only the newest twenty of those are resident, so the
+twenty first would have been in neither place. There were eighteen that day, so
+nothing had been lost yet; a few days of use would have started it, silently.
+Recall now excludes what the prompt holds instead of filtering by tier.
+
+The contradiction itself is not a defect of either: #90 is still true in
+general, Obsession is the exception, and similarity between the two is 0.31, so
+nothing mechanical links them. Merging it into one sentence is his call, and
+`memory.py similar` and the app review are how. Details in
+[BRAIN.md](BRAIN.md#every-memory-can-be-found-again-sep-28-2026).
 
 ---
 
