@@ -873,6 +873,15 @@ MAX_DISMISS_WORDS = 6
 # discussed while dropping how long it took to say.
 HISTORY_ASSISTANT_WORDS = 30
 
+# History carries no times, so a reply from this afternoon reads as if it were
+# said a moment ago. On Sep 28 2026 she had said at 1:46 PM that his last
+# workout was six days old, and at 6:57 PM, two minutes after he saved one, she
+# repeated it without calling a tool, in all 8 replays of that turn; with the
+# afternoon removed from the history she called the tool 3 of 3 times. Past
+# this gap the newest message says how long ago the conversation before it
+# ended. Thirty minutes is far past any follow up and short of a new errand.
+HISTORY_GAP_NOTE_MINUTES = 30
+
 # ── Prompt caching ──
 # Caches the system prompt, which is the stable prefix: the persona and seed
 # corpus change rarely, while conversation history changes every turn and so

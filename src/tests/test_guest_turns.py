@@ -89,6 +89,7 @@ def test_a_guest_turn_sends_nothing_of_his(monkeypatch):
     monkeypatch.setattr(brain, "start_synthesis", lambda text, *a, **k: text)
     monkeypatch.setattr(brain, "_play_with_barge_in", lambda s: (False, 0.0))
     monkeypatch.setattr(brain, "save_message", lambda *a, **k: 7)
+    monkeypatch.setattr(brain, "last_reply_at", lambda: None)
     monkeypatch.setattr(brain, "get_recent_messages", lambda limit=20: HIS)
     monkeypatch.setattr(brain, "get_messages_after", lambda after, limit=20: GUESTS)
     monkeypatch.setattr(brain, "get_seed_memories", lambda: [(1, "PRIVATE SEED", "x")])

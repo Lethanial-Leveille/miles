@@ -12,7 +12,7 @@ import httpx
 import timing
 from tts import join_for_speech, play, speak, start_synthesis
 from prompts import build_enhanced_prompt, TEXT_TURN_NOTE
-from database import (save_message, delete_message, get_seed_memories, get_episodic_memories,
+from database import (save_message, delete_message, last_reply_at, get_seed_memories, get_episodic_memories,
                       get_recent_messages, get_messages_after, search_memories, memory_manifest,
                       get_shareable_memories, effective_tier)
 from parsing import extract_memories, strip_leading_bracket_cue
@@ -41,7 +41,7 @@ import web_search     # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
                     HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN,
-                    BRIDGE_DELAY_MS)
+                    BRIDGE_DELAY_MS, HISTORY_GAP_NOTE_MINUTES)
 
 claude = anthropic.AsyncAnthropic()
 
@@ -550,6 +550,30 @@ def _with_named_note(messages: list, named: bool) -> list:
     }]
 
 
+def _gap_words(minutes):
+    if minutes < 90:
+        return f"{round(minutes)} minutes"
+    hours = minutes / 60
+    if hours < 36:
+        return f"{round(hours)} hours"
+    return f"{round(hours / 24)} days"
+
+
+def _with_gap_note(messages: list, last_reply, now=None) -> list:
+    """Say how long ago the conversation before this message ended, when it was
+    long enough that what was said then about his day can be stale. Only the
+    final user turn is touched, after the cache breakpoint like the clock."""
+    if last_reply is None or not messages or messages[-1]["role"] != "user":
+        return messages
+    minutes = ((now or datetime.now()) - last_reply).total_seconds() / 60
+    if minutes < HISTORY_GAP_NOTE_MINUTES:
+        return messages
+    note = (f"[The conversation before this message ended {_gap_words(minutes)} ago. "
+            "Anything said then about his day, his workouts, his schedule or his "
+            "health may no longer be true, so check again before answering from it.]")
+    return messages[:-1] + [{**messages[-1], "content": f"{messages[-1]['content']}\n\n{note}"}]
+
+
 def _with_current_time(messages: list) -> list:
     """Append the current date and time to the final user turn.
 
@@ -746,7 +770,7 @@ def _log_recall_later(user_text):
 
 
 def build_request(user_text, channel, tier, model, history, pending_alerts,
-                  log_recall=True, named=False) -> TurnRequest:
+                  log_recall=True, named=False, last_reply=None) -> TurnRequest:
     """The request for one turn, with no side effects.
 
     Nothing here saves a message, consumes an alert, advances the confirmation
@@ -755,6 +779,8 @@ def build_request(user_text, channel, tier, model, history, pending_alerts,
     is get_recent_messages(20) ending in this user message, and pending_alerts
     is what the caller took, or for a speculation, peeked. log_recall=False
     keeps a speculation that may be discarded out of retrieval_log.
+    last_reply is when Nova last replied, read by the caller like history, so
+    a long gap can be noted; None notes nothing.
 
     Everything personal is gated on tier here rather than asked for in the
     prompt. Below hokage the corpus is never assembled, so no phrasing,
@@ -770,6 +796,7 @@ def build_request(user_text, channel, tier, model, history, pending_alerts,
     recent = _with_alerts(_trim_history(history), pending_alerts)
     recent = _with_recalled(recent, user_text, log=log_recall) if personal else recent
     recent = _with_named_note(recent, named)
+    recent = _with_gap_note(recent, last_reply)
     recent = _with_current_time(recent)
     recent = _with_text_note(recent, channel)
 
@@ -890,7 +917,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             _log_recall_later(user_text)
     else:
         request = build_request(user_text, channel, tier, model, history, pending,
-                                named=named)
+                                named=named, last_reply=last_reply_at())
     recent       = request.messages
     system_param = request.system
 
