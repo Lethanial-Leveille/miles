@@ -22,8 +22,12 @@ from database import (
     approve_memory, delete_memory, get_history,
     save_memory, supersede_memory, get_memory_chain, memory_status, memory_content,
     open_reminders, cancel_reminder_by_id,
+    dismiss_memory_pair, dismissed_memory_pairs, merge_memories,
 )
+from config import MEMORY_SIMILAR_LIST
 from system_state import get_system_state
+import embeddings
+import memory_merge
 import calendar_tools
 import tts
 
@@ -67,6 +71,15 @@ class SpeakRequest(BaseModel):
     text: str
 
 class MemoryText(BaseModel):
+    content: str
+
+class MemoryPair(BaseModel):
+    a_id: int
+    b_id: int
+
+class MemoryMerge(BaseModel):
+    keep_id: int
+    drop_id: int
     content: str
 
 class EventChange(BaseModel):
@@ -220,11 +233,85 @@ def list_memories(limit: int = 50, offset: int = 0, user: str = Depends(get_curr
 
 @app.get("/memories/pending")
 def list_pending_memories(user: str = Depends(get_current_user)):
+    """Each pending memory, with the stored one it may repeat or update as
+    similar_to, or null. Added Sep 28 2026; an app that predates it ignores the
+    field. A failed comparison is null rather than an error, because the queue
+    still has to be reviewable when the embedding model is not."""
     rows = get_pending_memories(limit=100)
+    try:
+        close = embeddings.closest_stored([r[0] for r in rows], MEMORY_SIMILAR_LIST,
+                                          dismissed=dismissed_memory_pairs())
+    except Exception as exc:
+        print(f"Pending similarity failed: {exc}", flush=True)
+        close = {}
     return [
-        {"id": r[0], "content": r[1], "category": r[2], "source": r[3], "confidence": r[4]}
+        {"id": r[0], "content": r[1], "category": r[2], "source": r[3], "confidence": r[4],
+         "similar_to": ({"id": close[r[0]][0], "content": close[r[0]][1],
+                         "similarity": round(close[r[0]][2], 2)} if r[0] in close else None)}
         for r in rows
     ]
+
+
+def _current_memory(memory_id):
+    """The text of an active or pending memory, or None. A replaced memory's
+    text still exists, and merging or dismissing it would act on history."""
+    if memory_status(memory_id) not in ("active", "pending"):
+        return None
+    return memory_content(memory_id)
+
+
+# Declared before the /memories/{memory_id} routes. FastAPI tries routes in
+# order, and "similar" or "merge" in the id's place fails validation there
+# instead of falling through to these.
+
+@app.get("/memories/similar")
+def list_similar_memories(user: str = Depends(get_current_user)):
+    """Pairs of active memories that may say the same thing, closest first,
+    without the ones he has said are different. a is the older of each pair.
+    Listed only: which pairs are duplicates is his call (docs/BRAIN.md)."""
+    pairs = embeddings.similar_pairs(MEMORY_SIMILAR_LIST, dismissed=dismissed_memory_pairs())
+    return {"pairs": [
+        {"similarity": round(score, 2),
+         "a": {"id": a[0], "content": a[1]}, "b": {"id": b[0], "content": b[1]}}
+        for score, a, b in pairs
+    ]}
+
+
+@app.post("/memories/similar/dismiss")
+def dismiss_similar_memories(body: MemoryPair, user: str = Depends(get_current_user)):
+    """Keep both: these are different facts, so stop listing them together."""
+    if body.a_id == body.b_id or _current_memory(body.a_id) is None \
+            or _current_memory(body.b_id) is None:
+        raise HTTPException(status_code=404, detail="Both memories must exist")
+    dismiss_memory_pair(body.a_id, body.b_id)
+    return {"dismissed": True}
+
+
+@app.post("/memories/merge/draft")
+def draft_memory_merge(body: MemoryPair, user: str = Depends(get_current_user)):
+    """One sentence holding both memories, written by the model for him to edit.
+    Stores nothing. drafted is false when the model could not be reached and the
+    content is just the longer memory."""
+    older, newer = sorted((body.a_id, body.b_id))
+    older_text, newer_text = _current_memory(older), _current_memory(newer)
+    if older == newer or older_text is None or newer_text is None:
+        raise HTTPException(status_code=404, detail="Both memories must exist")
+    content, drafted = memory_merge.draft(older_text, newer_text)
+    return {"content": content, "drafted": drafted}
+
+
+@app.post("/memories/merge")
+def merge_two_memories(body: MemoryMerge, user: str = Depends(get_current_user)):
+    """keep_id becomes content, keeping its history; drop_id is deleted. One
+    request, one transaction. drop_id may be pending, which is how a pending
+    fact replaces the stored one it updates."""
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="A memory needs some text")
+    new_id = merge_memories(body.keep_id, body.drop_id, content)
+    if new_id is None:
+        raise HTTPException(status_code=404, detail="Both must be current, different memories")
+    return {"id": new_id, "replaced": body.keep_id, "deleted": body.drop_id}
 
 
 @app.post("/memories/{memory_id}/approve")

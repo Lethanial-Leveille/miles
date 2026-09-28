@@ -10,11 +10,21 @@
     python3 scripts/memory.py chain 42              # what this replaced, and when
     python3 scripts/memory.py temporary 42 2026-12-20   # expires after that date
     python3 scripts/memory.py expire                # mark anything past its date
+    python3 scripts/memory.py similar               # pairs that may say the same thing
+    python3 scripts/memory.py similar 0.8           # only the closest
+    python3 scripts/memory.py keep-both 21 22       # different facts; stop listing them
 
 `fix` supersedes rather than edits: the old row is retired and pointed at the
 new one, so "the exam moved to Thursday" stays distinguishable from "the exam
 was always Thursday". `chain` is what that buys.
+
+`similar` is how duplicates are merged, and it only lists. Two different facts
+about the same person score as high as a real duplicate, so which pair is which
+is for you to say (measured in docs/BRAIN.md). To merge one: `fix` the better
+of the two into a sentence that holds both, then `forget` the other.
 """
+
+import textwrap
 
 import os
 import sys
@@ -23,10 +33,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "src"))
 
 import sqlite3                                       # noqa: E402
-from config import DB_PATH                           # noqa: E402
+from config import DB_PATH, MEMORY_SIMILAR_LIST     # noqa: E402
 from database import (init_db, approve_memory, delete_memory,   # noqa: E402
                       supersede_memory, get_memory_chain,
-                      expire_memories, get_pending_memories)
+                      expire_memories, get_pending_memories,
+                      dismiss_memory_pair, dismissed_memory_pairs)
 
 
 def _rows(where, params=()):
@@ -112,6 +123,27 @@ def cmd_temporary(memory_id, date):
     print("it stops reaching Nova's prompt the moment that date passes")
 
 
+def cmd_similar(threshold=MEMORY_SIMILAR_LIST):
+    import embeddings
+    pairs = embeddings.similar_pairs(threshold, dismissed=dismissed_memory_pairs())
+    print(f"active memories that may say the same thing, closest first "
+          f"(similarity {threshold} and up):\n")
+    if not pairs:
+        print("  (none)")
+        return
+    for score, (a, a_text), (b, b_text) in pairs:
+        print(f"  {score:.2f}")
+        for mid, text in ((a, a_text), (b, b_text)):
+            lines = textwrap.wrap(text, 84) or [""]
+            print(f"    #{mid:<4} {lines[0]}")
+            for line in lines[1:]:
+                print(f"          {line}")
+        print()
+    print(f"{len(pairs)} pairs. Different facts about the same thing: keep-both <id> <id>, "
+          "and the pair is not listed again. The app shares these answers.")
+    print('to merge: fix <id> "one sentence that holds both", then forget <other id>')
+
+
 def main():
     init_db()
     args = sys.argv[1:]
@@ -134,6 +166,11 @@ def main():
         cmd_chain(int(rest[0]))
     elif command == "temporary" and len(rest) == 2:
         cmd_temporary(int(rest[0]), rest[1])
+    elif command == "similar":
+        cmd_similar(float(rest[0]) if rest else MEMORY_SIMILAR_LIST)
+    elif command == "keep-both" and len(rest) == 2:
+        dismiss_memory_pair(int(rest[0]), int(rest[1]))
+        print(f"{rest[0]} and {rest[1]} kept as different facts")
     elif command == "expire":
         print(f"marked {expire_memories()} expired")
     else:

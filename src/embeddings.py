@@ -143,3 +143,84 @@ def search(query, limit=5, tier=None, min_similarity=0.25, db_path=None):
     return [(rows[i][0], rows[i][1], rows[i][2])
             for i in order if similarities[i] >= min_similarity]
 
+
+def _vectors(db_path, statuses):
+    marks = ", ".join("?" for _ in statuses)
+    conn = sqlite3.connect(_db(db_path))
+    rows = conn.execute(
+        "SELECT m.id, m.content, m.status, e.vector "
+        "FROM memory_embeddings e JOIN memories m ON m.id = e.memory_id "
+        f"WHERE e.model = ? AND m.status IN ({marks}) ORDER BY m.id",
+        (EMBEDDING_MODEL, *statuses)).fetchall()
+    conn.close()
+    if not rows:
+        return rows, None
+    return rows, np.frombuffer(b"".join(r[3] for r in rows),
+                               dtype=np.float32).reshape(len(rows), -1)
+
+
+def nearest(text, db_path=None):
+    """The stored memory closest in meaning to text, active or pending, as
+    (id, content, similarity), or None when nothing is stored.
+
+    Backfills first, so a memory written a second ago is compared too: on Sep 28
+    2026 the pass queued a rewording of a fact the turn had stored two seconds
+    earlier."""
+    backfill(verbose=False, db_path=db_path)
+    rows, matrix = _vectors(db_path, ("active", "pending"))
+    if not rows:
+        return None
+    similarities = matrix @ encode([text])[0]
+    best = int(np.argmax(similarities))
+    return rows[best][0], rows[best][1], float(similarities[best])
+
+
+def similar_pairs(threshold, db_path=None, dismissed=frozenset()):
+    """Every pair of active memories at or above threshold, closest first, as
+    (similarity, (id, content), (id, content)).
+
+    A list for him to read, never something acted on: measured Sep 28 2026, a
+    duplicate and two different facts about the same person score the same, so
+    only a reader can say which a pair is. See docs/BRAIN.md.
+
+    dismissed holds frozensets of ids he has already called different facts."""
+    backfill(verbose=False, db_path=db_path)
+    rows, matrix = _vectors(db_path, ("active",))
+    if not rows:
+        return []
+    scores = matrix @ matrix.T
+    pairs = []
+    for i in range(len(rows)):
+        for j in range(i + 1, len(rows)):
+            if scores[i, j] >= threshold and \
+                    frozenset((rows[i][0], rows[j][0])) not in dismissed:
+                pairs.append((float(scores[i, j]), rows[i][:2], rows[j][:2]))
+    return sorted(pairs, key=lambda p: -p[0])
+
+
+def closest_stored(memory_ids, threshold, db_path=None, dismissed=frozenset()):
+    """For each of memory_ids, the closest active memory at or above threshold,
+    as {id: (id, content, similarity)}. Ids with nothing close are left out.
+
+    For the review queue: a pending fact is shown beside what it may repeat or
+    update, so he decides with both in front of him. Active memories only, all
+    tiers, since a fact the prompt never carries can still be repeated."""
+    backfill(verbose=False, db_path=db_path)
+    wanted = set(memory_ids)
+    rows, matrix = _vectors(db_path, ("active", "pending"))
+    if not rows:
+        return {}
+    active = [k for k, row in enumerate(rows) if row[2] == "active"]
+    out = {}
+    for k, row in enumerate(rows):
+        if row[0] not in wanted or not active:
+            continue
+        scores = matrix[active] @ matrix[k]
+        for rank in np.argsort(-scores):
+            other = rows[active[rank]]
+            if other[0] == row[0] or frozenset((row[0], other[0])) in dismissed:
+                continue
+            if scores[rank] >= threshold:
+                out[row[0]] = (other[0], other[1], float(scores[rank]))
+            break
+    return out

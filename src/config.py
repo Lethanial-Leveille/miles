@@ -917,6 +917,19 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # paper and there is no reason here to depart from it.
 RRF_K = 60
 
+# The memory pass does not queue a fact this close in meaning to one already
+# stored or waiting. Only a rewording scores this high: measured Sep 28 2026,
+# the one pair at or above it was the same top three films stored twice, 0.94.
+# Duplicates in general ran 0.79 to 0.94 and different facts 0.76 to 0.83, so
+# lowering it toward 0.8 starts dropping real facts. The pass only, never a fact
+# he asked her to remember.
+MEMORY_DUPLICATE_SIMILARITY = 0.9
+
+# Pairs listed by `scripts/memory.py similar` for merging by hand. Low enough
+# that every duplicate found on Sep 28 2026 (lowest 0.79) is on the list; the
+# different facts it also lists are his to leave alone.
+MEMORY_SIMILAR_LIST = 0.75
+
 # How long the follow up window stays open after Nova finishes speaking.
 #
 # Was a bare 10 in voice_main.py. Ten seconds is a long time to stand in a quiet
