@@ -330,3 +330,40 @@ def test_the_app_gets_no_spoken_bridge_either(turn):
                           _FakeStream(["It's 75 degrees."]), device="app")
     assert played == []
     assert result.text == "It's 75 degrees."
+
+
+def _remember():
+    return SimpleNamespace(type="tool_use", name="remember", id="toolu_1",
+                           input={"content": "Ring finger injury.", "certainty": "asked"})
+
+
+def test_a_spoken_lead_in_is_saved_when_the_follow_up_says_nothing(turn):
+    """Regression for Sep 28 2026. She asked "How's the toe feeling now?"
+    alongside remember, the follow up said nothing, and the turn saved nothing,
+    so her next turn never saw the question he was answering."""
+    result, played = turn("voice",
+                          _FakeStream(["Got it. How's the toe feeling now?"], [_remember()]),
+                          _FakeStream([]))
+    assert played == ["Got it.", "How's the toe feeling now?"]
+    assert result.text == "Got it. How's the toe feeling now?"
+
+
+def test_history_holds_the_lead_in_and_the_follow_up_as_heard(turn):
+    result, played = turn("voice",
+                          _FakeStream(["Got it."], [_remember()]),
+                          _FakeStream(["That explains the pull ups."]))
+    assert played == ["Got it.", "That explains the pull ups."]
+    assert result.text == "Got it. That explains the pull ups."
+
+
+def test_on_the_app_an_empty_follow_up_brings_the_lead_in_back(turn):
+    """The app cleared the lead in on reset; a blank reply is worse than it."""
+    events = []
+    result, played = turn("text",
+                          _FakeStream(["Got it. How's the toe feeling now?"], [_remember()]),
+                          _FakeStream([]),
+                          on_text=lambda kind, text: events.append((kind, text)))
+    assert played == []
+    assert result.text == "Got it. How's the toe feeling now?"
+    assert events[-1] == ("delta", "Got it. How's the toe feeling now?")
+    assert events.index(("reset", "")) < len(events) - 1

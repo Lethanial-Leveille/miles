@@ -1063,8 +1063,9 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
         if needs_second_call:
             # Whatever Nova said alongside the call is not part of the answer
-            # the tool result produces, and it is not what gets saved either.
-            # A reader who was shown it has to be told to drop it.
+            # the tool result produces. A reader who was shown it has to be told
+            # to drop it. A listener cannot be: see lead_in below.
+            lead_in = " ".join(spoken_parts).strip()
             _emit(on_text, "reset", "")
             # Real tool_result blocks, not a synthetic user turn describing the
             # data in prose. The model gets the result attached to the call it
@@ -1160,6 +1161,20 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                 await _say(late_question, channel, device)
                 _emit(on_text, "delta", f" {late_question}" if final_text else late_question)
                 final_text = f"{final_text} {late_question}".strip()
+
+            # History has to be what he heard. The lead in was dropped as a
+            # "let me check", but alongside remember it is often the whole
+            # reply: on Sep 28 2026 she asked "How's the toe feeling now?" there,
+            # the follow up said nothing, and the turn saved nothing, so her
+            # next turn never saw her own question. Replayed, 3 of 5 runs saved
+            # something other than what was spoken. A spoken lead in is kept; on
+            # the app, where it was cleared, it comes back only when the follow
+            # up is empty, so the reply is never blank.
+            if _plays_in_the_room(channel, device):
+                final_text = f"{lead_in} {final_text}".strip()
+            elif not final_text and lead_in:
+                _emit(on_text, "delta", lead_in)
+                final_text = lead_in
         else:
             # Timer, reminder, cancel, dismiss: the text Nova said alongside
             # the call is the answer. A second round trip here would spend a
