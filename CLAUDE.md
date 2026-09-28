@@ -111,6 +111,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── tier_tool.py           # lower_access tool: demotion by voice, never escalation
 │   ├── calendar_tools.py      # Google Calendar reads, freebusy, changes with undo, app view
 │   ├── oura_tools.py          # Oura readiness, sleep, heart rate, activity
+│   ├── hevy_tools.py          # Hevy workouts, lift history, routines, session targets; read only
 │   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
@@ -120,7 +121,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1148 passing, 6 skipped, Sep 28 2026)
+│   └── tests/                 # pytest suite (1203 passing, 6 skipped, Sep 28 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -317,7 +318,7 @@ of the value itself.
 - `PERMISSION_TIERS` (in `tools.py`): READ `genin`, CONTROL `genin`, WRITE
   `chunin`, EXTERNAL_WRITE `hokage`. A tool's `min_tier` can only raise its floor.
 - Raised by `min_tier`: `remember` to `jonin`; `lower_access`, every calendar
-  tool, every Oura tool, every Prowl tool, `list_pending_memories` and
+  tool, every Oura tool, every Hevy tool, every Prowl tool, `list_pending_memories` and
   `review_pending_memory` to `hokage`.
 - `CONFIRM_WINDOW_S = 120` (in `pending_action.py`, not `config.py`)
 
@@ -358,6 +359,7 @@ Memory: SQLite WAL mode, schema migrations to version 29.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.
+Workouts: Hevy API v1, static key (Hevy Pro).
 Jobs: Prowl (tracker.lethanial.com), its MILES surface, token auth.
 Live info: Anthropic's web search tool, run server side inside the Claude call.
 Backend: FastAPI + uvicorn + python-jose + passlib (bcrypt) + python-dotenv.
@@ -408,6 +410,10 @@ Landed since v0.7.1, unreleased:
 - Prowl job search tools: summary, applications, discoveries, and accepting one
   discovered job after a spoken yes
 - Web search for anything current (scores, news, hours), run by Anthropic
+- Hevy reads: recent workouts, one lift's history, routines and when each was
+  last done, all converted back to the pounds he logged; a session plan per
+  routine that says whether to add a rep or add weight, from the rep ranges
+  on his Hevy routines, and flags a stall
 
 ## What Is Next
 

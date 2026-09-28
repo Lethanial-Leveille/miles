@@ -79,6 +79,11 @@ def test_prompt_can_only_claim_registered_tools(native):
     #
     # So the ban narrows rather than lifts: the name may appear, and only
     # inside a sentence that says it is not connected.
+    #
+    # Since Sep 28 2026 the Hevy tools are registered, and the generated block
+    # names Hevy through their descriptions. The hand written prompt still
+    # must not: this test builds with a fake registry, and a sentence naming
+    # Hevy here would claim it on a Pi where those tools failed to import.
     lowered = prompt.lower()
     for sentence in lowered.split("."):
         if "hevy" in sentence:

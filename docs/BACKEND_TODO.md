@@ -919,6 +919,36 @@ training block into structured sets and reps, which makes "did the muscle up
 work happen on Tuesday" answerable rather than a question. Confirm whether API
 access needs a paid tier before committing to it.
 
+*Reads built Sep 28 2026* (`hevy_tools.py`): recent workouts, one lift's
+history with an estimated one rep max, and routines with when each was last
+done. API access does need Hevy Pro. `get_session_plan` (Sep 28 2026) gives
+each lift of a routine its last session, a target, and a stall flag (two
+sessions without beating the one before, his deload trigger). Sessions are
+judged at the working weight, the weight with the most sets, so a heavy single
+is neither the target nor a false stall.
+
+*Routines rebuilt Sep 28 2026* for the apartment gym, from this repo, not by
+MILES: Upper Strength, Upper Volume, Lower Strength, Lower Volume, skills first
+(the programme is in his memories). Rep ranges live on the routine sets in
+Hevy (`rep_range`), which the API supports though his routines had none, so
+`target` now decides between a rep and a jump: the full planned count of
+working sets at the top of the range earns 10 lb on squat, deadlift and their
+variants, 5 lb on everything else, and "the next pin" on machines and cables.
+The pre rebuild routines are in `data/hevy_backups/`. Three custom exercises
+were created: Muscle Up Negative, Straight Bar Dip, Handstand Push Up
+Negative. Front squat reads as stalled until a few sessions are logged with
+the ramp sets marked as warm ups; the old sessions logged them as working sets.
+
+Hevy's API differs from its own spec in two places: creating a custom
+exercise returns the id as plain text, not JSON, and a routine set rejects
+`rep_range: null`, so leave the key out. Next: MILES routine edits from the
+app chat, for ongoing tweaks, read back before sending. Hevy replaces a routine whole on update and has no undo, so an edit
+must keep the old routine locally first, and an exercise name has to resolve
+to one of 451 templates, so a change is read back before it is sent. He builds
+and edits routines in the app, not by voice. Logging workouts by voice is not
+planned: he logs in the app during the session. No bridge line yet;
+`bridge_health` names Oura, so lifting needs its own rendered phrases.
+
 **Canvas.** UF runs Canvas, and Canvas LMS has a REST API with courses,
 assignments, due dates, submissions, and grades, reached with a personal access
 token from account settings. **UF appears to block personal access tokens**

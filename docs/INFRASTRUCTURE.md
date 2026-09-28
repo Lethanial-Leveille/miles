@@ -319,6 +319,8 @@ only interactive shells see it; no service does.
 - ELEVENLABS_API_KEY
 - FISH_API_KEY (retained for rollback only)
 - OURA_CLIENT_ID, OURA_CLIENT_SECRET
+- HEVY_API_KEY (from Hevy's developer settings; needs Hevy Pro. A static key,
+  no OAuth and nothing to refresh)
 - PROWL_URL, PROWL_TOKEN (the job tracker's MILES surface. The token must match
   `MILES_SERVICE_TOKEN` on the Prowl droplet, and Prowl answers a mismatch and
   an unset token with the same 401, so check both sides)
