@@ -66,7 +66,7 @@ def test_an_absurd_length_does_not_stall_parsing():
     assert reports == [Report(0, 444, 0, 444, 13)]
 
 
-def test_engineering_reports_decode_the_same_leading_fields():
+def test_engineering_reports_decode_the_energy_in_every_gate():
     # What the HLKRadarTool app leaves the module sending: the normal fields,
     # then max gates, nine moving and nine still energies, and two more bytes.
     data = (bytes([0x01, 0xAA, ld2410.BOTH]) + (166).to_bytes(2, "little") + bytes([61])
@@ -74,7 +74,7 @@ def test_engineering_reports_decode_the_same_leading_fields():
             + bytes([8, 8]) + bytes(range(9)) + bytes(range(9)) + b"\x00\x00\x55\x00")
     assert len(data) == 35
     reports, _ = parse(_frame(data))
-    assert reports == [Report(3, 166, 61, 300, 63)]
+    assert reports == [Report(3, 166, 61, 300, 63, list(range(9)), list(range(9)))]
 
 
 def test_an_unknown_report_type_is_skipped():
@@ -87,3 +87,57 @@ def test_presence_is_any_state_but_nobody():
     assert not ld2410.is_present(Report(0, 444, 0, 444, 13))
     for state in (ld2410.MOVING, ld2410.STILL, ld2410.BOTH):
         assert ld2410.is_present(Report(state, 0, 0, 0, 0))
+
+
+# ── Commands ──
+# Byte for byte the example frames in Hi Link's LD2410 serial protocol manual.
+
+def test_command_frames_match_the_manual():
+    assert ld2410.enable_config() == bytes.fromhex("fdfcfbfa 0400 ff00 0100 04030201")
+    assert ld2410.command(ld2410.END_CONFIG) == bytes.fromhex("fdfcfbfa 0200 fe00 04030201")
+    assert ld2410.command(ld2410.READ_PARAMS) == bytes.fromhex("fdfcfbfa 0200 6100 04030201")
+
+
+def test_set_sensitivity_matches_the_manual():
+    # The manual's example: every gate (0xFFFF) to 40 moving and 40 still.
+    assert ld2410.set_sensitivity(0xFFFF, 40, 40) == bytes.fromhex(
+        "fdfcfbfa 1400 6400 0000 ffff0000 0100 28000000 0200 28000000 04030201")
+
+
+def test_set_max_gates_lays_out_three_words():
+    frame = ld2410.set_max_gates(5, 5, 5)
+    assert frame == bytes.fromhex(
+        "fdfcfbfa 1400 6000 0000 05000000 0100 05000000 0200 05000000 04030201")
+
+
+def test_ack_reports_the_command_and_success():
+    acks, rest = ld2410.parse_acks(bytes.fromhex(
+        "fdfcfbfa 0800 ff01 0000 0100 4000 04030201"))
+    assert acks == [ld2410.Ack(ld2410.ENABLE_CONFIG, True, bytes.fromhex("01004000"))]
+    assert rest == b""
+
+
+def test_a_failed_ack_is_not_ok():
+    acks, _ = ld2410.parse_acks(bytes.fromhex("fdfcfbfa 0400 6401 0100 04030201"))
+    assert acks == [ld2410.Ack(ld2410.SET_SENSITIVITY, False, b"")]
+
+
+def test_acks_are_found_among_reports():
+    # Reports can still be arriving when the first command lands.
+    report = _normal(ld2410.STILL, 0, 0, 145, 83)
+    ack = bytes.fromhex("fdfcfbfa 0400 fe01 0000 04030201")
+    acks, _ = ld2410.parse_acks(report + ack)
+    assert acks == [ld2410.Ack(ld2410.END_CONFIG, True, b"")]
+
+
+def test_factory_parameters_decode():
+    # The manual's READ_PARAMS reply, which is also the factory default.
+    acks, _ = ld2410.parse_acks(bytes.fromhex(
+        "fdfcfbfa 1c00 6101 0000 aa 08 08 08"
+        " 3232281e140f0f0f0f 000028281e1e141414 0500 04030201"))
+    params = ld2410.decode_params(acks[0].data)
+    assert params == ld2410.Params(
+        8, 8, 8,
+        [50, 50, 40, 30, 20, 15, 15, 15, 15],
+        [0, 0, 40, 40, 30, 30, 20, 20, 20],
+        5)

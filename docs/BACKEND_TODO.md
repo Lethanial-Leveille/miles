@@ -996,26 +996,38 @@ little endian. Report type `0x02` is normal, `0x01` is engineering mode with
 energy per gate appended. A throwaway decoder lives at `~/ld2410_test.py`,
 outside the repo. The port is opened exclusively, so stop miles-voice to use it.
 
-**Its settings live in the module's flash, not in this repo.** Set by hand in
-Hi Link's HLKRadarTool app over Bluetooth, password `HiLink`:
+**Its settings live in the module's flash, set over the UART with
+`scripts/radar.py`.** `show` reads what the module holds, `record` prints the
+energy per gate over a stretch of time, `set` and `range` write. Each needs
+miles-voice stopped, since the service holds the port. Leave the HLKRadarTool
+app closed: its Detection range slider writes the same max gate setting and put
+it back to gate 8 on Sep 27 2026.
 
 | Setting | Value | Why |
 |---|---|---|
 | Gate 0 moving and still threshold | 80 (default 50) | The empty room read 51 to 64 in gate 0 with the fan unplugged and 100 with it on. After this, 3 to 19 with the fan on |
-| Detection range | 3.75 m, gates 0 to 5 | The sensor looks straight at the door. At 4.5 m (which still included gate 6) someone standing in the open doorway or the hallway counted as present |
-| Gate size | 0.75 m | Default. 0.2 m would shrink the whole range under 2 m and lose the bed |
+| Gate 2 still threshold | 10 (default 40) | The bed. Lying still read 8 to 34, median 12, aimed at the door, and was never detected. Aimed at the bed: 18 to 100, median 42. Empty room max 4 |
+| Gate 3 still threshold | 10 (default 40) | The far half of the bed. Lying still: min 7, median 18. Empty room max 3 |
+| Range | gate 5 (default 8), about 3.75 m | Stops short of the door and hallway |
 | Unmanned duration | 5 s | Default. How long after the last detection it reports nobody |
-| Everything else | Factory default | |
+| Aim | toward the bed | Not a module setting, and the biggest single change. Aimed at the door, the bed was at the edge of the beam |
+| Everything else | Factory default | Gate size stays 0.75 m; 0.2 m would shrink the range under 2 m |
 
-Validated by walking out, standing in the open doorway, and walking back in: nobody
-outside and in the doorway (a doorway signal of 41 was correctly ignored),
-detected at about 4.25 m on the way in. The bed reads 1.5 to 2.3 m. The closet is
-on the far wall and is outside the range, on purpose.
+Validated Sep 27 2026 20:08 to 20:15: present on the bed for 2 minutes 24
+seconds without a gap, absent within seconds of leaving and for the 3.5 minutes
+out, present again at 375 cm on the way in. Before the gate 2 change the bed
+flickered every 20 seconds and once went 19 minutes unseen.
+
+**Corrected.** An earlier version of this table said the range was 3.75 m
+from the app and that a doorway test at 15:00 proved it. The first UART read
+showed the range was still gate 8: the app setting had not saved, and the
+doorway passed for some other reason, probably low energy at that distance.
 
 **What is left.** During tuning the UART went silent whenever the app was
-connected to the module, so any reader must tolerate long silences. Whatever service reads it should write these
-settings over the UART at startup, so the repo becomes the source of truth and a
-module reset or replacement does not silently undo them. Before writing that
+connected to the module, so any reader must tolerate long silences. The service
+should write these settings over the UART at startup, from config.py, so a
+module reset or replacement does not silently undo them; the command code for
+that is already in `ld2410.py`. Before writing that
 service, design what present means over time (5 s is the module's opinion;
 Nova likely wants minutes) and how it combines with speaker verification,
 because radar sees a person, not Lethanial.
