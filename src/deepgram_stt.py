@@ -203,6 +203,10 @@ class Run:
         socket is cheaper than the complexity of one."""
         self._cancelled = True
 
+    def finished(self):
+        """Whether the request has come back, with an answer or a failure."""
+        return self._done.is_set()
+
     def result(self, timeout=None):
         """The transcript, or None if it failed, was cancelled, or is still out.
 

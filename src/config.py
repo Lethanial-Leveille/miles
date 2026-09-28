@@ -540,6 +540,14 @@ SPECULATIVE_TRANSCRIBE = True
 # See speculative_turn.py. False returns to calling Claude after the endpoint.
 SPECULATIVE_CLAUDE = True
 
+# Deepgram answers the speculation in about 300ms, so whisper is only a fallback:
+# started when Deepgram fails, or when it has not answered after this long. It
+# used to run on every speculation and took the CPU from the ECAPA embedding
+# beside it (238ms alone, 617ms beside whisper, Sep 28 2026). A slow Deepgram
+# costs at most this over whisper alone; offline, Deepgram fails at once and
+# whisper starts at once.
+WHISPER_FALLBACK_AFTER_MS = 1000
+
 # How much silence before speculating. Bounded on both sides: earlier means more
 # overlap but more discarded work, and the overlap can never exceed
 # SILENCE_LIMIT minus this.
