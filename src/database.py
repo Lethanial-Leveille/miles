@@ -1098,7 +1098,7 @@ def _query_terms(query):
     return terms
 
 
-def search_memories(query, limit=5, tier=None, log=False):
+def search_memories(query, limit=5, tier=None, log=False, exclude=()):
     """Hybrid retrieval: keyword and semantic, fused by reciprocal rank.
 
     The two methods fail in opposite directions, which is the whole reason to
@@ -1116,13 +1116,19 @@ def search_memories(query, limit=5, tier=None, log=False):
 
     Each method is asked for more candidates than the caller wants, so fusion
     has something to work with rather than merging two already truncated lists.
+
+    exclude drops ids before fusion, so memories the caller already has do not
+    take places in the ranking. The pool grows by as many, so excluding them
+    cannot leave it short.
     """
     terms = _query_terms(query)
-    pool = max(limit * 3, 10)
+    exclude = set(exclude)
+    pool = max(limit * 3, 10) + len(exclude)
 
     keyword = search_keyword(query, limit=pool, tier=tier)
     try:
         import embeddings
+        embeddings.backfill(verbose=False)
         semantic = embeddings.search(query, limit=pool, tier=tier)
     except Exception:
         # No model, no vectors, or a load failure. Degrading to keyword only is
@@ -1133,6 +1139,7 @@ def search_memories(query, limit=5, tier=None, log=False):
     fused = {}
     ranks = {"keyword": [], "semantic": []}
     for name, results in (("keyword", keyword), ("semantic", semantic)):
+        results = [row for row in results if row[0] not in exclude]
         for rank, row in enumerate(results):
             ranks[name].append(row[0])
             entry = fused.setdefault(row[0], {"row": row, "score": 0.0})

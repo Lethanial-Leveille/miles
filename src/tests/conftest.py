@@ -18,3 +18,24 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DB_PATH", test_db_path)
     database.init_db()
     return database
+
+
+@pytest.fixture
+def fake_embeddings(monkeypatch):
+    """Words hashed into 64 buckets stand in for the sentence model: sentences
+    sharing words point the same way, and nothing loads 80MB of weights."""
+    import zlib
+    import numpy as np
+    import embeddings
+
+    def encode(texts):
+        out = []
+        for text in texts:
+            v = np.zeros(64, dtype=np.float32)
+            for word in text.lower().replace(".", "").split():
+                v[zlib.crc32(word.encode()) % 64] += 1.0
+            out.append(v / (np.linalg.norm(v) or 1.0))
+        return np.stack(out)
+
+    monkeypatch.setattr(embeddings, "encode", encode)
+    return encode
