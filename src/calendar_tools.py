@@ -35,6 +35,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 import pending_action
+from parsing import words_for_number
 from tools import Permission, tool
 
 TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "token.json")
@@ -1406,18 +1407,62 @@ def _when_words(starts, now):
     return joined([f"{_day_words(s, now)} at {_clock(s)}" for s in starts])
 
 
+def _spoken_count(count):
+    try:
+        return words_for_number(count)
+    except ValueError:
+        return str(count)
+
+
+def _times(count, more=False):
+    """"twice", "four times", "one more time": how a count is said aloud."""
+    if count == 1:
+        return "one more time" if more else "once"
+    if count == 2 and not more:
+        return "twice"
+    return f"{_spoken_count(count)} more times" if more else f"{_spoken_count(count)} times"
+
+
 def _plan_sentence(placed, now):
-    """The whole plan as one sentence, grouped by name so it can be followed by
-    ear: "Added 4 sessions: Isaiah lesson Monday at 3 PM and Thursday at 3 PM;
-    Andrew lesson..., all 90 minutes."."""
+    """What was added, said the way a person would: "Added Isaiah lesson twice,
+    Monday and Thursday at 3 PM, and Andrew lesson Friday at 4 PM. 90 minutes
+    each."
+
+    Until Sep 28 2026 this read "Added 4 sessions: Isaiah lesson ...; Andrew
+    lesson ..., all 90 minutes." Colons and semicolons organise a screen, and
+    heard aloud they were a list being recited, which he described as her
+    sounding incoherent. A count is said only where the days do not already
+    say it: a run of every day needs none."""
     by_name = {}
     for name, start, end in placed:
         by_name.setdefault(name, []).append(start)
-    groups = [f"{name} {_when_words(starts, now)}" for name, starts in by_name.items()]
+    groups = []
+    for name, starts in by_name.items():
+        when = _when_words(starts, now)
+        if len(starts) == 1 or when.startswith("every day"):
+            groups.append(f"{name} {when}")
+        else:
+            groups.append(f"{name} {_times(len(starts))}, {when}")
+    said = "Added " + (groups[0] if len(groups) == 1
+                       else ", ".join(groups[:-1]) + ", and " + groups[-1]) + "."
     lengths = {int((end - start).total_seconds() // 60) for _, start, end in placed}
-    suffix = f", all {_length_words(lengths.pop())}" if len(lengths) == 1 else ""
-    count = len(placed)
-    return f"Added {count} session{'' if count == 1 else 's'}: {'; '.join(groups)}{suffix}."
+    if len(lengths) == 1:
+        length = _length_words(lengths.pop())
+        said += f" {length} each." if len(placed) > 1 else f" {length}."
+    return said
+
+
+def _no_room(unplaced, placed):
+    """What did not fit, after what did. "There wasn't room for the other two"
+    when the plan was one thing; the name and count otherwise."""
+    placed_names = {name for name, _, _ in placed}
+    if len(unplaced) == 1 and len(placed_names) == 1 and unplaced[0][0] in placed_names:
+        return f"There wasn't room for the other {_spoken_count(unplaced[0][1])}."
+    parts = [f"{name} {_times(count, more=name in placed_names)}"
+             if name in placed_names else f"any {name}"
+             for name, count in unplaced]
+    joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " or " + parts[-1]
+    return f"There wasn't room for {joined}."
 
 
 @tool(
@@ -1568,13 +1613,16 @@ def plan_sessions(sessions, blocked=None, time_min=None, time_max=None, now=None
 
     # Everything is said by code, in one go: overlaps with club events and
     # anything that did not fit are part of what he hears, not left to Nova.
-    notes = _overlap_notes(_club_overlaps(added, soft_busy), now)
+    # What happened first, then what did not. Said the other way round, the
+    # first thing he heard was "Did not fit", before knowing anything was added.
+    said = [_plan_sentence(added, now)] if added else []
     if unplaced:
-        notes.append(f"Did not fit: {missing}")
+        said.append(_no_room(unplaced, added))
+    said += [note + "." for note in _overlap_notes(_club_overlaps(added, soft_busy), now)]
     if failed:
-        notes.append(f"Could not add: {'; '.join(failed)}")
-    said = (". ".join(notes) + ". " if notes else "") + (_plan_sentence(added, now) if added else "")
-    said = said.strip()
+        said.append("Couldn't add " + (failed[0] if len(failed) == 1
+                    else ", ".join(failed[:-1]) + " or " + failed[-1]) + ".")
+    said = " ".join(said)
     pending_action.announce(said)
     return f"{said} This was read back to him word for word; he can say undo."
 
