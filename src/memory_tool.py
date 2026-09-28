@@ -56,7 +56,10 @@ from tools import Permission, tool
                 "type": "string",
                 "description": "The fact, written as a standalone statement "
                                "that still makes sense months later with no "
-                               "surrounding conversation.",
+                               "surrounding conversation. Numbers as numerals, "
+                               "like 225 or 3:30, even on a voice turn: this is "
+                               "stored text, not speech. A relative time like "
+                               "last week becomes a date.",
             },
             "supersedes": {
                 "type": "integer",
