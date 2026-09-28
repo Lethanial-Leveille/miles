@@ -141,6 +141,7 @@ def memories(monkeypatch):
     monkeypatch.setattr(brain, "search_memories", lambda *a, **k: [])
     monkeypatch.setattr(brain, "effective_tier", lambda: "hokage")
     monkeypatch.setattr(st, "get_recent_messages", lambda limit: ROWS[-limit:])
+    monkeypatch.setattr(st, "last_reply_at", lambda: None)
 
 
 def test_unchanged_it_fingerprints_exactly_as_the_real_turn_will(gate, memories):
@@ -221,6 +222,7 @@ def turn(monkeypatch, memories):
     monkeypatch.setattr(brain, "start_synthesis", lambda text, *a, **k: text)
     monkeypatch.setattr(brain, "_play_with_barge_in", lambda s: (False, 0.0))
     monkeypatch.setattr(brain, "save_message", lambda *a, **k: 7)
+    monkeypatch.setattr(brain, "last_reply_at", lambda: None)
     monkeypatch.setattr(brain, "get_recent_messages", lambda limit=20: ROWS[-limit:])
     monkeypatch.setattr(brain.alerts, "take_for_fold", lambda: [])
     monkeypatch.setattr(brain.memory_pass, "notice_later", lambda *a, **k: None)

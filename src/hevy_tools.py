@@ -406,8 +406,11 @@ def _all_pages(path, key, max_pages):
     description=(
         "Lethanial's most recent workouts from Hevy, newest first: the date and "
         "weekday, how long it took, and every set of every exercise with reps and "
-        "pounds. Call this when he asks what he did at the gym, when he last "
-        "trained, or whether a session happened on a given day."
+        "pounds. Call this when he asks what he did at the gym, how a workout "
+        "went, when he last trained, or whether a session happened on a given "
+        "day. He logs a session the moment he finishes it, so call this every "
+        "time he asks, even if you said what his last workout was earlier "
+        "today: that answer was true then and may not be now."
     ),
     input_schema={
         "type": "object",

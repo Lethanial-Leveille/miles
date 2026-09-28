@@ -61,6 +61,7 @@ def turn(monkeypatch):
     monkeypatch.setattr(brain, "_play_with_barge_in",
                         lambda synthesis: (played.append(synthesis), (False, 0.0))[1])
     monkeypatch.setattr(brain, "save_message", lambda *a, **k: 7)
+    monkeypatch.setattr(brain, "last_reply_at", lambda: None)
     monkeypatch.setattr(brain, "delete_message", lambda message_id: played.append(f"deleted:{message_id}"))
     monkeypatch.setattr(brain, "get_recent_messages",
                         lambda limit=20: [{"role": "user", "content": "hi"}])

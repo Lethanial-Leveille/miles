@@ -1621,6 +1621,16 @@ def get_recent_messages(limit=20):
     return [{"role": role, "content": content} for role, content in rows]
 
 
+def last_reply_at():
+    """When Nova last replied, or None before she ever has."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT created_at FROM conversation_history WHERE role = 'assistant'"
+        " ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    return datetime.fromisoformat(row[0]) if row else None
+
+
 def latest_message_id():
     """The newest conversation_history id, or 0 when there is none. Taken when a
     conversation starts, so a guest's history can begin after it."""
