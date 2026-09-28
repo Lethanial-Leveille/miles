@@ -121,7 +121,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1208 passing, 6 skipped, Sep 28 2026)
+│   └── tests/                 # pytest suite (1216 passing, 6 skipped, Sep 28 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -281,7 +281,9 @@ of the value itself.
 - `MODEL_AB_TEST = False`
 - `PROMPT_CACHING = True`
 - `MEMORY_PASS = True`, `MEMORY_PASS_MODEL = "claude-haiku-4-5"` (background
-  noticing, after the reply; `MAX_PER_MESSAGE = 3` in `memory_pass.py`)
+  noticing, after the reply; `MAX_PER_MESSAGE = 3` and `SAME_MESSAGE_OVERLAP =
+  0.8` in `memory_pass.py`, the second skipping a piece of what the turn itself
+  stored from the same message)
 - `HISTORY_ASSISTANT_WORDS = 30`
 - `HISTORY_GAP_NOTE_MINUTES = 30` (past this since her last reply, the newest
   message says how long ago the conversation before it ended; history has no

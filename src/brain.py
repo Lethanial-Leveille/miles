@@ -1020,6 +1020,9 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
     tool_uses = [b for b in final_message.content if b.type == "tool_use"]
     called_tools = {b.name for b in tool_uses}
+    # What this turn's own remember calls wrote, so the memory pass after it
+    # does not queue the same fact again in pieces.
+    remembered = [b.input.get("content", "") for b in tool_uses if b.name == "remember"]
 
     if tool_uses:
         action_start = time.monotonic()
@@ -1138,6 +1141,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                 more_tools = [b for b in followup_message.content
                               if b.type == "tool_use"]
                 called_tools |= {b.name for b in more_tools}
+                remembered += [b.input.get("content", "") for b in more_tools
+                               if b.name == "remember"]
                 if not more_tools:
                     break
 
@@ -1246,7 +1251,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     # After the reply, on its own thread. Only for him: a guest's words are not
     # facts about Lethanial, and speech not meant for Nova is not his to keep.
     if tier == "hokage" and not ignored:
-        memory_pass.notice_later(user_text, datetime.now())
+        memory_pass.notice_later(user_text, datetime.now(), remembered)
     return TurnResult(text=final_text, dismissed=dismissed, ignored=ignored)
 
 

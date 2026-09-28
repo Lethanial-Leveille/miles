@@ -141,3 +141,35 @@ def test_similar_pairs_lists_close_active_memories_closest_first(db, fake_embedd
     database.save_memory("Obsession is a favourite film.", source="explicit")
     pairs = embeddings.similar_pairs(0.75, db_path=database.DB_PATH)
     assert [(p[1][0], p[2][0]) for p in pairs] == [(a, b)]
+
+
+# ── what the turn itself stored ──
+# The real pairs from tool_call_log, Sep 16 to 28 2026.
+
+TURN_INJURY = ("Ring finger injury affecting pull ups and grip work on exercises. Toe injury "
+               "from last week, expected to fully heal in about one more week from September 28.")
+TURN_CHANGES = ["No longer tutoring Charley and Andrew.", "Quit the busboy job at Pi Beta Phi.",
+                "Not pledging D9 this year.", "Not pledging this year."]
+
+
+@pytest.mark.parametrize("piece,stored", [
+    ("Ring finger injury affecting pull ups and grip work on exercises.", TURN_INJURY),
+    ("Toe injury from last week, expected to fully heal in about one more week from September 28.",
+     TURN_INJURY),
+    ("Obsession, Odyssey, and Spider-Man: Brand New Day are his top three movies of 2026.",
+     "Obsession is one of his top three movies of 2026, along with Odyssey and Spider-Man: "
+     "Brand New Day."),
+])
+def test_a_piece_of_what_the_turn_stored_is_skipped(piece, stored):
+    assert memory_pass._stored_by_the_turn(piece, [stored])
+
+
+def test_a_correction_is_not_swallowed_by_the_facts_it_corrects():
+    """Against the four together it scores 0.89, which is why each is compared alone."""
+    correction = "Still tutoring, but no longer the busboy job and not pledging this year."
+    assert not memory_pass._stored_by_the_turn(correction, TURN_CHANGES)
+    assert memory_pass.overlap(correction, " ".join(TURN_CHANGES)) >= memory_pass.SAME_MESSAGE_OVERLAP
+
+
+def test_nothing_stored_by_the_turn_skips_nothing():
+    assert not memory_pass._stored_by_the_turn("Ring finger injury.", [])
