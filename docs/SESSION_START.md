@@ -1471,3 +1471,19 @@ deferred in [BACKEND_TODO.md](BACKEND_TODO.md#prowl-name-filter-and-limit).
 one turn's proposals under a single yes. Rather than change that for every
 caller, `accept_discovered_job` refuses when anything is already staged that
 turn. Prowl's contract forbids bulk accept, and this is what makes it true.
+
+### Duplicate memories are never merged automatically (Sep 28 2026) (DONE)
+
+He asked for closely related memories to be grouped. Measured on real pairs,
+similarity cannot tell a duplicate from two different facts about the same
+person (0.79 to 0.94 against 0.76 to 0.83), and Haiku as the judge called two
+in three different facts the same or an update. Wired in, it would have
+overwritten "Auntie Jennifer hosts Thanksgiving" with the memory that she is
+married to Uncle Marlo.
+
+**Chosen:** he decides every merge, from the app or `memory.py similar`, with a
+drafted sentence to edit and a keep both that is remembered. The only
+automatic step is the memory pass skipping a fact at 0.9 or more from one
+stored or waiting, where only rewordings have been seen, and never a fact he
+asked her to keep. Reopen only with a judge that beats the table in
+[BRAIN.md](BRAIN.md#duplicates-are-not-merged-automatically-measured-sep-28-2026).
