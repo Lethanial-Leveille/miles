@@ -718,7 +718,8 @@ The rules it enforces, each with a test:
 - **Weekends and holidays prefer mornings**, falling back to the afternoon. The
   after school rule exists only because of school, so a session marked
   `weekends_too` (his own routine, not a student's hours) keeps its window every
-  day.
+  day, and fills days in order rather than spreading out: spread, seven nights
+  over an eight day range skipped a Sunday.
 - **A window may cross midnight**, like 11:30 PM to 12:30 AM, and the range
   bounds the start, so the last night's session may end after it. Until Sep 28
   2026 such a window closed before it opened: seven bedtime prayer sessions
@@ -745,7 +746,11 @@ The rules it enforces, each with a test:
   given as only a time stays on the same day.
 
 The whole plan is one question, grouped by name so it can be followed by ear, and
-one yes creates every event.
+one yes creates every event. A time shared by every session of a name is said
+once, after the days, and three or more back to back days are said as a run
+("every day at 11:30 PM, today through Sunday"). Until Sep 28 2026 a week of
+nightly prayer was read as seven days each "at 11:30 PM". Only back to back days
+collapse, so a skipped day is still heard.
 
 A dry run on his real calendar before first use caught two bugs the rule tests
 had not: fixed position spreading bunched lessons into consecutive days when the
