@@ -155,7 +155,7 @@ def test_the_tool_plans_around_his_calendar_and_adds_at_once(monkeypatch):
                       time_min="monday", time_max="sunday", now=NOW)
     # Not Monday, which the club meeting covers from 3 to 8, and not Tuesday
     # before DSA ends at 5. Club events are avoided whenever there is room.
-    assert pa.words_for_turn() == "Added 2 sessions: Isaiah lesson Tuesday at 5 PM and Sunday September 20 at 9 AM, all 90 minutes."
+    assert pa.words_for_turn() == "Added Isaiah lesson twice, Tuesday at 5 PM and Sunday September 20 at 9 AM. 90 minutes each."
     assert len(created) == 2, "added at once, without a question"
 
 
@@ -279,24 +279,42 @@ def test_what_did_not_fit_is_said_with_the_plan(monkeypatch):
     pa.begin_turn()
     cal.plan_sessions([{"name": "Charlie lesson", "count": 3, "minutes": 90}],
                       time_min="monday", time_max="monday", now=NOW)
-    assert pa.words_for_turn() == ("Did not fit: Charlie lesson, 2 more. "
-                                   "Added 1 session: Charlie lesson tomorrow at 3 PM, all 90 minutes.")
+    assert pa.words_for_turn() == ("Added Charlie lesson tomorrow at 3 PM. 90 minutes. "
+                                   "There wasn't room for the other two.")
 
 
 def test_a_daily_routine_is_said_as_a_run():
     """Seven nights of prayer were read out one day at a time."""
     placed = [("Time with God", _at(d, 23, 30), _at(d + 1, 0, 0)) for d in range(14, 21)]
     assert cal._plan_sentence(placed, NOW) == (
-        "Added 7 sessions: Time with God every day at 11:30 PM, tomorrow through "
-        "Sunday September 20, all 30 minutes.")
+        "Added Time with God every day at 11:30 PM, tomorrow through "
+        "Sunday September 20. 30 minutes each.")
 
 
 def test_a_skipped_day_is_still_heard():
     """Sunday was missing from a daily plan, and a run would have hidden it."""
     placed = [("Time with God", _at(d, 23, 30), _at(d + 1, 0, 0)) for d in (14, 15, 16, 18)]
     assert cal._plan_sentence(placed, NOW) == (
-        "Added 4 sessions: Time with God tomorrow, Tuesday, Wednesday and Friday "
-        "at 11:30 PM, all 30 minutes.")
+        "Added Time with God four times, tomorrow, Tuesday, Wednesday and Friday "
+        "at 11:30 PM. 30 minutes each.")
+
+
+def test_several_groups_are_one_sentence_without_colons_or_semicolons():
+    """Sep 28 2026: "Added 4 sessions: Isaiah lesson ...; Andrew lesson ..." was
+    heard as a list being recited."""
+    placed = [("Isaiah lesson", _at(14, 15, 0), _at(14, 16, 30)),
+              ("Isaiah lesson", _at(17, 15, 0), _at(17, 16, 30)),
+              ("Andrew lesson", _at(18, 16, 0), _at(18, 17, 30))]
+    said = cal._plan_sentence(placed, NOW)
+    assert said == ("Added Isaiah lesson twice, tomorrow and Thursday at 3 PM, "
+                    "and Andrew lesson Friday at 4 PM. 90 minutes each.")
+    assert ":" not in said.replace(":00", "") and ";" not in said
+
+
+def test_what_did_not_fit_is_named_when_the_plan_had_several_things():
+    placed = [("Isaiah lesson", _at(14, 15, 0), _at(14, 16, 30))]
+    assert cal._no_room([("Isaiah lesson", 1), ("Andrew lesson", 2)], placed) == (
+        "There wasn't room for Isaiah lesson one more time or any Andrew lesson.")
 
 
 def test_a_routine_fills_days_in_order_not_spread_out():
