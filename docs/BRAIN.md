@@ -693,6 +693,23 @@ is one follow up call on the turns that store something, measured at roughly
 0.7 to 0.9 seconds uncached; that call carries no tools, so it misses the cache
 the way the final tool round already does.
 
+### Every memory can be found again (Sep 28 2026)
+
+Two gaps, found while asking why she said "horror's not your thing" the day he
+named a horror film one of his three favourites of the year.
+
+**No memory stored after Sep 13 had an embedding.** `embeddings.backfill` had
+only ever been run by hand, so search by meaning could not find 24 memories,
+every one he had told her since. `search_memories` now backfills before it
+searches, active and pending, so every writer is covered, including ones not
+yet written.
+
+**Learned memories past the newest twenty were reachable nowhere.** They are
+tier one, recall searched tier two on the belief that tier one is all in the
+prompt, and only the newest twenty learned ones are. Recall now searches
+everything and excludes what the prompt already holds (`brain._resident_ids`).
+There were eighteen that day, so none had been lost yet.
+
 ### Conflicts are found in code
 
 `find_schedule_conflicts` sweeps every selected calendar except holidays, drops

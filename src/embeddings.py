@@ -26,9 +26,17 @@ import sqlite3
 
 import numpy as np
 
-from config import DB_PATH, EMBEDDING_MODEL
+import database
+from config import EMBEDDING_MODEL
 
 _model = None
+
+
+def _db(db_path):
+    """database.DB_PATH read at call time, not config's copy taken at import.
+    The test fixture points database at a throwaway file; a copy taken here at
+    import would keep pointing at the real one, and write vectors into it."""
+    return db_path or database.DB_PATH
 
 
 def get_model():
@@ -56,7 +64,7 @@ def encode(texts):
 
 def store(memory_id, vector, conn=None):
     owns = conn is None
-    conn = conn or sqlite3.connect(DB_PATH)
+    conn = conn or sqlite3.connect(_db(None))
     conn.execute(
         "INSERT OR REPLACE INTO memory_embeddings (memory_id, model, vector) "
         "VALUES (?, ?, ?)",
@@ -66,18 +74,30 @@ def store(memory_id, vector, conn=None):
         conn.close()
 
 
-def backfill(verbose=True):
-    """Embed every active memory that does not yet have a current vector.
+def backfill(verbose=True, db_path=None):
+    """Embed every active or pending memory that does not yet have a current
+    vector.
 
     Keyed on model as well as memory id, so changing EMBEDDING_MODEL re embeds
     rather than silently mixing vectors from two different spaces, which would
-    produce similarity scores that look fine and mean nothing."""
-    conn = sqlite3.connect(DB_PATH)
+    produce similarity scores that look fine and mean nothing.
+
+    Called before every search since Sep 28 2026. Until then nothing called it
+    at all: it had been run by hand, so every memory stored after Sep 13 had no
+    vector, and search by meaning could not find a single thing he had told Nova
+    since. Running it where vectors are read, rather than at each place a memory
+    is written, covers every writer, including ones added later. The check is
+    one query and finds nothing on almost every turn.
+
+    Pending as well as active, so a new fact can be compared against one still
+    waiting for review."""
+    conn = sqlite3.connect(_db(db_path))
     rows = conn.execute(
         "SELECT m.id, m.content FROM memories m "
         "LEFT JOIN memory_embeddings e "
         "  ON e.memory_id = m.id AND e.model = ? "
-        "WHERE m.status = 'active' AND e.memory_id IS NULL", (EMBEDDING_MODEL,)
+        "WHERE m.status IN ('active', 'pending') AND e.memory_id IS NULL",
+        (EMBEDDING_MODEL,)
     ).fetchall()
     if not rows:
         conn.close()
@@ -93,7 +113,7 @@ def backfill(verbose=True):
     return len(rows)
 
 
-def search(query, limit=5, tier=None, min_similarity=0.25):
+def search(query, limit=5, tier=None, min_similarity=0.25, db_path=None):
     """Rank active memories by cosine similarity. Returns (id, content, category).
 
     min_similarity exists because cosine always returns a nearest neighbour.
@@ -102,7 +122,7 @@ def search(query, limit=5, tier=None, min_similarity=0.25):
     question confidently, which is the failure mode keyword search does not
     have and the one people forget to guard.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(_db(db_path))
     sql = ("SELECT m.id, m.content, m.category, e.vector "
            "FROM memory_embeddings e JOIN memories m ON m.id = e.memory_id "
            "WHERE e.model = ? AND m.status = 'active' ")
@@ -122,3 +142,4 @@ def search(query, limit=5, tier=None, min_similarity=0.25):
     order = np.argsort(-similarities)[:limit]
     return [(rows[i][0], rows[i][1], rows[i][2])
             for i in order if similarities[i] >= min_similarity]
+

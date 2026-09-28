@@ -484,16 +484,28 @@ def _trim_history(messages: list) -> list:
     return trimmed
 
 
+def _resident_ids():
+    """Ids of the memories already in his system prompt: tier one seeds and the
+    newest learned ones. Recall looks for everything else."""
+    return ({row[0] for row in get_seed_memories()}
+            | {row[0] for row in get_episodic_memories()})
+
+
 def _with_recalled(messages: list, query: str, log: bool = True) -> list:
-    """Attach any tier two memories the transcript matches to the final user turn.
+    """Attach any memories the transcript matches, and the prompt lacks, to the
+    final user turn.
 
     Same placement argument as the clock below. This changes every turn, so it
     has to sit after the cache breakpoint; in the system prompt it would
     invalidate the whole prefix on every single turn and quietly cost more than
     it saves.
 
-    Tier two only. Tier one is already in the prompt, and attaching a fact
-    twice is how a model starts treating it as more important than it is.
+    Only what the prompt does not already hold, because attaching a fact twice
+    is how a model starts treating it as more important than it is. Until Sep
+    28 2026 that was written as "tier two only", on the belief that tier one is
+    all in the prompt. It is not: a learned memory is tier one, and only the
+    newest twenty of those are resident. The twenty first would have been in
+    neither place, with no way for Nova to reach it at all.
 
     A miss returns the messages untouched. Retrieval finding nothing is the
     normal case for most turns, and it leaves Nova exactly where she was before
@@ -502,7 +514,7 @@ def _with_recalled(messages: list, query: str, log: bool = True) -> list:
     if not messages or messages[-1]["role"] != "user":
         return messages
 
-    hits = search_memories(query, limit=RECALL_LIMIT, tier=2, log=log)
+    hits = search_memories(query, limit=RECALL_LIMIT, exclude=_resident_ids(), log=log)
     if not hits:
         return messages
 
@@ -724,7 +736,8 @@ def _log_recall_later(user_text):
     """A claimed speculation recalled with log_recall=False, so this turn has no
     retrieval_log row yet. Written on a thread, off the path to first audio."""
     threading.Thread(target=lambda: search_memories(
-        user_text, limit=RECALL_LIMIT, tier=2, log=True), daemon=True).start()
+        user_text, limit=RECALL_LIMIT, exclude=_resident_ids(), log=True),
+        daemon=True).start()
 
 
 def build_request(user_text, channel, tier, model, history, pending_alerts,
