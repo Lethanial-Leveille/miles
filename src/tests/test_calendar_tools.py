@@ -143,3 +143,18 @@ def test_long_lengths_are_said_in_hours():
     assert cal._length_words(90) == "90 minutes"
     assert cal._length_words(300) == "5 hours"
     assert cal._length_words(150) == "2 and a half hours"
+
+
+def test_a_bare_weekday_just_after_midnight_means_today():
+    """At 12:49 AM Monday, "Monday" to "Sunday" read as next Monday to this
+    Sunday, ran backwards, and a plan was refused."""
+    just_after = datetime.datetime(2026, 9, 28, 0, 49)
+    start, end = cal.resolve_window("Monday", "Sunday", just_after)
+    assert start == datetime.datetime(2026, 9, 28, 0, 0)
+    assert end.date() == datetime.date(2026, 10, 4)
+
+
+def test_the_end_is_read_from_the_start_not_from_today():
+    """Said on a Sunday, "monday" to "sunday" is the week ahead, not today."""
+    start, end = cal.resolve_window("monday", "sunday", NOW)
+    assert (start.date(), end.date()) == (datetime.date(2026, 9, 14), datetime.date(2026, 9, 20))
