@@ -76,7 +76,7 @@ from verification import (VERIFIED, REJECTED, NO_AUDIO, RETRY,
                           MIN_EMBED_SECONDS, MIN_TRUSTWORTHY_SECONDS)
 
 from config import (
-    CHUNK, CHANNELS, RATE, MIC_STALL_S,
+    CHUNK, CHANNELS, RATE, MIC_STALL_S, WHISPER_FALLBACK_AFTER_MS,
     WHISPER_MODEL, WHISPER_CLI, WHISPER_SEGMENT_SECONDS, WHISPER_INITIAL_PROMPT,
     TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
@@ -545,9 +545,12 @@ class _Speculation:
         self.turn_type = turn_type
         self.turn = None          # the speculative Claude call, once started
         self._lock = threading.Lock()
-        self.proc = subprocess.Popen(
-            _whisper_cmd(SPECULATIVE_WAV, threads=SPECULATIVE_THREADS),
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        # Whisper is the fallback, started only when Deepgram fails or is late;
+        # see _start_whisper. It used to start on every speculation, and on four
+        # cores it slowed the ECAPA embedding beside it from 238ms to 617ms
+        # median, measured Sep 28 2026, for a transcript Deepgram almost always
+        # made unnecessary.
+        self.proc = None
         # The voice embedding starts beside it, on the same frames; see
         # early_verify.py. A failure here only loses the head start. Started
         # before the Deepgram request, because the speculative Claude call is
@@ -562,13 +565,42 @@ class _Speculation:
         # overwrites while this request may still be reading it. Same hazard
         # early_verify.prepare exists to avoid.
         self.remote_run = deepgram_stt.start(frames, on_done=self._on_transcript)
+        if self.remote_run is None:
+            # No Deepgram to wait for: whisper is the transcript, as before it.
+            self._start_whisper()
+        else:
+            threading.Timer(WHISPER_FALLBACK_AFTER_MS / 1000.0,
+                            self._whisper_if_still_waiting).start()
+
+    def _start_whisper(self):
+        """Start the whisper run once, unless he has spoken again. Safe from any
+        thread: the Deepgram hook, the late timer, and result() can all ask."""
+        with self._lock:
+            if self.proc is not None or self.stale:
+                return
+            self.proc = subprocess.Popen(
+                _whisper_cmd(SPECULATIVE_WAV, threads=SPECULATIVE_THREADS),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+
+    def _whisper_if_still_waiting(self):
+        """Deepgram has not answered in WHISPER_FALLBACK_AFTER_MS: start the
+        fallback now, so a slow request costs at most this much over whisper
+        alone rather than its full timeout."""
+        if self.remote_run is not None and not self.remote_run.finished():
+            self._start_whisper()
 
     def _on_transcript(self, text):
         """The Deepgram transcript is in: maybe open the Claude call now, while
         endpointing is still waiting out the silence. On the request's thread.
 
+        None is Deepgram failing, which is the moment the whisper fallback
+        starts. An empty string is an answer, heard no words, and needs none.
+
         The embedding usually finished long before Deepgram; if it has not, no
         speculation, rather than holding this thread for it."""
+        if text is None:
+            self._start_whisper()
+            return
         if self.stale or self.early is None:
             return
         try:
@@ -599,10 +631,13 @@ class _Speculation:
             self.early.cancel()
         if self.remote_run is not None:
             self.remote_run.cancel()
-        try:
-            self.proc.terminate()
-        except Exception:
-            pass
+        with self._lock:
+            proc = self.proc
+        if proc is not None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
 
     def stop_whisper(self):
         """Deepgram answered, so whisper's transcript will never be read.
@@ -614,12 +649,18 @@ class _Speculation:
         verify_voice still reads it.
 
         Collected on a thread: a terminated child stays a zombie until someone
-        waits on it, and waiting here would put its shutdown on the turn."""
+        waits on it, and waiting here would put its shutdown on the turn.
+        Usually there is nothing to stop: whisper only runs when Deepgram was
+        late or failed."""
+        with self._lock:
+            proc = self.proc
+        if proc is None:
+            return
         try:
-            self.proc.terminate()
+            proc.terminate()
         except Exception:
             return
-        threading.Thread(target=self.proc.wait, daemon=True).start()
+        threading.Thread(target=proc.wait, daemon=True).start()
 
     def remote(self):
         """The Deepgram transcript, or None to fall back to whisper.
@@ -635,7 +676,12 @@ class _Speculation:
 
     def result(self):
         """The transcript, or None if the run failed. Blocks if it is still
-        going, which is the point: it started earlier, so it ends earlier."""
+        going, which is the point: it started earlier, so it ends earlier.
+        Only asked for when Deepgram gave nothing, so the fallback has usually
+        started already; if the hook has not got there yet, it starts here."""
+        self._start_whisper()
+        if self.proc is None:
+            return None
         try:
             out, _ = self.proc.communicate(timeout=30)
         except Exception:

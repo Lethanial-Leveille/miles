@@ -272,3 +272,16 @@ def test_a_failing_hook_does_not_lose_the_transcript(monkeypatch):
         raise RuntimeError("hook bug")
     run = dg.start(_frames(), on_done=broken)
     assert run.result() == "kept"
+
+
+
+def test_a_run_says_when_it_has_come_back(monkeypatch):
+    """The whisper fallback starts when Deepgram is late, which it reads here."""
+    def slow(*a, **k):
+        _time.sleep(0.1)
+        return _ok("done")
+    monkeypatch.setattr(dg.requests, "post", slow)
+    run = dg.start(_frames())
+    assert run.finished() is False
+    assert run.result() == "done"
+    assert run.finished() is True

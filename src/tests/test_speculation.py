@@ -108,13 +108,51 @@ def test_a_deepgram_answer_stops_whisper_before_returning():
                          "stopping the speculative whisper run")
 
 
+def _method(cls, name):
+    tree = ast.parse(AUDIO_PY.read_text())
+    klass = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == cls)
+    return next(n for n in klass.body if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def test_whisper_is_not_started_on_every_speculation():
+    """Sep 28 2026: beside whisper the ECAPA embedding took 617ms median against
+    238ms alone, for a transcript Deepgram almost always made unnecessary."""
+    init = ast.unparse(_method("_Speculation", "__init__"))
+    assert "subprocess.Popen" not in init
+    assert "self.proc = None" in init
+    assert "WHISPER_FALLBACK_AFTER_MS" in init
+
+
+def test_whisper_starts_when_deepgram_fails_is_late_or_is_absent():
+    init = ast.unparse(_method("_Speculation", "__init__"))
+    hook = ast.unparse(_method("_Speculation", "_on_transcript"))
+    late = ast.unparse(_method("_Speculation", "_whisper_if_still_waiting"))
+    result = ast.unparse(_method("_Speculation", "result"))
+    assert "if self.remote_run is None:\n    self._start_whisper()" in init.replace("        ", "    ")
+    assert hook.index("if text is None:") < hook.index("self._start_whisper()")
+    assert "not self.remote_run.finished()" in late and "self._start_whisper()" in late
+    assert result.index("self._start_whisper()") < result.index("communicate")
+
+
+def test_an_empty_deepgram_answer_does_not_start_whisper():
+    """No words is an answer. Only None, a failure, asks whisper."""
+    hook = ast.unparse(_method("_Speculation", "_on_transcript"))
+    assert "if text is None:" in hook and "if not text" not in hook
+
+
+def test_whisper_starts_at_most_once_and_never_after_he_spoke_again():
+    start = ast.unparse(_method("_Speculation", "_start_whisper"))
+    assert "with self._lock:" in start
+    assert "if self.proc is not None or self.stale:" in start
+
+
 def test_a_stopped_whisper_is_collected_rather_than_left_a_zombie():
     """Seen Sep 25 2026: a [whisper-cli] <defunct> under miles-voice after the
     first night of stopping it. audio.py cannot be imported here, so this reads
     the method as text, and checks the module can resolve what it calls."""
     source = ast.unparse(next(n for n in ast.walk(ast.parse(AUDIO_PY.read_text()))
                               if isinstance(n, ast.FunctionDef) and n.name == "stop_whisper"))
-    assert "self.proc.wait" in source
+    assert "proc.wait" in source
     imports = {a.name for n in ast.parse(AUDIO_PY.read_text()).body
                if isinstance(n, ast.Import) for a in n.names}
     assert "threading" in imports
