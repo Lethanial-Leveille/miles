@@ -1343,6 +1343,11 @@ def plan_sessions_on(sessions, busy, days, no_school, not_before, not_after, sof
                     if slot is None:
                         continue
                     distance = min((abs((day - used).days) for used in used_days), default=0)
+                    if session.get("weekends_too"):
+                        # His own routine runs day after day. Spread out, seven
+                        # nights over an eight day range skipped Sunday on Sep
+                        # 28 2026 and put the last one on the Monday after.
+                        distance = 0
                     if best is None or distance > best[0]:
                         best = (distance, day, slot)
                 if best is not None:
@@ -1383,15 +1388,32 @@ def _overlap_notes(overlaps, now):
     return notes
 
 
+def _when_words(starts, now):
+    """One name's sessions, said by ear. A daily routine is a run: on Sep 28 2026
+    seven nights of prayer were read out as seven days each "at 11:30 PM". Only
+    back to back days collapse, so a skipped day is still heard."""
+    def joined(parts):
+        return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+    same_time = len({s.time() for s in starts}) == 1
+    back_to_back = all((b.date() - a.date()).days == 1 for a, b in zip(starts, starts[1:]))
+    if len(starts) >= 3 and same_time and back_to_back:
+        return (f"every day at {_clock(starts[0])}, {_day_words(starts[0], now)} "
+                f"through {_day_words(starts[-1], now)}")
+    # The same time is said once, after the days, the way a person would.
+    if same_time:
+        return f"{joined([_day_words(s, now) for s in starts])} at {_clock(starts[0])}"
+    return joined([f"{_day_words(s, now)} at {_clock(s)}" for s in starts])
+
+
 def _plan_sentence(placed, now):
     """The whole plan as one sentence, grouped by name so it can be followed by
     ear: "Added 4 sessions: Isaiah lesson Monday at 3 PM and Thursday at 3 PM;
     Andrew lesson..., all 90 minutes."."""
     by_name = {}
     for name, start, end in placed:
-        by_name.setdefault(name, []).append(f"{_day_words(start, now)} at {_clock(start)}")
-    groups = [f"{name} {times[0] if len(times) == 1 else ', '.join(times[:-1]) + ' and ' + times[-1]}"
-              for name, times in by_name.items()]
+        by_name.setdefault(name, []).append(start)
+    groups = [f"{name} {_when_words(starts, now)}" for name, starts in by_name.items()]
     lengths = {int((end - start).total_seconds() // 60) for _, start, end in placed}
     suffix = f", all {_length_words(lengths.pop())}" if len(lengths) == 1 else ""
     count = len(placed)

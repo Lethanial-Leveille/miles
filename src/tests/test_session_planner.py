@@ -281,3 +281,28 @@ def test_what_did_not_fit_is_said_with_the_plan(monkeypatch):
                       time_min="monday", time_max="monday", now=NOW)
     assert pa.words_for_turn() == ("Did not fit: Charlie lesson, 2 more. "
                                    "Added 1 session: Charlie lesson tomorrow at 3 PM, all 90 minutes.")
+
+
+def test_a_daily_routine_is_said_as_a_run():
+    """Seven nights of prayer were read out one day at a time."""
+    placed = [("Time with God", _at(d, 23, 30), _at(d + 1, 0, 0)) for d in range(14, 21)]
+    assert cal._plan_sentence(placed, NOW) == (
+        "Added 7 sessions: Time with God every day at 11:30 PM, tomorrow through "
+        "Sunday September 20, all 30 minutes.")
+
+
+def test_a_skipped_day_is_still_heard():
+    """Sunday was missing from a daily plan, and a run would have hidden it."""
+    placed = [("Time with God", _at(d, 23, 30), _at(d + 1, 0, 0)) for d in (14, 15, 16, 18)]
+    assert cal._plan_sentence(placed, NOW) == (
+        "Added 4 sessions: Time with God tomorrow, Tuesday, Wednesday and Friday "
+        "at 11:30 PM, all 30 minutes.")
+
+
+def test_a_routine_fills_days_in_order_not_spread_out():
+    """Seven nights over an eight day range skipped Sunday for the Monday after."""
+    days = DAYS + [DAYS[-1] + datetime.timedelta(days=1)]
+    session = {**_session("Time with God", 7, minutes=30, earliest=(23, 30), latest=(0, 30)),
+               "weekends_too": True}
+    placed, _ = cal.plan_sessions_on([session], [], days, WEEKEND, NOW, _at(21, 23, 59))
+    assert [p[1].date() for p in placed] == DAYS
