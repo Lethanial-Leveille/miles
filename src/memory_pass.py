@@ -16,6 +16,7 @@ supersede activates the replacement at once, which would let a guess overwrite
 a correct memory with no review at all.
 """
 
+import re
 import threading
 
 import anthropic
@@ -34,6 +35,20 @@ client = anthropic.Anthropic()
 # worst case wrote four memories from one message, one of them from an earlier
 # turn.
 MAX_PER_MESSAGE = 3
+
+# A candidate this much inside one memory the turn itself stored from the same
+# message is that memory again, in part. Of the 7 pass stores that followed a
+# turn's own remember by Sep 28 2026, 3 exact copies were already caught and 3
+# queued for review were pieces or rewordings (the ring finger and the toe out
+# of one sentence, the movies at 0.94 by embedding), all three at 1.0 here; the
+# one real correction, "Still tutoring, but no longer the busboy job", scores
+# at most 0.33 against any one of the turn's memories.
+SAME_MESSAGE_OVERLAP = 0.8
+
+# Words that carry no fact, so a shared "the" cannot make two memories alike.
+_FILLER = {"a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "at",
+           "for", "with", "from", "by", "is", "are", "was", "his", "he", "her",
+           "she", "it", "its", "that", "this", "as", "about", "one", "be"}
 
 _PROMPT = """You keep Lethanial's long term memory for Nova, his voice assistant. You are not talking to him, and nothing you write is shown to anyone.
 
@@ -75,8 +90,38 @@ def _request(user_text, when):
             f"His latest message, sent {stamp}:\n{user_text}")
 
 
-def notice(user_text, when):
-    """One pass over one message. Returns what was stored, for the tests and the log."""
+def _content_words(text):
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in _FILLER}
+
+
+def overlap(candidate, stored):
+    """The share of the candidate's content words that the stored memory
+    already has. A piece of a memory is made of its words, so it scores near
+    one; a correction brings words of its own."""
+    words = _content_words(candidate)
+    return len(words & _content_words(stored)) / len(words) if words else 0.0
+
+
+def _stored_by_the_turn(content, stored_this_turn):
+    """True when the turn itself already stored this, whole or in part.
+
+    Compared against each of the turn's memories on its own, never their
+    union: three separate facts together cover most of any sentence about
+    them, and the correction above scores 0.89 against the four at once."""
+    for stored in stored_this_turn:
+        score = overlap(content, stored)
+        if score >= SAME_MESSAGE_OVERLAP:
+            print(f"Memory pass skipped what the turn stored ({score:.2f}): {content}",
+                  flush=True)
+            return True
+    return False
+
+
+def notice(user_text, when, stored_this_turn=()):
+    """One pass over one message. Returns what was stored, for the tests and the log.
+
+    stored_this_turn is what the turn's own remember calls wrote from this same
+    message; see _stored_by_the_turn."""
     schema = [s for s in registry.api_schemas() if s["name"] == "remember"]
     reply = client.messages.create(
         model=MEMORY_PASS_MODEL, max_tokens=600, tools=schema,
@@ -94,6 +139,8 @@ def notice(user_text, when):
         content = str(block.input.get("content") or "").strip()
         # Seen from Sonnet 5 in the replay: a call with no content at all.
         if not content or content.casefold() in waiting:
+            continue
+        if _stored_by_the_turn(content, stored_this_turn):
             continue
         if _already_known(content):
             continue
@@ -132,7 +179,7 @@ def _already_known(content):
     return True
 
 
-def notice_later(user_text, when):
+def notice_later(user_text, when, stored_this_turn=()):
     """Run notice on a thread, so the turn never waits for it. A failure is logged
     and dropped: a missed memory is recoverable, a broken turn is not."""
     if not MEMORY_PASS:
@@ -140,7 +187,7 @@ def notice_later(user_text, when):
 
     def run():
         try:
-            stored = notice(user_text, when)
+            stored = notice(user_text, when, stored_this_turn)
             if stored:
                 print(f"Memory pass queued {len(stored)} for review", flush=True)
         except Exception as exc:
