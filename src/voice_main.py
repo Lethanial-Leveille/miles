@@ -27,7 +27,8 @@ from config import (CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS,
                     FOLLOWUP_TIMEOUT, ACK_SPOKEN_CHANCE, RATE,
                     WAKE_MISS_FLOOR, WAKE_MISS_PREROLL_MS,
                     WAKE_LEVEL_FLOOR, PRESENCE_SENSOR, PRESENCE_PORT,
-                    PRESENCE_BAUD, PRESENCE_SILENT_S)
+                    PRESENCE_BAUD, PRESENCE_SILENT_S, PRESENCE_ENERGY_LOG,
+                    PRESENCE_ENERGY_WINDOW_S)
 
 # Wire the speak callback so timer/reminder alerts play audio
 
@@ -62,7 +63,8 @@ actions.start_reminder_poller()
 # Here rather than in the server for the reason the poller is: the alerts that
 # presence will decide about are spoken from this process. Logging only for now.
 if PRESENCE_SENSOR:
-    presence.start_reader(PRESENCE_PORT, PRESENCE_BAUD, PRESENCE_SILENT_S)
+    presence.start_reader(PRESENCE_PORT, PRESENCE_BAUD, PRESENCE_SILENT_S,
+                          PRESENCE_ENERGY_WINDOW_S if PRESENCE_ENERGY_LOG else None)
 
 # Load the embedding model off the critical path.
 #

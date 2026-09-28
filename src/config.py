@@ -339,6 +339,13 @@ PRESENCE_BAUD        = 256000
 # connected, which is the case this exists for: not seeing is not nobody.
 PRESENCE_SILENT_S    = 3.0
 
+# The energy in every gate, summarised once a window into presence_energy.
+# Asleep he read 30% present against Oura's 01:59 to 10:08 on Sep 28 2026, and
+# only per gate energies across a whole night can say whether a threshold can
+# fix that or the sensor has to move. Turns engineering mode on at each open.
+PRESENCE_ENERGY_LOG  = True
+PRESENCE_ENERGY_WINDOW_S = 60.0
+
 # ── Paths ──
 # q8_0 rather than the fp16 base.en, quantized locally from it with
 # whisper-quantize. Same model and same weights, stored as 8 bit integers with

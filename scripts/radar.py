@@ -36,39 +36,8 @@ from config import PRESENCE_BAUD, PRESENCE_PORT
 # reports is roughly the gate number times this.
 GATE_CM = 75
 
-ACK_TIMEOUT_S = 1.0
-
-
-def _send(port, frame, want):
-    """Write one command and wait for its acknowledgement. Reports may still be
-    arriving around it; parse_acks skips them."""
-    port.write(frame)
-    buf = b""
-    deadline = time.monotonic() + ACK_TIMEOUT_S
-    while time.monotonic() < deadline:
-        acks, buf = ld2410.parse_acks(buf + port.read(64))
-        for ack in acks:
-            if ack.command == want:
-                return ack
-    raise RuntimeError(f"the radar did not acknowledge command {want:#06x}")
-
-
-@contextmanager
-def config_mode(port):
-    """Commands are only accepted in config mode, and the module sends no
-    reports while in it. So leaving is in a finally: a crash between the two
-    would otherwise leave the sensor mute until it loses power."""
-    ack = _send(port, ld2410.enable_config(), ld2410.ENABLE_CONFIG)
-    if not ack.ok:
-        raise RuntimeError("the radar refused to enter config mode")
-    try:
-        yield
-    finally:
-        _send(port, ld2410.command(ld2410.END_CONFIG), ld2410.END_CONFIG)
-
-
 def read_params(port):
-    ack = _send(port, ld2410.command(ld2410.READ_PARAMS), ld2410.READ_PARAMS)
+    ack = ld2410.send(port, ld2410.command(ld2410.READ_PARAMS), ld2410.READ_PARAMS)
     params = ld2410.decode_params(ack.data) if ack.ok else None
     if params is None:
         raise RuntimeError("the radar's parameter reply did not decode")
@@ -91,13 +60,13 @@ def engineering_mode(port):
     """Energy per gate in every report, restored to normal reports afterwards.
     The module drops it on power loss anyway; this keeps a Ctrl+C from leaving
     it on for the service."""
-    with config_mode(port):
-        _send(port, ld2410.command(ld2410.ENGINEERING_ON), ld2410.ENGINEERING_ON)
+    with ld2410.config_mode(port):
+        ld2410.send(port, ld2410.command(ld2410.ENGINEERING_ON), ld2410.ENGINEERING_ON)
     try:
         yield
     finally:
-        with config_mode(port):
-            _send(port, ld2410.command(ld2410.ENGINEERING_OFF), ld2410.ENGINEERING_OFF)
+        with ld2410.config_mode(port):
+            ld2410.send(port, ld2410.command(ld2410.ENGINEERING_OFF), ld2410.ENGINEERING_OFF)
 
 
 def collect(port, seconds):
@@ -141,13 +110,13 @@ def open_port():
 
 
 def cmd_show(args):
-    with open_port() as port, config_mode(port):
+    with open_port() as port, ld2410.config_mode(port):
         print_params(read_params(port))
 
 
 def cmd_record(args):
     with open_port() as port:
-        with config_mode(port):
+        with ld2410.config_mode(port):
             params = read_params(port)
         if args.delay:
             print(f"Starting in {args.delay}s.", flush=True)
@@ -163,7 +132,7 @@ def cmd_record(args):
 def _write(port, frame, command):
     """Send a setting, then read everything back, so what is printed is what the
     module holds rather than what was asked for."""
-    if not _send(port, frame, command).ok:
+    if not ld2410.send(port, frame, command).ok:
         sys.exit("The radar refused the setting.")
     print_params(read_params(port))
 
@@ -171,7 +140,7 @@ def _write(port, frame, command):
 def cmd_set(args):
     if not 0 <= args.gate <= 8 or not all(0 <= t <= 100 for t in (args.moving, args.still)):
         sys.exit("Gates run 0 to 8 and thresholds 0 to 100.")
-    with open_port() as port, config_mode(port):
+    with open_port() as port, ld2410.config_mode(port):
         _write(port, ld2410.set_sensitivity(args.gate, args.moving, args.still),
                ld2410.SET_SENSITIVITY)
 
@@ -179,7 +148,7 @@ def cmd_set(args):
 def cmd_range(args):
     if not 1 <= args.gate <= 8:
         sys.exit("The farthest gate runs 1 to 8.")
-    with open_port() as port, config_mode(port):
+    with open_port() as port, ld2410.config_mode(port):
         _write(port, ld2410.set_max_gates(args.gate, args.gate, args.unmanned),
                ld2410.SET_MAX_GATES)
 

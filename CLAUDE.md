@@ -120,7 +120,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1142 passing, 6 skipped, Sep 28 2026)
+│   └── tests/                 # pytest suite (1148 passing, 6 skipped, Sep 28 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -324,6 +324,8 @@ of the value itself.
 ### Presence radar — why: [BACKEND_TODO.md](docs/BACKEND_TODO.md#presence-detection)
 - `PRESENCE_SENSOR = True`, `PRESENCE_PORT = "/dev/ttyAMA0"`, `PRESENCE_BAUD = 256000`
 - `PRESENCE_SILENT_S = 3.0` (no frame this long is logged as silent, never absent)
+- `PRESENCE_ENERGY_LOG = True`, `PRESENCE_ENERGY_WINDOW_S = 60.0` (engineering mode
+  on at each open; energy per gate, once a minute, to `presence_energy`)
 - Logging only, to `presence_log`. Nothing Nova does reads it yet. The module's
   own thresholds and range live in its flash, set with `scripts/radar.py`; the
   table is in BACKEND_TODO.md
@@ -352,7 +354,7 @@ STT: Deepgram Nova 3 online, falling back to whisper.cpp (base.en, beam search a
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: SpeechBrain ECAPA (192 dim cosine similarity); an unverified voice is a guest.
-Memory: SQLite WAL mode, schema migrations to version 28.
+Memory: SQLite WAL mode, schema migrations to version 29.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.
