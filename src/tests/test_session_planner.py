@@ -92,6 +92,40 @@ def test_no_two_sessions_ever_overlap():
     assert len(placed) == 7
 
 
+def test_a_window_past_midnight_fits_every_school_day():
+    """11:30 PM to 12:30 AM closed before it opened, and seven bedtime sessions
+    became two at 9:45 AM on the weekend."""
+    placed, unplaced = _plan([_session("Time with God", 5, minutes=30, earliest=(23, 30),
+                                       latest=(0, 30))], days=DAYS[:5])
+    assert unplaced == []
+    assert [p[1] for p in placed] == [_at(d, 23, 30) for d in range(14, 19)]
+
+
+def test_a_session_can_run_past_midnight_around_his_calendar():
+    busy = [(_at(14, 23, 0), _at(15, 0, 0))]
+    placed, _ = _plan([_session("Time with God", 1, minutes=30, earliest=(23, 0),
+                                latest=(0, 30))], busy=busy, days=[DAYS[0]])
+    assert placed == [("Time with God", _at(15, 0, 0), _at(15, 0, 30))]
+
+
+def test_his_own_routine_keeps_its_time_on_weekends():
+    """Without weekends_too a weekend goes to the morning, which suits a
+    student and not his bedtime."""
+    session = {**_session("Time with God", 7, minutes=30, earliest=(23, 30), latest=(0, 30)),
+               "weekends_too": True}
+    placed, unplaced = _plan([session])
+    assert unplaced == []
+    assert all(p[1].time() == datetime.time(23, 30) for p in placed)
+
+
+def test_the_last_nights_session_may_end_after_the_range():
+    """Sunday's session is Sunday's, even though it ends on Monday."""
+    session = {**_session("Time with God", 1, minutes=30, earliest=(23, 30), latest=(0, 30)),
+               "weekends_too": True}
+    placed, _ = _plan([session], days=[DAYS[6]])
+    assert placed == [("Time with God", _at(20, 23, 30), _at(21, 0, 0))]
+
+
 def test_what_does_not_fit_is_reported_not_squeezed():
     placed, unplaced = _plan([_session("Isaiah lesson", 1, earliest=(19, 0), latest=(20, 0))], days=[DAYS[0]])
     assert placed == []

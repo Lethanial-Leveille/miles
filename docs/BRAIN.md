@@ -716,7 +716,17 @@ The rules it enforces, each with a test:
 - **A student's earliest start and latest end** come from what he says, per
   session. 3 PM and 8 PM are only defaults.
 - **Weekends and holidays prefer mornings**, falling back to the afternoon. The
-  after school rule exists only because of school.
+  after school rule exists only because of school, so a session marked
+  `weekends_too` (his own routine, not a student's hours) keeps its window every
+  day.
+- **A window may cross midnight**, like 11:30 PM to 12:30 AM, and the range
+  bounds the start, so the last night's session may end after it. Until Sep 28
+  2026 such a window closed before it opened: seven bedtime prayer sessions
+  became two at 9:45 AM, after a first plan with no times at all had put them at
+  3 PM because Nova said 12:15 AM aloud but never passed it.
+- **A range's named days include today**: "Monday" at 12:49 AM on a Monday is
+  today, and the end is read from the start's day, so "monday" to "sunday" said
+  on a Sunday is still the week ahead.
 - **Nothing lands on his own calendars.** Club events are avoided whenever any
   day has room and overlapped only when none does, and every forced overlap is
   named in the spoken question before he answers. A club event Nova knows he

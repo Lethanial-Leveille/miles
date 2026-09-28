@@ -171,16 +171,29 @@ def _end_of_day(dt):
     return dt.replace(hour=23, minute=59, second=59, microsecond=0)
 
 
+def _named_day_base(phrase, day, now):
+    """Where a range end is read from. A bare "monday" is midnight Monday, so at
+    12:49 AM on a Monday it had passed and meant the Monday after; on Sep 28 2026
+    "Monday" to "Sunday" ran backwards and a plan was refused. Read from a
+    minute before day began, day's own weekday is that day: the start reads from
+    today, and the end from the start's day, so "monday" to "sunday" said on a
+    Sunday is still the week ahead. Relative words still count from now."""
+    if _RELATIVE_TO_NOW.search(phrase):
+        return now
+    return _start_of_day(day) - datetime.timedelta(minutes=1)
+
+
 def resolve_window(time_min, time_max, now=None):
     """Start and end of a listing, as naive local datetimes. end may be None,
     meaning no upper bound."""
     now = now or datetime.datetime.now()
-    start, start_has_time = (parse_when(time_min, now) if time_min else (now, True))
+    start, start_has_time = (parse_when(time_min, _named_day_base(time_min, now, now))
+                             if time_min else (now, True))
     if not start_has_time:
         start = _start_of_day(start)
 
     if time_max:
-        end, end_has_time = parse_when(time_max, now)
+        end, end_has_time = parse_when(time_max, _named_day_base(time_max, start, now))
         if not end_has_time:
             end = _end_of_day(end)
     elif not start_has_time:
@@ -1261,13 +1274,22 @@ def _time_of(phrase, default):
 
 def _first_free(day, session, taken, no_school, not_before, not_after):
     length = datetime.timedelta(minutes=session["minutes"])
-    if no_school:
+    if no_school and not session.get("weekends_too"):
         windows = [_NO_SCHOOL_MORNING, (_NO_SCHOOL_MORNING[1], session["latest_end"])]
     else:
         windows = [(session["earliest"], session["latest_end"])]
     for open_at, close_at in windows:
         start = datetime.datetime.combine(day, open_at)
-        close = min(datetime.datetime.combine(day, close_at), not_after)
+        close = datetime.datetime.combine(day, close_at)
+        if close_at <= open_at:
+            # 11:30 PM to 12:30 AM. Read on one date it closed before it opened
+            # and nothing fit on a school day: on Sep 28 2026 seven bedtime
+            # sessions became two at 9:45 AM. The range bounds the start here,
+            # because Sunday's session is Sunday's even when it ends Monday.
+            close += datetime.timedelta(days=1)
+            close = min(close, not_after + length)
+        else:
+            close = min(close, not_after)
         while start + length <= close:
             end = start + length
             # Touching is not overlapping: he tutors online, so one lesson can
@@ -1385,7 +1407,9 @@ def _plan_sentence(placed, now):
         "fit in several sessions. Turn what he says into the sessions list and "
         "let the code place them; never work out the times yourself. For each "
         "session give the event title, how many, how long, and when that person "
-        "is available on school days if he said so. Anything he says is off limits "
+        "is available on school days if he said so. Any time of day he gave or you "
+        "chose, like before bed, goes in earliest and latest_end, or the tutoring "
+        "defaults of 3 to 8 PM are used instead. Anything he says is off limits "
         "that is not on his calendar, like a class or a career fair, goes in "
         "blocked, and so does any club event you know he should attend, such as a "
         "career fair or an info session with a company he wants to work for. "
@@ -1406,7 +1430,8 @@ def _plan_sentence(placed, now):
                         "count": {"type": "integer", "description": "How many in the range."},
                         "minutes": {"type": "integer", "description": "Length of each, in minutes."},
                         "earliest": {"type": "string", "description": "Optional earliest start on school days, like '3:30pm'. Defaults to 3 PM."},
-                        "latest_end": {"type": "string", "description": "Optional latest end, like '7pm'. Defaults to 8 PM."},
+                        "latest_end": {"type": "string", "description": "Optional latest end, like '7pm'. Defaults to 8 PM. May be after midnight, like '12:30am' after an earliest of '11:30pm'."},
+                        "weekends_too": {"type": "boolean", "description": "True when earliest and latest_end hold every day, weekends included: his own routine, like prayer before bed or the gym. Leave out for someone's school day availability, which moves weekends to mornings."},
                     },
                     "required": ["name", "count", "minutes"],
                 },
@@ -1448,7 +1473,8 @@ def plan_sessions(sessions, blocked=None, time_min=None, time_max=None, now=None
             raise WhenError(f"{s.get('name')!r} needs a count and a length in minutes")
         specs.append({"name": _title(s["name"]), "count": count, "minutes": minutes,
                       "earliest": _time_of(s.get("earliest"), _SCHOOL_DAY_START),
-                      "latest_end": _time_of(s.get("latest_end"), _LATEST_END)})
+                      "latest_end": _time_of(s.get("latest_end"), _LATEST_END),
+                      "weekends_too": bool(s.get("weekends_too"))})
 
     service = _service()
     calendars = _calendars(service)
