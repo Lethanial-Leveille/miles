@@ -215,6 +215,39 @@ answered first" when that one wins.
 Underruns reach the journal as "speaker ran dry" since the same day, so a pause
 inside a sentence can be told apart from v3's own phrasing.
 
+## What she said is kept, Sep 28 2026
+
+He heard her as "coherent but a little off", with pauses where there should not
+be any, and could not describe it further. Nothing kept her output, so there was
+nothing to point at. Checked first, over 14 days of journal: the speaker never
+ran dry, and the wait before the rest of a reply was 1ms at the median over 34
+replies, with 4 between 500 and 635ms. So what he hears is almost entirely
+inside the audio ElevenLabs returns, which puts the text sent to it under
+suspicion.
+
+`spoken_archive.py` keeps each room reply in `data/spoken` as a wav and a txt.
+The wav puts the measured silence back between pieces, so a stall is heard as
+silence. The txt is what ElevenLabs was sent, ellipses and aliases included,
+not what history holds. `scripts/label_spoken.py listen` serves a page on
+127.0.0.1 that VS Code forwards over Remote SSH, so it plays on the laptop and
+never in the room, one unlabelled reply at a time beside its text. The server
+hands out only names shaped like a reply stem; anything else is a 404. The phrase bank acks
+and bridges are not in it; they are fixed clips already on disk.
+
+Suspects, in the order they are to be tested by ear against labelled replies:
+
+1. Code written read backs spoken as written. "Did not fit: Time with God, 5
+   more. Added 2 sessions: ... at 9:45 AM" was said aloud on Sep 28. **Fixed
+   the same day** in `calendar_tools._plan_sentence` and `_no_room`: what was
+   added first, no colons or semicolons, counts said as "twice" and "the other
+   five". Now "Added Time with God twice, Saturday and Sunday at 9:45 AM. 30
+   minutes each. There wasn't room for the other five."
+2. Em dashes, in 42 of 139 spoken replies since Sep 14. What v3 does with one
+   between two words is unmeasured.
+3. Every full stop after the first sentence becomes the same ellipsis, so every
+   pause is the same length, and paragraph breaks are dropped by StreamRouter.
+4. The seam between the first sentence's request and the rest.
+
 ## Pronunciation
 
 `pronunciations` table, one row per grapheme, seeded with Lethanial to

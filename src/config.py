@@ -786,6 +786,16 @@ ARCHIVE_DIR        = os.path.expanduser("~/miles/data/recordings")
 # Oldest are pruned first.
 ARCHIVE_MAX_FILES = 600
 
+# What Nova said, as she said it: each spoken reply's audio with the exact text
+# ElevenLabs was given. "It sounds a little off" cannot be fixed until the
+# moment can be replayed and pointed at, and until Sep 28 2026 her output was
+# never kept anywhere. About 44KB per second at pcm_22050, so a hundred replies
+# is roughly 45MB; kept small because the SD card is the weak part of this Pi.
+# Labelled replies are evicted last (wake_capture.clips_to_evict).
+ARCHIVE_SPOKEN   = True
+SPOKEN_DIR       = os.path.expanduser("~/miles/data/spoken")
+SPOKEN_MAX_FILES = 100
+
 # ── Phrase bank ──
 # Victoria, rendered once while online and played from disk forever after.
 #

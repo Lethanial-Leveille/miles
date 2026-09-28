@@ -97,6 +97,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── speculative_turn.py    # Claude's first call opened before the endpoint, claimed after
 │   ├── embeddings.py          # Sentence embeddings for retrieval and intent
 │   ├── tts.py                 # ElevenLabs synthesis, speaker resolution, aplay
+│   ├── spoken_archive.py      # keeps each spoken reply as heard, with the text sent
 │   ├── phrasebank.py          # Pre rendered Victoria, played from disk, no network
 │   ├── netcheck.py            # Why a network call failed, answered locally
 │   ├── local_intent.py        # Answer timers and dismiss without Claude
@@ -139,6 +140,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── label_transcripts.py   # hand labelled truth + word error rate per STT
 │   ├── label_speakers.py      # label who is speaking in the eval clips, by ear
 │   ├── label_wake.py          # label wake hits and misses by ear, worst first
+│   ├── label_spoken.py        # listen to Nova's replies on the laptop, mark what sounded off
 │   ├── healthcheck.py         # what broke, on a timer, not by trying to use it
 │   ├── radar.py               # read and tune the presence radar over its UART
 │   ├── wifi_watchdog.sh       # brings wlan0 back, on a timer, when it drops
@@ -319,6 +321,8 @@ of the value itself.
 - `DB_PATH = ~/miles/data/miles.db`
 - `ARCHIVE_RECORDINGS = True`, `ARCHIVE_DIR = ~/miles/data/recordings`,
   `ARCHIVE_MAX_FILES = 600` (~150MB, a few weeks of normal use, oldest pruned first)
+- `ARCHIVE_SPOKEN = True`, `SPOKEN_DIR = ~/miles/data/spoken`, `SPOKEN_MAX_FILES = 100`
+  (~45MB; labelled replies pruned last. Why: [VOICE_OUTPUT.md](docs/VOICE_OUTPUT.md#what-she-said-is-kept-sep-28-2026))
 - `DEFAULT_LOCATION = "Gainesville"`
 - `WEB_SEARCH = True`, `WEB_SEARCH_TOOL_TYPE = "web_search_20250305"` (the
   variant Haiku 4.5 supports), `WEB_SEARCH_MAX_USES = 2`, located in Gainesville.
