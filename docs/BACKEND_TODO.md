@@ -1061,6 +1061,19 @@ be lined up with Oura's sleep stages. Decide from that whether a lower threshold
 has room above the empty room's level, or whether the sensor has to move higher
 and look down at the bed.
 
+**Sep 29 2026: a threshold cannot fix sleep from the desk.** Against Oura (in
+bed 01:02 to 10:08) the module held him 16% of the night. Gate 2's still
+energy, minute medians, was 10 to 13 from 01:00 to 04:00, 6 to 8 from 04:00 to
+08:00, and 4 from 09:00 to 10:00 while still asleep, which is the empty room's
+level. A tenth of sleep minutes read 4 or less, so no threshold separates him
+from an empty room. 0.2m gates (`radar.py resolution 0.2`) were tried the same
+morning and did not help: lying still read no higher than the empty room at
+80 to 100cm, and his movement showed at 140 to 160cm, so the chest is about
+1.5m away, not inside the 0 to 1.5m band where this module never reports still
+energy (gates 0 and 1 read 0 in every recording). Reverted to 0.75m. Oura is not
+live either: its newest heart rate sample was 35 minutes old while he was
+awake with the phone. Sleep samples arrive labelled `rest`, after sync.
+
 **Corrected.** An earlier version of this table said the range was 3.75 m
 from the app and that a doorway test at 15:00 proved it. The first UART read
 showed the range was still gate 8: the app setting had not saved, and the

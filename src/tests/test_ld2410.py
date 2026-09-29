@@ -141,3 +141,11 @@ def test_factory_parameters_decode():
         [50, 50, 40, 30, 20, 15, 15, 15, 15],
         [0, 0, 40, 40, 30, 30, 20, 20, 20],
         5)
+
+
+def test_resolution_frames():
+    assert ld2410.set_resolution(1) == bytes.fromhex("fdfcfbfa 0400 aa00 0100 04030201")
+    assert ld2410.command(ld2410.READ_RESOLUTION) == bytes.fromhex("fdfcfbfa 0200 ab00 04030201")
+    acks, _ = ld2410.parse_acks(bytes.fromhex("fdfcfbfa 0600 ab01 0000 0100 04030201"))
+    assert acks[0].command == ld2410.READ_RESOLUTION
+    assert ld2410.GATE_CM[ld2410.decode_resolution(acks[0].data)] == 20
