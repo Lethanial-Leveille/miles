@@ -95,6 +95,15 @@ READ_PARAMS = 0x0061
 ENGINEERING_ON = 0x0062
 ENGINEERING_OFF = 0x0063
 SET_SENSITIVITY = 0x0064
+RESTART = 0x00A3
+SET_RESOLUTION = 0x00AA
+READ_RESOLUTION = 0x00AB
+
+# Gate size, in centimetres, by the resolution code the module reports. At
+# 0.75m the two nearest gates cover 0 to 150cm and never report still energy,
+# which put his chest, with the pillow against the desk, where stillness is
+# not detected at all. At 0.2m that blind zone is 40cm, and the whole range 180cm.
+GATE_CM = {0: 75, 1: 20}
 
 # The acknowledgement echoes the command word with this bit set.
 _ACK_BIT = 0x0100
@@ -123,6 +132,15 @@ def set_max_gates(moving_gate, still_gate, unmanned_s):
     after the last detection the module reports nobody."""
     return command(SET_MAX_GATES,
                    struct.pack("<HIHIHI", 0, moving_gate, 1, still_gate, 2, unmanned_s))
+
+
+def set_resolution(code):
+    """0 for 0.75m gates, 1 for 0.2m. Takes effect after RESTART."""
+    return command(SET_RESOLUTION, struct.pack("<H", code))
+
+
+def decode_resolution(data):
+    return struct.unpack_from("<H", data)[0] if len(data) >= 2 else None
 
 
 def parse_acks(buf):

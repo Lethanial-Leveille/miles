@@ -14,6 +14,8 @@ Usage:
   python3 scripts/radar.py record 120 --delay 30   # time to leave the room first
   python3 scripts/radar.py set 2 40 10     # gate 2: moving threshold 40, still 10
   python3 scripts/radar.py range 5 5       # count gates 0 to 5; nobody after 5s
+  python3 scripts/radar.py resolution      # the gate size the module uses
+  python3 scripts/radar.py resolution 0.2  # 20cm gates; restarts the module
   sudo systemctl start miles-voice
 """
 
@@ -32,9 +34,8 @@ import serial
 import ld2410
 from config import PRESENCE_BAUD, PRESENCE_PORT
 
-# Each gate is 0.75m at the module's default resolution, and the distance it
-# reports is roughly the gate number times this.
-GATE_CM = 75
+# A restarted module takes a moment before it answers again.
+RESTART_WAIT_S = 3.0
 
 def read_params(port):
     ack = ld2410.send(port, ld2410.command(ld2410.READ_PARAMS), ld2410.READ_PARAMS)
@@ -44,14 +45,24 @@ def read_params(port):
     return params
 
 
-def print_params(params):
+def read_gate_cm(port):
+    """The gate size in centimetres, as the module reports it, so every distance
+    printed matches what the gates actually cover."""
+    ack = ld2410.send(port, ld2410.command(ld2410.READ_RESOLUTION), ld2410.READ_RESOLUTION)
+    code = ld2410.decode_resolution(ack.data) if ack.ok else None
+    if code not in ld2410.GATE_CM:
+        raise RuntimeError(f"the radar reported an unknown resolution: {code}")
+    return ld2410.GATE_CM[code]
+
+
+def print_params(params, gate_cm):
     print(f"Range: moving to gate {params.max_moving_gate}, still to gate "
           f"{params.max_still_gate}. Nobody after {params.unmanned_s}s.\n")
     print("gate   distance   moving   still")
     for gate in range(params.max_gate + 1):
         counted = gate <= max(params.max_moving_gate, params.max_still_gate)
         note = "" if counted else "   (out of range)"
-        print(f"{gate:>4}   {gate * GATE_CM:>5} cm   {params.moving[gate]:>6}   "
+        print(f"{gate:>4}   {gate * gate_cm:>5} cm   {params.moving[gate]:>6}   "
               f"{params.still[gate]:>5}{note}")
 
 
@@ -83,7 +94,7 @@ def _spread(values):
     return f"{min(values):>3} {statistics.median(values):>5.0f} {max(values):>3}"
 
 
-def print_energies(reports, params):
+def print_energies(reports, params, gate_cm):
     """Lowest, median and highest energy per gate, beside the threshold it is
     compared against. A threshold belongs above everything an empty room
     produces and below everything a person does."""
@@ -96,7 +107,7 @@ def print_energies(reports, params):
     for gate in range(gates):
         moving = [r.moving_gates[gate] for r in reports]
         still = [r.still_gates[gate] for r in reports]
-        print(f"{gate:>4}  {gate * GATE_CM:>5} cm   {_spread(moving)}  {params.moving[gate]:>6}"
+        print(f"{gate:>4}  {gate * gate_cm:>5} cm   {_spread(moving)}  {params.moving[gate]:>6}"
               f"     {_spread(still)}  {params.still[gate]:>6}")
 
 
@@ -111,13 +122,16 @@ def open_port():
 
 def cmd_show(args):
     with open_port() as port, ld2410.config_mode(port):
-        print_params(read_params(port))
+        gate_cm = read_gate_cm(port)
+        print(f"Gates are {gate_cm} cm.")
+        print_params(read_params(port), gate_cm)
 
 
 def cmd_record(args):
     with open_port() as port:
         with ld2410.config_mode(port):
             params = read_params(port)
+            gate_cm = read_gate_cm(port)
         if args.delay:
             print(f"Starting in {args.delay}s.", flush=True)
             time.sleep(args.delay)
@@ -126,7 +140,7 @@ def cmd_record(args):
             reports = collect(port, args.seconds)
     if not reports:
         sys.exit("No engineering reports arrived.")
-    print_energies(reports, params)
+    print_energies(reports, params, gate_cm)
 
 
 def _write(port, frame, command):
@@ -134,7 +148,7 @@ def _write(port, frame, command):
     module holds rather than what was asked for."""
     if not ld2410.send(port, frame, command).ok:
         sys.exit("The radar refused the setting.")
-    print_params(read_params(port))
+    print_params(read_params(port), read_gate_cm(port))
 
 
 def cmd_set(args):
@@ -153,6 +167,30 @@ def cmd_range(args):
                ld2410.SET_MAX_GATES)
 
 
+def cmd_resolution(args):
+    with open_port() as port:
+        if args.size is None:
+            with ld2410.config_mode(port):
+                print(f"Gates are {read_gate_cm(port)} cm.")
+            return
+        code = {0.2: 1, 0.75: 0}.get(args.size)
+        if code is None:
+            sys.exit("The module offers 0.2 or 0.75.")
+        # The module answers RESTART and then reboots, so it never takes the
+        # END_CONFIG that config_mode would send on the way out. Entered by hand.
+        if not ld2410.send(port, ld2410.enable_config(), ld2410.ENABLE_CONFIG).ok:
+            sys.exit("The radar refused to enter config mode.")
+        if not ld2410.send(port, ld2410.set_resolution(code), ld2410.SET_RESOLUTION).ok:
+            sys.exit("The radar refused the resolution.")
+        ld2410.send(port, ld2410.command(ld2410.RESTART), ld2410.RESTART)
+        time.sleep(RESTART_WAIT_S)
+        port.reset_input_buffer()
+        with ld2410.config_mode(port):
+            gate_cm = read_gate_cm(port)
+            print(f"Restarted. Gates are {gate_cm} cm.")
+            print_params(read_params(port), gate_cm)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Read and tune the presence radar.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -168,9 +206,11 @@ def main():
     ranger = sub.add_parser("range", help="the farthest gate that counts, and the unmanned duration")
     ranger.add_argument("gate", type=int)
     ranger.add_argument("unmanned", type=int, help="seconds after the last detection")
+    resolution = sub.add_parser("resolution", help="read or set the gate size, in metres")
+    resolution.add_argument("size", type=float, nargs="?")
     args = parser.parse_args()
     {"show": cmd_show, "record": cmd_record, "set": cmd_set,
-     "range": cmd_range}[args.command](args)
+     "range": cmd_range, "resolution": cmd_resolution}[args.command](args)
 
 
 if __name__ == "__main__":
