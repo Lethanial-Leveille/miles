@@ -302,8 +302,10 @@ Re-run that count before adding an intent, rather than guessing which is common.
 or several both go to Claude: cancelling the wrong one is worse than spending
 four seconds cancelling the right one.
 
-`time_of_day` is enumerated to five minutes, 12 hours by 12 slots is 144 clips.
-Exact minutes would be 720, and hedging with "about" on every reading grates.
+`time_of_day` is enumerated to the minute, 720 clips. It was 144, rounded to
+the nearest five, until Sep 30 2026, when she said "two twenty five" at 2:27: a
+system with an exact clock stating a wrong time plainly. An unrendered minute
+falls back to live TTS.
 The clock is read in `execute`, not in `classify`, so a slow turn cannot report
 a time that has already passed.
 

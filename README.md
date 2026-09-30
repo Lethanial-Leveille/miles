@@ -82,7 +82,7 @@ The principle underneath all of it: **deterministic code does the math and enfor
 
 **Hardware**
 * Raspberry Pi 5 (8GB), headless Raspberry Pi OS Lite, 64 bit
-* Razer Seiren V3 Mini USB microphone, found by name rather than by ALSA card number
+* ReSpeaker XVF3800 USB 4 mic array (on chip beamforming, noise suppression, AGC), found by name rather than by ALSA card number
 * USB speakers through a 3.5mm adapter
 
 **Languages**

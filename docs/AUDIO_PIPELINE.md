@@ -28,8 +28,7 @@ how a change to it is scored, and speaker verification.
 
 ## Microphone and gain
 
-Mic gain is tuned to `EXPECTED_MIC_GAIN = 23` and persisted with `alsactl store`.
-It is checked and logged at startup, because a silent revert corrupts collected
+Mic gain is checked against `EXPECTED_MIC_GAIN` and logged at startup, because a silent revert corrupts collected
 data in a way that only shows up days later as inexplicably low scores.
 
 **The mixer card is resolved by name, not hardcoded.**
@@ -43,6 +42,40 @@ and that guard spent months measuring the wrong device. The full account is in
 device name, so `voiceprint_samples.mic` identifies a physical capsule rather
 than whatever card number it enumerated as this boot. See
 [INCIDENTS.md](INCIDENTS.md#two-guards-that-could-not-do-their-jobs-sep-6-2026).
+
+### The ReSpeaker XVF3800 replaced the Seiren (Sep 30 2026)
+
+USB audio class, no driver, firmware 2.0.6. It offers **two channels at 16kHz and
+nothing else**, for capture and playback both. `mic_channel.ChannelPick` opens
+both and returns one, so every reader still gets mono and a read of N frames is
+still N frames. The chip runs its own AGC, so the USB capture control sits at its
+maximum and the level is the chip's decision.
+
+**Measured against the live Seiren on the same takes**, the service on one mic
+and `arecord` on the other at about the same distance, scored with
+`hey_nova.onnx`: channel 0 woke 10 of 12 at `WAKE_THRESHOLD`, the Seiren 7 of 11
+(two of its misses were the level gate, two the model). Channel 1 missed one
+channel 0 caught, 0.29 against 0.69, which is why channel 0. The two moments
+the array missed, the Seiren scored about 0.5; nobody has listened to those
+clips yet. One session, one room: promising, not proven.
+
+**Levels run far hotter**: peaks of about minus 10 to minus 30 dBFS where the
+Seiren read minus 28 to minus 44. `WAKE_LEVEL_FLOOR` was set on Seiren levels and
+now cannot fire. It is not deafening her, only no longer filtering. Retune from
+a few days of wake hits on the array; see BACKEND_TODO.md.
+
+**Re enrolled on channel 0 the same day.** Mean pairwise 0.643 and centroid norm
+0.820, against 0.676 and 0.839 for the Seiren enrollment on the same encoder, so
+comparable. The two voiceprints agree at only 0.738, which is the channel
+mismatch that made re enrolling mandatory. First live turns verified at 0.58
+and 0.53. The Seiren voiceprint is kept in `models/seiren_ecapa_backup_2026-09-30`.
+
+**Speakers stay on the AB13X.** Played through the array's 3.5mm jack, Nova is
+16kHz, band limited to 8kHz and resampled by ALSA's plug converter, and it
+sounded clearly degraded by ear. The on chip AEC only needs a copy of what is
+playing, so sending the same audio to the array's USB output as a reference
+while the AB13X drives the speaker is the route to AEC without that cost. Not
+built; the open question is clock drift between two USB devices.
 
 ## Capture values, and what each is for
 
