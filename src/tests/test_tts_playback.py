@@ -236,25 +236,43 @@ class _StalledProcess:
 
 def test_a_stalled_array_never_holds_her_up(monkeypatch):
     """The reason the reference has its own thread: a blocking write here
-    would freeze her mid sentence."""
+    would freeze her mid sentence. Writes return at once, and once the array
+    has taken nothing for the stall window the reference is dropped."""
     monkeypatch.setattr(tts.subprocess, "Popen", _StalledProcess)
+    monkeypatch.setattr(tts._Reference, "_STALL_S", 0.1)
     reference = tts._Reference("plughw:9,0")
     started = time.monotonic()
-    for _ in range(tts._Reference._MAX_BEHIND_BYTES // 1024 * 3):
+    for _ in range(50):
         reference.write(b"x" * 1024)
+        time.sleep(0.005)
     reference.finish()
     assert time.monotonic() - started < 1.0
     assert reference._dropped
 
 
-def test_a_second_of_audio_up_front_is_not_behind(monkeypatch):
-    """The speaker pipe takes about 1.5s at once; that burst must not drop it."""
+def test_a_burst_up_front_is_not_behind(monkeypatch):
+    """Sep 30 2026: a fetched synthesis queued 5.85s in 4ms, and a limit on
+    what was queued dropped a reference that was playing in real time."""
     monkeypatch.setattr(tts.subprocess, "Popen", _StalledProcess)
     reference = tts._Reference("plughw:9,0")
-    for _ in range(22050 * 2 * 2 // 1024):     # two seconds, in small chunks
+    for _ in range(22050 * 2 * 6 // 1024):     # six seconds, in small chunks
         reference.write(b"x" * 1024)
     assert not reference._dropped
     reference.stop()
+
+
+def test_a_pause_in_synthesis_is_not_a_stall(monkeypatch):
+    """An empty queue means the feeder was idle, so the next chunk starts the
+    clock fresh rather than counting the pause against the array."""
+    monkeypatch.setattr(tts._Reference, "_STALL_S", 0.1)
+    monkeypatch.setattr(tts.subprocess, "Popen", _DrainingProcess)
+    reference = tts._Reference("plughw:9,0")
+    reference.write(b"x" * 1024)
+    time.sleep(0.3)
+    reference.write(b"x" * 1024)
+    reference.write(b"x" * 1024)
+    assert not reference._dropped
+    reference.finish()
 
 
 class _DrainingProcess:

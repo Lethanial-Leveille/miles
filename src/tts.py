@@ -376,12 +376,16 @@ class _Reference:
     well behind, the reference is dropped for this utterance: barge in gets
     worse for a sentence, and she keeps talking.
 
-    Behind is counted in audio, not chunks. The speaker's pipe takes about 1.5s
-    of audio up front, so a limit of 32 chunks, a fraction of that at the sizes
-    ElevenLabs sends, dropped the reference at the start of every long sentence
-    on Sep 30 2026 with nothing actually behind."""
+    Stalled is judged by time, not by how much is queued. A synthesis already
+    fetched arrives all at once: play() queued 5.85s of audio in its first 4ms,
+    and the feeder had written all of it by 0.32s. A limit of three seconds
+    queued dropped the reference at the start of every such sentence, logged as
+    "fell 3.0s behind", while ALSA showed the array starting 4.7ms before the
+    speaker and playing in real time (Sep 30 2026). A healthy aplay frees room
+    in its pipe every period, tens of ms; one that takes nothing for a second
+    has hung."""
 
-    _MAX_BEHIND_BYTES = 22050 * 2 * 3    # three seconds of 16 bit mono at 22050
+    _STALL_S = 1.0
 
     def __init__(self, device):
         self._proc = subprocess.Popen(
@@ -390,6 +394,7 @@ class _Reference:
         )
         self._chunks = queue.Queue()
         self._pending = 0
+        self._progress_at = time.monotonic()    # when the array last took audio
         self._pending_lock = threading.Lock()
         self._dropped = False
         self._exited = threading.Event()
@@ -405,6 +410,7 @@ class _Reference:
                 self._proc.stdin.flush()
                 with self._pending_lock:
                     self._pending -= len(chunk)
+                    self._progress_at = time.monotonic()
             self._proc.stdin.close()
         except (BrokenPipeError, OSError):
             self._proc.kill()
@@ -420,12 +426,17 @@ class _Reference:
     def write(self, chunk):
         if self._dropped:
             return
+        now = time.monotonic()
         with self._pending_lock:
-            behind = self._pending
+            if self._pending == 0:
+                # Nothing was waiting, so the feeder was idle, not stuck. The
+                # first chunk after a pause in synthesis starts the clock fresh.
+                self._progress_at = now
+            stalled = now - self._progress_at
             self._pending += len(chunk)
-        if behind > self._MAX_BEHIND_BYTES:
+        if stalled > self._STALL_S:
             self._dropped = True
-            print(f"  echo reference fell {behind / 44100:.1f}s behind; "
+            print(f"  echo reference: the array took nothing for {stalled:.1f}s; "
                   f"dropped for this sentence", flush=True)
             self.stop()
             return

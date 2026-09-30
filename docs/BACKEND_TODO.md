@@ -486,11 +486,15 @@ the raw mic 18.5ms after the chip's view of the reference (routed to USB with
 `AUDIO_MGR_OP_R 4 0`), stable across the clip, inside the canceller's 3072
 sample (192ms) filter. Speakers stay on the AB13X at full quality.
 
-**Unexplained:** in `play()` the reference writer reports falling three seconds
-behind, even in the controlled run, while `aplay` on the array plays the same
-clip in real time (16.88s against 16.89s on the speakers). Suspect how
-`_Reference` counts what is behind, or the array's `aplay` start. Solve this
-before trusting any reference result.
+**The three second lag was never a lag (solved Sep 30 2026).** ALSA's own
+status shows the array triggering 4.7 to 9.7ms *before* the speaker and playing
+the 16.88s clip in real time. The drop rule was wrong: it counted what was queued
+for the reference thread, and a synthesis already fetched is queued all at once
+(5.85s in the first 4ms, written through by 0.32s). So every such sentence was
+dropped before any audio played, and its stderr went to `/dev/null`, so it looked
+like a slow array. `_Reference` now drops only when the array has taken nothing
+for a second (`_STALL_S`). Three runs through the real `play()`: never dropped,
+all 16.88s delivered.
 
 **Fixed along the way, kept and off:** `play()` now stops mid sentence (it used
 to check once, after writing everything, and missed every wake in a sentence's
@@ -498,28 +502,51 @@ last second); `_Reference` can never block the speaker, and waits for the
 array to be free before the next sentence opens it; the watcher logs its peak
 and level per sentence and keeps what it heard in `build/barge_in_*.wav`.
 
-**Next, in order of payoff:**
-1. **Fix the three second reference lag above.** Everything below except the
-   retrain depends on the reference running for the whole reply.
-2. **Any speech on channel 0 interrupts her, not the wake word.** With the
-   reference running at `PP_DTSENSITIVE` 0, channel 0 held her at minus 63 to
-   minus 72 dBFS (silence) and rose to minus 28 to minus 40 when he spoke, about
-   25dB. His words were chopped ("Hello?"), which defeats a wake model and does
-   not matter to a speech detector. So the watcher reads channel 0 and fires on
-   webrtcvad speech sustained for a few frames, instead of on `hey_nova.onnx`.
-   This is the barge in AEC exists for: "wait" or "stop" works, not only the
-   wake word. Keep `PP_DTSENSITIVE` at 0: at 15 her first sentence leaked
-   before the canceller adapted, and chopping is harmless here. Risks: anyone
-   else talking, or a TV, also stops her (later, gate on `DOA_VALUE` toward
-   where he sits); and it is inferred from recordings, never tried live.
-   Measure before building on it: onset level and duration of his speech on
-   channel 0 against her residual, over several replies.
-3. **Retrain the wake model.** Deepgram heard the wake the model scored 0.00.
-   `hey_nova.onnx` predates this room and this mic (INCIDENTS.md, Sep 8 2026).
-   Retrain with his array wake hits plus wakes spoken over her playback, which
-   `build/barge_in_*.wav` can now collect. Worth doing regardless of barge in.
-4. Speakers on the array's jack, the one device setup the chip is designed for,
-   only if the above fail, since its 16kHz playback sounded degraded.
+**Any speech on channel 0 does not work (measured Sep 30 2026, evening).** With
+the reference running for the whole reply, `PP_DTSENSITIVE` 0, nobody talking,
+the same 16.88s clip:
+
+| Reference | runs | channel 0 median while she plays | webrtcvad mode 2 calls her speech |
+|---|---|---|---|
+| none | 2 | minus 32 dBFS | 80 percent |
+| plain `aplay` of the file | 5 | minus 39 to minus 65 | 46 to 74 percent |
+| `play()`, the production path | 8 | minus 24 to minus 61 | 58 to 94 percent |
+
+Cancellation comes and goes second by second (minus 67 one second, minus 25 the
+next), and her loudest frames reach minus 3 dBFS, as loud as his speech over
+her (minus 3 to minus 7). Six talk over takes agreed. The morning's minus 63 to
+minus 72 described her quiet stretches, not a reply. A watcher firing on
+sustained speech would stop her within a second of nearly every reply, so it was
+not built. Why the file beat `play()` in every pairing is unexplained: routing
+the canceller's own inputs out (`AUDIO_MGR_OP_L 3 0`, `AUDIO_MGR_OP_R 12 0`, not
+saved, restored after) showed her echo 14 to 20ms after the reference for both,
+steady, inside the filter, at identical levels. At the best lag, reference and
+echo correlate only 0.3 to 0.5, which points at speaker distortion or coupling a
+linear canceller cannot remove, and the chip's AGC then runs at about 44 times
+on whatever is left. A small book under the speaker changed nothing measurable.
+
+**Direction does not find him while she talks.** `DOA_VALUE` puts her at 280 to
+290 degrees on about 90 percent of reads, with a reflection near 150. His seat
+alone read 98 degrees, steady. Talking over her, the reading left her direction
+on 16 percent of reads from his seat and 3 percent from another spot, against 4
+to 14 percent with nobody talking: it never heard him.
+
+**Next, in the order he chose:**
+1. **Retrain the wake model**, measured before it is trusted. First an
+   evaluation set: him saying "hey nova" over her playback at cues, both
+   channels recorded, plus her alone, which must never fire; score
+   `hey_nova.onnx` on it as the number to beat. Then label the array's wake
+   hits so normal wakes are in the set too. Train on synthetic "hey nova" mixed
+   over her replies as captured by the array; his real clips stay in the
+   evaluation set only. Train off the Pi: the negative set is gigabytes and the
+   SD card has stalled before.
+2. **Turn her volume down** and rerun the silent A/B above. Less drive means
+   less distortion and a smaller echo against him; the one physical change not
+   yet tried.
+3. A stop button: the array's mute button can be released to software with
+   `GPI_EVENT_CONFIG` 0 and read with `GPI_EVENT_PENDING`. Persisting that needs
+   `SAVE_CONFIGURATION`; ask first.
+4. Speakers on the array's jack stays last: the 16kHz playback sounded degraded.
 
 ### 9. What the array still needs (Sep 30 2026)
 
