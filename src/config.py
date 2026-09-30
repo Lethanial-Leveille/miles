@@ -241,21 +241,29 @@ MIN_VOICED_SECONDS = 4.0
 ENROLL_RECORD_SECONDS = 10
 
 # ── Mic gain ──
-# Tuned Aug 10 2026 to peak -10.3 dBFS on worst case close range projected
-# speech, persisted with alsactl store. Checked at startup and logged, because
-# a silent revert corrupts collected data in a way that only shows up days
-# later as inexplicably low scores.
-EXPECTED_MIC_GAIN    = 23
+# Checked at startup and logged, because a silent revert corrupts collected
+# data in a way that only shows up days later as inexplicably low scores.
+#
+# The XVF3800 runs its own automatic gain on chip, so the USB capture control
+# stays at its maximum, 60 of 60 (0dB), and the chip decides the level. The
+# Seiren's value was 23 on a 0 to 31 scale, tuned Aug 10 2026; it does not carry.
+EXPECTED_MIC_GAIN    = 60
 
 # A mic read blocked this long is not coming back: the process exits and systemd
 # restarts it. One chunk normally returns in 80ms. See mic_watchdog.py.
 MIC_STALL_S = 5.0
 
-MIC_MIXER_CONTROL    = "Mic"
+MIC_MIXER_CONTROL    = "Headset"
 
-# Searched for in /proc/asound/cards, mirroring SPEAKER_NAME_HINT. Update this
-# when the capsule changes, not the card number below it.
-MIC_NAME_HINT        = "Seiren"
+# Searched for in /proc/asound/cards and in PyAudio's device names, mirroring
+# SPEAKER_NAME_HINT. Update this when the capsule changes, not the card number
+# below it. The Seiren V3 Mini was the mic until Sep 30 2026.
+MIC_NAME_HINT        = "XVF3800"
+
+# The array offers two channels and nothing else; the pipeline wants one.
+# mic_channel.py opens both and keeps MIC_CHANNEL. Why channel 0: that module.
+MIC_CAPTURE_CHANNELS = 2
+MIC_CHANNEL          = 0
 
 
 def _resolve_mixer_card(name_hint, cards_path="/proc/asound/cards"):

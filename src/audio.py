@@ -82,6 +82,7 @@ from config import (
     WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL, MIC_NAME_HINT,
+    MIC_CAPTURE_CHANNELS, MIC_CHANNEL,
     capsule_name, SPEAKER_ENCODER,
     ARCHIVE_RECORDINGS, ARCHIVE_DIR, ARCHIVE_MAX_FILES,
     TTS_FLUSH_MARGIN_MS,
@@ -97,6 +98,7 @@ from wake_listener import WakeListener
 import wake_capture
 import deepgram_stt
 import speculative_turn
+import mic_channel
 import mic_watchdog
 from database import keep_voiceprint_sample, log_verification
 import timing
@@ -202,25 +204,28 @@ mic_index = None
 MIC_NAME = "unknown"
 for i in range(_audio.get_device_count()):
     info = _audio.get_device_info_by_index(i)
-    if "Razer" in info["name"] or "Seiren" in info["name"]:
+    if MIC_NAME_HINT in info["name"] and info["maxInputChannels"] > 0:
         mic_index = i
         MIC_NAME = capsule_name(info["name"])
         print(f"Found mic: {info['name']} (index {i})", flush=True)
         break
 
 if mic_index is None:
-    print("Razer mic not found!", flush=True)
+    print(f"Mic not found: no input device matching {MIC_NAME_HINT!r}.", flush=True)
     raise SystemExit(1)
 
 with silence_stderr():
     stream = _audio.open(
         format=FORMAT,
-        channels=CHANNELS,
+        channels=MIC_CAPTURE_CHANNELS,
         rate=RATE,
         input=True,
         input_device_index=mic_index,
         frames_per_buffer=CHUNK,
     )
+
+# Every reader below expects mono. See mic_channel.py.
+stream = mic_channel.ChannelPick(stream, MIC_CAPTURE_CHANNELS, MIC_CHANNEL)
 
 # A read that never returns is a deaf assistant with every service reporting
 # active. The guard ends the process instead, and systemd reopens the device.

@@ -364,6 +364,11 @@ enrolling twice, because embeddings from two encoders are not comparable.
 
 ### 6. Mic selection
 
+**Bought and live Sep 30 2026: ReSpeaker XVF3800.** Measurements and what it
+changed are in
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#the-respeaker-xvf3800-replaced-the-seiren-sep-30-2026).
+The reasoning below is why it was chosen.
+
 Requirements: enclosure mountable, good far field pickup across a room, Pi via
 USB or I2S.
 
@@ -450,6 +455,26 @@ cancellation. Structure borne coupling is close to the worst case for AEC:
 **If barge in matters, mechanical isolation is a prerequisite rather than a
 refinement**, and on chip AEC stops being a luxury. Design for it before
 building, not after.
+
+### 9. What the array still needs (Sep 30 2026)
+
+Deferred because a few days of ordinary use measure these better than a staged
+session, and the enclosure will move all of them again.
+
+- **`WAKE_LEVEL_FLOOR`.** Set on Seiren levels; on the array it cannot fire.
+  Retune from `data/wake_hits` and `data/wake_gated` captured on the array.
+- **VAD mode** (item 3) and **`TTS_FLUSH_MARGIN_MS`** (item 7), both capsule
+  dependent.
+- **The two takes the array missed** at 14:27:19 and 14:27:24 on Sep 30, where the
+  Seiren scored about 0.5. Listen before trusting the array's miss rate.
+- **AEC by reference only.** The AB13X drives the speaker; the same audio goes to
+  the array's USB output purely as the echo reference. Test by playing Nova and
+  measuring how much of her is left on channel 0. Unknown: whether the on chip
+  AEC tolerates the drift between two USB clocks.
+- **`xvf_host`**: direction of arrival, the LED ring, AEC and beam parameters.
+- **48kHz firmware (`_48k2ch`)**: skipped. Nothing says the jack plays at 48kHz,
+  and an open, unanswered report (respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY
+  issue 39) has clicks in processed capture on it.
 
 ---
 

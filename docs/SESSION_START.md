@@ -1487,3 +1487,16 @@ automatic step is the memory pass skipping a fact at 0.9 or more from one
 stored or waiting, where only rewordings have been seen, and never a fact he
 asked her to keep. Reopen only with a judge that beats the table in
 [BRAIN.md](BRAIN.md#duplicates-are-not-merged-automatically-measured-sep-28-2026).
+
+### The XVF3800 is the mic, and the speakers stay off it (Sep 30 2026) (DONE)
+
+The array replaced the Seiren after scoring higher than it on the same takes
+(10 of 12 against 7 of 11). The voiceprint was rebuilt on it the same day,
+because the two mics' voiceprints agree at only 0.738.
+
+**Speakers were not moved to the array's jack**, though that is the documented
+way to feed its AEC. Its playback is 16kHz only and sounded clearly worse by
+ear. Barge in by wake word needs no AEC, and full AEC may work by sending the
+array a reference copy while the AB13X plays. Reopen only if that fails and
+barge in on any speech becomes worth the voice quality. Numbers in
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#the-respeaker-xvf3800-replaced-the-seiren-sep-30-2026).

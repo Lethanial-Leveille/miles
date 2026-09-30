@@ -42,9 +42,11 @@ github.com/Lethanial-Leveille/miles-app.
 
 ## Hardware
 
-Raspberry Pi 5 (8GB), headless Raspberry Pi OS Lite 64 bit. Razer Seiren V3 Mini
-USB microphone, found dynamically by name in PyAudio rather than hardcoded to a
-card number, since ALSA card numbers shift on reboot. Amazon Basics USB speakers
+Raspberry Pi 5 (8GB), headless Raspberry Pi OS Lite 64 bit. ReSpeaker XVF3800
+USB 4 mic array (since Sep 30 2026; the Razer Seiren V3 Mini before it), found
+by name in PyAudio rather than hardcoded to a card number, since ALSA card
+numbers shift on reboot. It does beamforming, noise suppression and AGC on chip
+and hands over two channels; the pipeline keeps channel 0. Amazon Basics USB speakers
 via QianLink USB to 3.5mm adapter, also resolved by name at runtime in `tts.py`
 using `SPEAKER_NAME_HINT` rather than a fixed device string. An LD2410C mmWave
 presence radar on the GPIO UART (`dtparam=uart0=on`, `/dev/ttyAMA0`); wiring and
@@ -88,6 +90,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── deepgram_stt.py        # the online transcript, with whisper as the floor
 │   ├── wake_listener.py       # hears the wake word during a recording
 │   ├── mic_watchdog.py        # exits when the mic stops delivering, so systemd reopens it
+│   ├── mic_channel.py         # keeps one channel of the array, so the pipeline stays mono
 │   ├── ld2410.py              # the presence radar's report frames, decoded from its serial stream
 │   ├── presence.py            # reads the radar on a thread, logs present/absent/silent changes
 │   ├── wake_gate.py           # drops a wake that arrived too quiet to be him
@@ -121,7 +124,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1217 passing, 6 skipped, Sep 29 2026)
+│   └── tests/                 # pytest suite (1227 passing, 6 skipped, Sep 30 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -210,10 +213,13 @@ of the value itself.
 - `SILENCE_LIMIT = 1.2`
 - `MAX_RECORD = 30.0`
 - `TTS_FLUSH_MARGIN_MS = 250`
-- `EXPECTED_MIC_GAIN = 23`
+- `EXPECTED_MIC_GAIN = 60` (the array's `Headset` capture control, at its maximum;
+  the chip runs its own gain)
 - `MIC_STALL_S = 5.0` (a mic read blocked this long ends the process so systemd
   restarts it; `mic_watchdog.py`)
-- `MIC_NAME_HINT = "Seiren"`. `MIC_MIXER_CARD` is **derived** from it at import
+- `MIC_CAPTURE_CHANNELS = 2`, `MIC_CHANNEL = 0` (the array offers only two;
+  `mic_channel.py` keeps one, so every reader stays mono)
+- `MIC_NAME_HINT = "XVF3800"`. `MIC_MIXER_CARD` is **derived** from it at import
   by `_resolve_mixer_card`, never written literally, and is `None` on a miss so
   callers report "cannot check" rather than measuring the wrong device.
 - `SPEAKER_ENCODER = "ecapa"` (since Sep 27 2026; Resemblyzer voiceprint kept in

@@ -56,10 +56,12 @@ try:
 except OSError:
     pass
 
+import mic_channel
 import speaker_encoder
 
 from config import (
     RATE, CHANNELS, CHUNK, SPEAKER_NAME_HINT,
+    MIC_NAME_HINT, MIC_CAPTURE_CHANNELS, MIC_CHANNEL,
     VOICEPRINT_PATH, ENROLLMENT_DATA_PATH, ENROLLMENT_AUDIO_DIR,
     SPEAKER_ENCODER,
     MIN_VOICED_SECONDS, ENROLL_RECORD_SECONDS,
@@ -160,7 +162,7 @@ def resolve_speaker_device(name_hint, fallback="plughw:0,0"):
 def find_mic(audio):
     for i in range(audio.get_device_count()):
         info = audio.get_device_info_by_index(i)
-        if "Razer" in info["name"] or "Seiren" in info["name"]:
+        if MIC_NAME_HINT in info["name"] and info["maxInputChannels"] > 0:
             return i
     return None
 
@@ -285,13 +287,16 @@ def main():
     mic_index = find_mic(audio)
     if mic_index is None:
         audio.terminate()
-        raise SystemExit("Razer mic not found.")
+        raise SystemExit(f"Mic not found: no input device matching {MIC_NAME_HINT!r}.")
 
     speaker = resolve_speaker_device(SPEAKER_NAME_HINT)
 
-    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
+    stream = audio.open(format=FORMAT, channels=MIC_CAPTURE_CHANNELS, rate=RATE,
                         input=True, input_device_index=mic_index,
                         frames_per_buffer=CHUNK)
+    # The same channel the voice loop hears, or the voiceprint is built on a
+    # different signal than the one it will verify. See mic_channel.py.
+    stream = mic_channel.ChannelPick(stream, MIC_CAPTURE_CHANNELS, MIC_CHANNEL)
 
     encoder = speaker_encoder.get_encoder(SPEAKER_ENCODER)
 
