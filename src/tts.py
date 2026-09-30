@@ -382,6 +382,11 @@ def play(synthesis, interrupt=None):
         aplay, waited_ms = None, None
         try:
             for chunk in synthesis.chunks():
+                # Barge in, checked per chunk. Checked only once the whole
+                # sentence was written, a wake word heard mid sentence waited
+                # for the rest of it to reach aplay first.
+                if interrupt is not None and interrupt.is_set():
+                    break
                 if aplay is None:
                     ttfb_ms = (time.monotonic() - synthesis.requested_at) * 1000.0
                     aplay = _open_aplay()
@@ -399,11 +404,16 @@ def play(synthesis, interrupt=None):
             if aplay is not None:
                 aplay.stdin.close()
                 # Barge in. The watcher thread reads the microphone while aplay
-                # drains; if it hears the wake word it sets the event, and
-                # killing aplay here is what actually cuts her off, because the
-                # ALSA buffer holds roughly 185ms of audio already written.
-                if interrupt is not None and interrupt.is_set():
-                    aplay.kill()
+                # drains; killing aplay is what actually cuts her off, because
+                # the pipe and the ALSA buffer still hold over a second of audio
+                # already written. Polled for the whole drain: a single check
+                # before a blind wait missed every wake word in the last second
+                # or so of a sentence.
+                if interrupt is not None:
+                    while aplay.poll() is None:
+                        if interrupt.wait(0.02):
+                            aplay.kill()
+                            break
                 aplay.wait()
 
     if synthesis.error is not None:
