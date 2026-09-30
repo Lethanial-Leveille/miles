@@ -695,6 +695,25 @@ is one follow up call on the turns that store something, measured at roughly
 0.7 to 0.9 seconds uncached; that call carries no tools, so it misses the cache
 the way the final tool round already does.
 
+### A plan for one day expires that day (measured Sep 30 2026)
+
+He said "Appreciate it. I will be going to that event" after she read him a
+NSBE event on his calendar, and she stored a permanent memory. Replayed ten
+times through `build_request` against a copy of the database without it:
+
+| | Before | After |
+|---|---|---|
+| Set `temporary` and `until` | 0 of 8 | 9 of 9 |
+| Certainty `asked`, though he asked nothing | 6 of 8 | 6 of 9 |
+
+The description's only shelf life example was a season ("training for a meet
+in March"), so nothing read a plan for tonight as temporary. Naming a plan for
+one day fixed it; the model picks the day after as `until`, which keeps it
+through the next day. The same change also said a stated plan is not a request
+to remember, and that line did nothing. Certainty is a description the model
+misses, so the remaining fix belongs in code: `asked` only when his message
+actually asks. Deferred in [BACKEND_TODO.md](BACKEND_TODO.md#asked-only-when-he-asks).
+
 ### Every memory can be found again (Sep 28 2026)
 
 Two gaps, found while asking why she said "horror's not your thing" the day he
