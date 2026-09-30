@@ -144,9 +144,25 @@ def _synthesis(chunks, on_chunk=None):
     return SimpleNamespace(chunks=gen, requested_at=time.monotonic(), error=None)
 
 
-def _barge_in_setup(monkeypatch, drain_s):
+class _FakeReference:
+    def __init__(self):
+        self.written, self.finished, self.stopped = [], False, False
+
+    def write(self, chunk):
+        self.written.append(chunk)
+
+    def finish(self):
+        self.finished = True
+
+    def stop(self):
+        self.stopped = True
+
+
+def _barge_in_setup(monkeypatch, drain_s, reference=None):
     fake = _FakeAplay(drain_s)
     monkeypatch.setattr(tts, "_open_aplay", lambda: fake)
+    # Never the real array: these tests run on the Pi, where it exists.
+    monkeypatch.setattr(tts, "_open_reference", lambda: reference)
     monkeypatch.setattr(tts.timing, "note_tts", lambda *a: None)
     return fake
 
@@ -177,3 +193,95 @@ def test_no_wake_word_plays_to_the_end(monkeypatch):
     tts.play(_synthesis([b"a", b"b"]), interrupt=threading.Event())
     assert fake.written == [b"a", b"b"]
     assert not fake.killed
+
+
+def test_the_echo_reference_gets_every_chunk_and_is_finished(monkeypatch):
+    reference = _FakeReference()
+    _barge_in_setup(monkeypatch, drain_s=0.05, reference=reference)
+    tts.play(_synthesis([b"a", b"b", b"c"]), interrupt=threading.Event())
+    assert reference.written == [b"a", b"b", b"c"]
+    assert reference.finished and not reference.stopped
+
+
+def test_barge_in_stops_the_echo_reference_too(monkeypatch):
+    reference = _FakeReference()
+    _barge_in_setup(monkeypatch, drain_s=5.0, reference=reference)
+    interrupt = threading.Event()
+    threading.Timer(0.1, interrupt.set).start()
+    tts.play(_synthesis([b"a"]), interrupt=interrupt)
+    assert reference.stopped
+
+
+class _StalledProcess:
+    """An aplay whose device has hung: every write blocks until killed."""
+
+    def __init__(self, *args, **kwargs):
+        self._killed = threading.Event()
+        self.stdin = SimpleNamespace(write=self._write, flush=lambda: None,
+                                     close=lambda: None)
+
+    def _write(self, chunk):
+        self._killed.wait()
+        raise BrokenPipeError
+
+    def kill(self):
+        self._killed.set()
+
+    def wait(self):
+        self._killed.wait()
+
+    def poll(self):
+        return 0 if self._killed.is_set() else None
+
+
+def test_a_stalled_array_never_holds_her_up(monkeypatch):
+    """The reason the reference has its own thread: a blocking write here
+    would freeze her mid sentence."""
+    monkeypatch.setattr(tts.subprocess, "Popen", _StalledProcess)
+    reference = tts._Reference("plughw:9,0")
+    started = time.monotonic()
+    for _ in range(tts._Reference._MAX_BEHIND_BYTES // 1024 * 3):
+        reference.write(b"x" * 1024)
+    reference.finish()
+    assert time.monotonic() - started < 1.0
+    assert reference._dropped
+
+
+def test_a_second_of_audio_up_front_is_not_behind(monkeypatch):
+    """The speaker pipe takes about 1.5s at once; that burst must not drop it."""
+    monkeypatch.setattr(tts.subprocess, "Popen", _StalledProcess)
+    reference = tts._Reference("plughw:9,0")
+    for _ in range(22050 * 2 * 2 // 1024):     # two seconds, in small chunks
+        reference.write(b"x" * 1024)
+    assert not reference._dropped
+    reference.stop()
+
+
+class _DrainingProcess:
+    """An aplay that exits a moment after its input ends, like the real one."""
+
+    live = 0
+
+    def __init__(self, *args, **kwargs):
+        _DrainingProcess.live += 1
+        self._closed = threading.Event()
+        self.stdin = SimpleNamespace(write=lambda c: None, flush=lambda: None,
+                                     close=self._closed.set)
+
+    def kill(self):
+        self._closed.set()
+
+    def wait(self):
+        self._closed.wait()
+        time.sleep(0.05)
+        _DrainingProcess.live -= 1
+
+
+def test_the_next_sentence_finds_the_array_free(monkeypatch):
+    """finish returns only once this aplay has let go of the device."""
+    monkeypatch.setattr(tts.subprocess, "Popen", _DrainingProcess)
+    for _ in range(3):
+        reference = tts._Reference("plughw:9,0")
+        reference.write(b"x" * 1024)
+        reference.finish()
+        assert _DrainingProcess.live == 0

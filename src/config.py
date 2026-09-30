@@ -126,7 +126,29 @@ VOICEPRINT_SAMPLE_CAP = 60
 # and a second reader on that stream is the kind of bug that shows up as
 # occasional silence rather than an exception. Turn it on deliberately and
 # watch it.
+# Off again Sep 30 2026 after a day of testing on the array: "hey nova" said
+# over her never woke the watcher in production. What was tried and measured is
+# in BACKEND_TODO.md, Barge in on the array.
 BARGE_IN = False
+
+# Which of the array's two channels barge in listens on, while she plays.
+# Sep 30 2026, "hey nova" said over her: channel 0, the processed output, chopped
+# his voice into "Hello?" at both echo suppression settings tried and never woke;
+# channel 1, the recognition beam, woke at 0.88 and 0.98. Only barge in reads it;
+# everything else stays on MIC_CHANNEL. See AUDIO_PIPELINE.md.
+BARGE_IN_CHANNEL = 1
+
+# Her replies are also written to the array's own USB output, with nothing
+# plugged into its jack, purely as the echo canceller's reference. Without it
+# she drowned him out on BARGE_IN_CHANNEL (every live try failed, peak 0.00);
+# with it "hey nova" over her woke at 0.88 and 0.98. The speakers stay on the
+# AB13X, because the array plays 16kHz only and sounded degraded. Measured Sep 30
+# 2026: her echo reaches the mic 18.5ms after the reference, inside the
+# canceller's 192ms window, and did not drift over the clip.
+# Off with barge in: nothing reads the cancelled audio while she talks, and the
+# reference writer reported falling three seconds behind in play() even while
+# the array played the same clip in real time, which is not yet explained.
+AEC_REFERENCE = False
 
 # Barge in has its own threshold, and it is deliberately lower than
 # WAKE_THRESHOLD rather than sharing it.

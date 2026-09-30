@@ -124,7 +124,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1227 passing, 6 skipped, Sep 30 2026)
+│   └── tests/                 # pytest suite (1237 passing, 6 skipped, Sep 30 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -277,9 +277,11 @@ of the value itself.
   fails or has not answered by then)
 
 ### Barge in — why: `config.py` comments and [BACKEND_TODO.md](docs/BACKEND_TODO.md)
-- `BARGE_IN = False`, `BARGE_IN_THRESHOLD = 0.30` (wake word only, no echo
-  cancellation. Built and never switched on; `play()` in `tts.py` checks the
-  interrupt only after a sentence is fully written, so fix that before enabling)
+- `BARGE_IN = False`, `BARGE_IN_THRESHOLD = 0.30`, `BARGE_IN_CHANNEL = 1`
+  (wake word only. Tried on the array Sep 30 2026 and off again: a clearly
+  spoken wake over her scored 0.00. `play()` now stops mid sentence)
+- `AEC_REFERENCE = False` (her replies copied to the array's USB output as the
+  echo reference, speakers left on the AB13X; off with barge in)
 
 ### Model and prompt — why: [BRAIN.md](docs/BRAIN.md)
 - `MODEL_A = "claude-haiku-4-5"` — **this is the production model**
