@@ -198,12 +198,14 @@ def timer_text(amount, unit):
 PHRASES.update({timer_key(a, u): [timer_text(a, u)] for a, u in TIMER_VALUES})
 
 
-# The clock, to five minutes. Twelve hours by twelve slots is 144 clips, which
-# is small enough to enumerate whole sentences and so keeps real prosody. Exact
-# minutes would be 720, and "about" on every reading grates, so the reading is
-# rounded to the nearest five and stated plainly. Two minutes is inside what
-# people round to when saying a time out loud anyway.
-TIME_VALUES = [(h, m) for h in range(1, 13) for m in range(0, 60, 5)]
+# The clock, to the minute. Whole sentences per reading keep real prosody, and
+# 720 of them is about 47MB. Until Sep 30 2026 this was 144 clips rounded to the
+# nearest five and stated plainly, on the theory that two minutes is inside what
+# people round to aloud. In use it was just wrong: "It's two twenty five" at
+# 2:27, from a system with an exact clock, and "about" on every reading was the
+# only honest alternative. Unrendered minutes fall back to live TTS, so a partial
+# render is still correct, only slower.
+TIME_VALUES = [(h, m) for h in range(1, 13) for m in range(60)]
 
 
 def time_key(hour, minute):
@@ -222,14 +224,8 @@ def time_text(hour, minute):
 
 
 def time_key_for(now):
-    """Round to the nearest five minutes, rolling the hour when it lands on 60."""
-    minute = int(round(now.minute / 5.0) * 5)
-    hour   = now.hour
-    if minute == 60:
-        minute = 0
-        hour += 1
-    hour = hour % 12 or 12
-    return time_key(hour, minute)
+    """The exact minute. Twelve hour clock, so midnight and noon read as twelve."""
+    return time_key(now.hour % 12 or 12, now.minute)
 
 
 PHRASES.update({time_key(h, m): [time_text(h, m)] for h, m in TIME_VALUES})
