@@ -1500,3 +1500,12 @@ ear. Barge in by wake word needs no AEC, and full AEC may work by sending the
 array a reference copy while the AB13X plays. Reopen only if that fails and
 barge in on any speech becomes worth the voice quality. Numbers in
 [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#the-respeaker-xvf3800-replaced-the-seiren-sep-30-2026).
+
+### Barge in stays off after a day on the array (Sep 30 2026) (DECIDED)
+
+Tried on both channels, with and without an echo reference, at two double talk
+settings, and finally through the production path with a fixed clip: a wake
+Deepgram transcribed clearly scored 0.00. Off rather than left on and unproven,
+with the fixes kept. Reopen with a retrained wake model first, not more echo
+tuning; the evidence is in
+[BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).

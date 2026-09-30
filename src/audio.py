@@ -80,6 +80,7 @@ from config import (
     WHISPER_MODEL, WHISPER_CLI, WHISPER_SEGMENT_SECONDS, WHISPER_INITIAL_PROMPT,
     TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
+    BARGE_IN_CHANNEL,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL, MIC_NAME_HINT,
     MIC_CAPTURE_CHANNELS, MIC_CHANNEL,
@@ -932,6 +933,13 @@ def measure_acoustics(wav_path):
 # decision, and are imported at the top so callers keep using audio.RETRY.
 
 
+# The last few things the barge in watcher heard, one per sentence, so a miss
+# can be listened to. A long reply is two or three sentences, so four covers one.
+BARGE_IN_WAV = os.path.expanduser("~/miles/build/barge_in_{}.wav")
+BARGE_IN_KEEP = 4
+_barge_in_count = 0
+
+
 def watch_for_interrupt(stop_event):
     """Listen for the wake word while Nova is speaking. Returns True if heard.
 
@@ -950,24 +958,57 @@ def watch_for_interrupt(stop_event):
     try:
         with silence_stderr():
             watcher = Model(wakeword_model_paths=[WAKE_MODEL_PATH])
-    except Exception:
+    except Exception as e:
+        print(f"  barge in: wake model did not load: {e!r}", flush=True)
         return False
 
+    # Logged per sentence, because a watcher that quietly scores low, or quietly
+    # dies on an exception, looks exactly like one that heard nothing. The first
+    # live test on Sep 30 2026 failed with no way to tell which.
     heard = False
+    peak, frames = 0.0, 0
+    kept = []
     while not stop_event.is_set():
         try:
-            data = stream.read(CHUNK, exception_on_overflow=False)
-        except Exception:
+            # The recognition channel, not the one the rest of the pipeline
+            # hears: see BARGE_IN_CHANNEL.
+            data = stream.read(CHUNK, exception_on_overflow=False,
+                               channel=BARGE_IN_CHANNEL)
+        except Exception as e:
+            print(f"  barge in: mic read failed: {e!r}", flush=True)
             break
+        frames += 1
+        kept.append(data)
         frame = np.frombuffer(data, dtype=np.int16)
         try:
             for _, score in watcher.predict(frame).items():
+                peak = max(peak, score)
                 if score > BARGE_IN_THRESHOLD:
                     heard = True
                     stop_event.set()
                     break
-        except Exception:
+        except Exception as e:
+            print(f"  barge in: wake model failed: {e!r}", flush=True)
             break
+    global _barge_in_count
+    _barge_in_count += 1
+    path = BARGE_IN_WAV.format(_barge_in_count % BARGE_IN_KEEP)
+    level = None
+    if kept:
+        audio_bytes = b"".join(kept)
+        samples = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float64)
+        level = 20 * np.log10(np.abs(samples).max() / 32768 + 1e-9)
+        try:
+            with wave.open(path, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(RATE)
+                wf.writeframes(audio_bytes)
+        except OSError:
+            pass
+    level_text = f", loudest {level:.1f} dBFS" if level is not None else ""
+    print(f"  barge in: {'HEARD' if heard else 'watched'} {frames * CHUNK / RATE:.1f}s, "
+          f"peak {peak:.2f}{level_text} ({os.path.basename(path)})", flush=True)
     return heard
 
 

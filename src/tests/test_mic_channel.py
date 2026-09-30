@@ -53,3 +53,17 @@ def test_everything_else_reaches_the_stream():
 def test_a_channel_that_does_not_exist_is_refused():
     with pytest.raises(ValueError):
         ChannelPick(FakeStream(b""), channels=2, pick=2)
+
+
+def test_one_read_can_ask_for_the_other_channel():
+    """Barge in reads the recognition channel; the next plain read is back to the pick."""
+    raw = _interleave([1, 2, 3], [-1, -2, -3])
+    stream = ChannelPick(FakeStream(raw), channels=2, pick=0)
+    assert np.frombuffer(stream.read(3, channel=1), dtype=np.int16).tolist() == [-1, -2, -3]
+    assert np.frombuffer(stream.read(3), dtype=np.int16).tolist() == [1, 2, 3]
+
+
+def test_a_mono_mic_ignores_the_channel_request():
+    """So rolling back to a single capsule never breaks barge in."""
+    raw = np.array([5, 6, 7], dtype=np.int16).tobytes()
+    assert ChannelPick(FakeStream(raw), channels=1, pick=0).read(3, channel=1) == raw

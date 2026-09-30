@@ -456,6 +456,57 @@ cancellation. Structure borne coupling is close to the worst case for AEC:
 refinement**, and on chip AEC stops being a luxury. Design for it before
 building, not after.
 
+### Barge in on the array (tried Sep 30 2026, off)
+
+A day of testing "hey nova" said over her, ending with `BARGE_IN` and
+`AEC_REFERENCE` both off. What was learned, so the next attempt starts here.
+
+**The array's two channels behave very differently while she talks.** Read with
+`xvf_host.py` (Seeed's `python_control`, pyusb, no root with
+`udev/99-respeaker-xvf3800.rules`): channel 0 is the processed output (category
+8, AGC, noise and echo suppression), channel 1 the recognition beam (category 7
+source 3).
+
+| | Her voice | His "hey nova" | Wake score |
+|---|---|---|---|
+| Ch0, no reference | full level | buried | none |
+| Ch0, reference, `PP_DTSENSITIVE` 0 | gone entirely | "Hello?" (chopped) | none |
+| Ch0, reference, `PP_DTSENSITIVE` 15 | leaks at first, then gone | "I know that" | none |
+| Ch1, no reference | about minus 20 to minus 25 dBFS | "Take over" | 0.00 |
+| Ch1, reference, DT 15, arecord test | present | "Hey, Nova" twice | **0.88, 0.98** |
+| Ch1, production path, speakers moved | about minus 28 dBFS | "Hey, Nova", clear | 0.00 |
+
+The one success was an `arecord` capture where he likely spoke louder; it never
+reproduced through `play()`. The last row is the deciding test: a fixed clip
+through the real `_play_with_barge_in`, his wake transcribed clearly by
+Deepgram, scored 0.00 by `hey_nova.onnx`.
+
+**The reference over a second USB device is sound on timing.** Her echo reaches
+the raw mic 18.5ms after the chip's view of the reference (routed to USB with
+`AUDIO_MGR_OP_R 4 0`), stable across the clip, inside the canceller's 3072
+sample (192ms) filter. Speakers stay on the AB13X at full quality.
+
+**Unexplained:** in `play()` the reference writer reports falling three seconds
+behind, even in the controlled run, while `aplay` on the array plays the same
+clip in real time (16.88s against 16.89s on the speakers). Suspect how
+`_Reference` counts what is behind, or the array's `aplay` start. Solve this
+before trusting any reference result.
+
+**Fixed along the way, kept and off:** `play()` now stops mid sentence (it used
+to check once, after writing everything, and missed every wake in a sentence's
+last second); `_Reference` can never block the speaker, and waits for the
+array to be free before the next sentence opens it; the watcher logs its peak
+and level per sentence and keeps what it heard in `build/barge_in_*.wav`.
+
+**Next, in order of payoff:**
+1. **The wake model, not the audio.** Deepgram heard the wake the model scored
+   0.00. `hey_nova.onnx` predates this room and this mic (INCIDENTS.md, Sep 8
+   2026). Retrain with his array wake hits plus wakes spoken over her playback,
+   which `build/barge_in_*.wav` can now collect.
+2. The three second reference lag above.
+3. Speakers on the array's jack, the one device setup the chip is designed for,
+   only if 1 and 2 fail, since its 16kHz playback sounded degraded.
+
 ### 9. What the array still needs (Sep 30 2026)
 
 Deferred because a few days of ordinary use measure these better than a staged
@@ -467,10 +518,8 @@ session, and the enclosure will move all of them again.
   dependent.
 - **The two takes the array missed** at 14:27:19 and 14:27:24 on Sep 30, where the
   Seiren scored about 0.5. Listen before trusting the array's miss rate.
-- **AEC by reference only.** The AB13X drives the speaker; the same audio goes to
-  the array's USB output purely as the echo reference. Test by playing Nova and
-  measuring how much of her is left on channel 0. Unknown: whether the on chip
-  AEC tolerates the drift between two USB clocks.
+- **AEC by reference only.** Tried the same day; see
+  [Barge in on the array](#barge-in-on-the-array-tried-sep-30-2026-off).
 - **`xvf_host`**: direction of arrival, the LED ring, AEC and beam parameters.
 - **48kHz firmware (`_48k2ch`)**: skipped. Nothing says the jack plays at 48kHz,
   and an open, unanswered report (respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY

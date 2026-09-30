@@ -26,13 +26,17 @@ class ChannelPick:
         self._channels = channels
         self._pick = pick
 
-    def read(self, *args, **kwargs):
+    def read(self, *args, channel=None, **kwargs):
+        """channel overrides the pick for this read only. Barge in uses it: the
+        processed channel chops his voice while hers plays, and the recognition
+        channel does not. See BARGE_IN_CHANNEL in config.py."""
         data = self._stream.read(*args, **kwargs)
         if self._channels == 1:
             return data
+        pick = self._pick if channel is None else channel
         # Interleaved S16_LE: one frame is every channel's sample, side by side.
         samples = np.frombuffer(data, dtype=np.int16).reshape(-1, self._channels)
-        return samples[:, self._pick].tobytes()
+        return samples[:, pick].tobytes()
 
     def __getattr__(self, name):
         return getattr(self._stream, name)
