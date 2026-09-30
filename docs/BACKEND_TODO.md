@@ -791,6 +791,17 @@ quality argument does not.
 
 ## Memory system: correction before automation
 
+### `asked` only when he asks
+
+Sep 30 2026: replaying "I will be going to that event", `remember` came back
+`asked` in 6 of 9 even after the description said a stated plan is inferred.
+`asked` skips his review queue, so a guess becomes permanent record at once.
+Enforce it in code: downgrade `asked` to `inferred` unless his message contains
+a request word (remember, note, don't forget, keep in mind, save). A miss costs a
+pending memory he approves, never a wrong one stored. Deferred because the tool
+does not see his message today; `_run_tools` has to pass it through. Numbers in
+[BRAIN.md](BRAIN.md#a-plan-for-one-day-expires-that-day-measured-sep-30-2026).
+
 Three items, in dependency order. The third is blocked on the first two and
 must not be started before them.
 

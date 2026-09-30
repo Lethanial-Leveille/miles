@@ -39,6 +39,9 @@ from tools import Permission, tool
         "person, tool, routine, commitment, plan or preference, or a change to "
         "something you already hold. Those wait for his review, so a "
         "reasonable guess costs little. "
+        "A plan for a particular day or event, like going to something "
+        "tonight or a meeting on Friday, stops being true once that day "
+        "passes: store it temporary, with until set to that day. "
         "Read what you already know first, in the list above. If the fact is "
         "already there in some form, pass its id as supersedes to replace it, "
         "or do not call this at all if nothing changed. "
@@ -74,6 +77,8 @@ from tools import Permission, tool
                 "enum": ["asked", "inferred"],
                 "description": "'asked' only when Lethanial directly told you "
                                "to remember it, which stores it immediately. "
+                               "Telling you a plan or a fact is not asking you "
+                               "to remember it; that is inferred. "
                                "'inferred' when you noticed it yourself, which "
                                "holds it for his review. Defaults to inferred, "
                                "because guessing confidently puts your "
@@ -81,7 +86,9 @@ from tools import Permission, tool
             },
             "temporary": {
                 "type": "boolean",
-                "description": "True when the fact has a shelf life, such as "
+                "description": "True when the fact has a shelf life: a plan "
+                               "for one day or event, such as going to a "
+                               "meeting tonight, or a season, such as "
                                "training for a meet in March. Pair it with "
                                "until, since a temporary fact with no date "
                                "never expires.",
@@ -90,7 +97,8 @@ from tools import Permission, tool
                 "type": "string",
                 "description": "ISO 8601 date after which a temporary fact "
                                "stops being true, computed from the clock "
-                               "supplied with his message.",
+                               "supplied with his message. For a plan on one "
+                               "day, that day.",
             },
         },
         "required": ["content"],
