@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 25 2026 (30) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 28 2026 (1108) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 30 2026 (1238) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on the tool schemas plus `build_enhanced_prompt` output, since tools sit inside the cached prefix, vs the 4096 floor | Sep 25 2026 (17774: tools 7103, system 10670) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Sep 27 2026 (0.15, ecapa) |
@@ -1509,3 +1509,16 @@ Deepgram transcribed clearly scored 0.00. Off rather than left on and unproven,
 with the fixes kept. Reopen with speech detection on channel 0 first, the route
 the recordings support, then a retrained wake model; the evidence is in
 [BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
+
+### Speech on channel 0 cannot stop her; the wake model is retrained next (Sep 30 2026) (DECIDED)
+
+The route the entry above chose to try first was measured and fails. Once the
+echo reference was fixed to run for the whole reply, the canceller still left
+her at up to minus 3 dBFS, as loud as him, and webrtcvad called half or more of
+her frames speech; direction of arrival stayed on her while he talked. Built,
+it would cut her off on nearly every reply. **Chosen, in his order:** retrain
+`hey_nova.onnx` against an evaluation set recorded over her playback, then try a
+lower speaker volume. Reopen speech detection only if a volume or enclosure
+change gets her residual reliably under his speech; the numbers are in
+[BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
+
