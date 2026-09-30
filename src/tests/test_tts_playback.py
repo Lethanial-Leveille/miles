@@ -104,3 +104,76 @@ def test_resending_can_be_turned_off(monkeypatch):
     monkeypatch.setattr(tts, "TTS_HEDGE_AFTER_MS", None)
     audio, _ = _play(tts.Synthesis("Hello."))
     assert (audio, len(calls)) == (b"only", 1)
+
+
+class _FakeAplay:
+    """aplay, draining for `drain_s` after stdin closes unless killed."""
+
+    def __init__(self, drain_s):
+        self.written = []
+        self.killed = False
+        self._drain_s = drain_s
+        self._closed_at = None
+        self.stdin = SimpleNamespace(write=self.written.append, flush=lambda: None,
+                                     close=self._close)
+
+    def _close(self):
+        self._closed_at = time.monotonic()
+
+    def poll(self):
+        if self.killed:
+            return -9
+        if self._closed_at and time.monotonic() - self._closed_at >= self._drain_s:
+            return 0
+        return None
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self):
+        while self.poll() is None:
+            time.sleep(0.005)
+
+
+def _synthesis(chunks, on_chunk=None):
+    def gen():
+        for i, c in enumerate(chunks):
+            if on_chunk:
+                on_chunk(i)
+            yield c
+    return SimpleNamespace(chunks=gen, requested_at=time.monotonic(), error=None)
+
+
+def _barge_in_setup(monkeypatch, drain_s):
+    fake = _FakeAplay(drain_s)
+    monkeypatch.setattr(tts, "_open_aplay", lambda: fake)
+    monkeypatch.setattr(tts.timing, "note_tts", lambda *a: None)
+    return fake
+
+
+def test_a_wake_word_mid_sentence_stops_the_writing(monkeypatch):
+    fake = _barge_in_setup(monkeypatch, drain_s=5.0)
+    interrupt = threading.Event()
+    synthesis = _synthesis([b"a", b"b", b"c", b"d"],
+                           on_chunk=lambda i: i == 2 and interrupt.set())
+    tts.play(synthesis, interrupt=interrupt)
+    assert fake.written == [b"a", b"b"]
+    assert fake.killed
+
+
+def test_a_wake_word_while_the_speaker_drains_cuts_her_off(monkeypatch):
+    """The case the single check missed: everything written, audio still playing."""
+    fake = _barge_in_setup(monkeypatch, drain_s=5.0)
+    interrupt = threading.Event()
+    threading.Timer(0.1, interrupt.set).start()
+    started = time.monotonic()
+    tts.play(_synthesis([b"a", b"b"]), interrupt=interrupt)
+    assert fake.killed
+    assert time.monotonic() - started < 1.0
+
+
+def test_no_wake_word_plays_to_the_end(monkeypatch):
+    fake = _barge_in_setup(monkeypatch, drain_s=0.1)
+    tts.play(_synthesis([b"a", b"b"]), interrupt=threading.Event())
+    assert fake.written == [b"a", b"b"]
+    assert not fake.killed
