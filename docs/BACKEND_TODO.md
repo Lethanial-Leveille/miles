@@ -590,6 +590,28 @@ because nobody reread it against `stream_router.py`.
 
 ## Not blocked, and worth doing anytime
 
+### A log of her own gaps, for him to review (asked Sep 30 2026)
+
+He wants her to see what she could be better at. She cannot change her code and
+should not, but she can record where she fell short, so improvements come from
+evidence instead of memory. The same shape as `label_wake.py` for wake misses:
+she collects, he reviews.
+
+What to record, each with the turn's message and her reply:
+- **She said she can't.** A reply declining for want of a tool or access ("I
+  can't check that"), which is a feature request in his own words.
+- **A tool failed.** Already in `log_tool_call`; surface the failures, do not
+  duplicate them.
+- **He corrected her.** A supersede by voice, or "no, that's wrong", right after
+  her reply.
+- **She guessed where code should decide.** Today's example: `remember` called
+  `asked` when he asked nothing. Anything the executor overrides gets logged.
+
+Detection in code, not by asking her to notice herself: a model judging its own
+turn is the self report this repo keeps measuring as unreliable. A review script,
+`scripts/gaps.py`, lists them newest first and marks each done or ignored.
+Nothing here touches the reply path; it runs after the turn like the memory pass.
+
 ### Deepgram as the online path (BUILT Sep 25 2026)
 
 Live in `src/deepgram_stt.py`; the mechanism is in
