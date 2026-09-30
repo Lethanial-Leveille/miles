@@ -499,13 +499,27 @@ array to be free before the next sentence opens it; the watcher logs its peak
 and level per sentence and keeps what it heard in `build/barge_in_*.wav`.
 
 **Next, in order of payoff:**
-1. **The wake model, not the audio.** Deepgram heard the wake the model scored
-   0.00. `hey_nova.onnx` predates this room and this mic (INCIDENTS.md, Sep 8
-   2026). Retrain with his array wake hits plus wakes spoken over her playback,
-   which `build/barge_in_*.wav` can now collect.
-2. The three second reference lag above.
-3. Speakers on the array's jack, the one device setup the chip is designed for,
-   only if 1 and 2 fail, since its 16kHz playback sounded degraded.
+1. **Fix the three second reference lag above.** Everything below except the
+   retrain depends on the reference running for the whole reply.
+2. **Any speech on channel 0 interrupts her, not the wake word.** With the
+   reference running at `PP_DTSENSITIVE` 0, channel 0 held her at minus 63 to
+   minus 72 dBFS (silence) and rose to minus 28 to minus 40 when he spoke, about
+   25dB. His words were chopped ("Hello?"), which defeats a wake model and does
+   not matter to a speech detector. So the watcher reads channel 0 and fires on
+   webrtcvad speech sustained for a few frames, instead of on `hey_nova.onnx`.
+   This is the barge in AEC exists for: "wait" or "stop" works, not only the
+   wake word. Keep `PP_DTSENSITIVE` at 0: at 15 her first sentence leaked
+   before the canceller adapted, and chopping is harmless here. Risks: anyone
+   else talking, or a TV, also stops her (later, gate on `DOA_VALUE` toward
+   where he sits); and it is inferred from recordings, never tried live.
+   Measure before building on it: onset level and duration of his speech on
+   channel 0 against her residual, over several replies.
+3. **Retrain the wake model.** Deepgram heard the wake the model scored 0.00.
+   `hey_nova.onnx` predates this room and this mic (INCIDENTS.md, Sep 8 2026).
+   Retrain with his array wake hits plus wakes spoken over her playback, which
+   `build/barge_in_*.wav` can now collect. Worth doing regardless of barge in.
+4. Speakers on the array's jack, the one device setup the chip is designed for,
+   only if the above fail, since its 16kHz playback sounded degraded.
 
 ### 9. What the array still needs (Sep 30 2026)
 

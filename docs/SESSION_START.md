@@ -1506,6 +1506,6 @@ barge in on any speech becomes worth the voice quality. Numbers in
 Tried on both channels, with and without an echo reference, at two double talk
 settings, and finally through the production path with a fixed clip: a wake
 Deepgram transcribed clearly scored 0.00. Off rather than left on and unproven,
-with the fixes kept. Reopen with a retrained wake model first, not more echo
-tuning; the evidence is in
+with the fixes kept. Reopen with speech detection on channel 0 first, the route
+the recordings support, then a retrained wake model; the evidence is in
 [BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
