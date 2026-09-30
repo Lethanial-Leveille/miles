@@ -203,19 +203,29 @@ def test_clock_reads_at_execution_not_classification(confident):
 
 @pytest.mark.parametrize("minute,expected", [
     (0,  "It's four o'clock."),
+    (1,  "It's four oh one."),
     (5,  "It's four oh five."),
+    (13, "It's four thirteen."),
     (15, "It's four fifteen."),
+    (27, "It's four twenty seven."),
     (55, "It's four fifty five."),
 ])
 def test_clock_phrasing(minute, expected):
     assert phrasebank.time_text(4, minute) == expected
 
 
-def test_clock_rounds_to_nearest_five_and_rolls_the_hour():
+def test_clock_reads_the_exact_minute():
+    """Rounding said "two twenty five" at 2:27. The minute is never moved."""
     from datetime import datetime
-    assert phrasebank.time_key_for(datetime(2026, 8, 12, 16, 17)) == "time_4_15"
-    assert phrasebank.time_key_for(datetime(2026, 8, 12, 16, 58)) == "time_5_0"
-    assert phrasebank.time_key_for(datetime(2026, 8, 12,  0, 3))  == "time_12_5"
+    assert phrasebank.time_key_for(datetime(2026, 8, 12, 14, 27)) == "time_2_27"
+    assert phrasebank.time_key_for(datetime(2026, 8, 12, 14, 25)) == "time_2_25"
+    assert phrasebank.time_key_for(datetime(2026, 8, 12, 16, 58)) == "time_4_58"
+    assert phrasebank.time_key_for(datetime(2026, 8, 12,  0, 3))  == "time_12_3"
+    assert phrasebank.time_key_for(datetime(2026, 8, 12, 12, 0))  == "time_12_0"
+
+
+def test_every_minute_has_a_clock_reading():
+    assert len(phrasebank.TIME_VALUES) == 720
 
 
 def test_cancel_fires_when_exactly_one_reminder_is_outstanding(confident, monkeypatch):
