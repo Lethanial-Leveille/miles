@@ -278,8 +278,8 @@ def test_a_heavy_single_does_not_count_against_the_top():
     ("Romanian Deadlift (Barbell)", "Go up to 305 pounds"),
     ("Incline Bench Press (Dumbbell)", "Go up to 300 pounds"),
     ("Pull Up (Weighted)", "Go up to 300 pounds added"),
-    ("Leg Extension (Machine)", "Go up to the next pin"),
-    ("Face Pull", "Go up to the next pin"),
+    ("Leg Extension (Machine)", "Go up to 305 pounds, or the nearest pin, and start"),
+    ("Face Pull", "Go up to 305 pounds, or the nearest pin, and start"),
 ])
 def test_the_jump_he_agreed_to(title, expected):
     kg295 = 133.8097
@@ -304,3 +304,26 @@ def test_warm_ups_in_the_routine_do_not_count_as_working_sets():
     planned = [_set(weight_kg=LB155, reps=5, type="warmup")] + _ranged(2, 5, 8, LB185)
     last = [_set(weight_kg=LB185, reps=8) for _ in range(2)]
     assert hevy_tools.target(last, "Squat (Barbell)", planned).startswith("Go up to 195")
+
+
+def test_the_jump_is_data_as_well_as_words():
+    """hevy_progress reads earned_jump; Nova reads target. Same decision."""
+    last = [_set(weight_kg=LB185, reps=6) for _ in range(3)]
+    assert hevy_tools.earned_jump(last, "Bench Press (Barbell)", _ranged(3, 4, 6, LB185)) == (185, 190)
+    short = [_set(weight_kg=LB185, reps=r) for r in (6, 6, 5)]
+    assert hevy_tools.earned_jump(short, "Bench Press (Barbell)", _ranged(3, 4, 6, LB185)) is None
+
+
+def test_bodyweight_and_unranged_lifts_have_no_jump():
+    assert hevy_tools.earned_jump([_set(reps=10)] * 3, "Straight Bar Dip", _ranged(3, 6, 10)) is None
+    assert hevy_tools.earned_jump([_set(weight_kg=LB185, reps=6)], "Bench Press (Barbell)",
+                                  [_set(weight_kg=LB185, reps=6)]) is None
+
+
+def test_a_plan_says_when_the_routine_was_raised():
+    workouts = [_bench("2026-09-22T21:59:16+00:00", 6, 6, 6)]
+    raised = {"2026-09-22T21:59:16+00:00": {"Bench Press (Barbell)": (185, 190)}}
+    plan = hevy_tools.plan_session(ROUTINE, hevy_tools.lift_sessions(workouts), TODAY, EASTERN,
+                                   raised_after=lambda start: raised.get(start, {}))
+    assert plan["lifts"][0]["raised_in_routine_after_last_time"] == "185 to 190 pounds"
+    assert "raised_in_routine_after_last_time" not in plan["lifts"][1]

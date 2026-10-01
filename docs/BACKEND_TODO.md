@@ -1090,7 +1090,18 @@ the ramp sets marked as warm ups; the old sessions logged them as working sets.
 Hevy's API differs from its own spec in two places: creating a custom
 exercise returns the id as plain text, not JSON, and a routine set rejects
 `rep_range: null`, so leave the key out. Next: MILES routine edits from the
-app chat, for ongoing tweaks, read back before sending. Hevy replaces a routine whole on update and has no undo, so an edit
+app chat, for ongoing tweaks, read back before sending.
+
+*Automatic progression, Oct 1 2026* (`src/hevy_progress.py`, `miles-hevy.timer`):
+he asked not to have to think about adding weight. Every fifteen minutes,
+workouts from a routine finished in the last three days and not yet judged
+(`hevy_progressions`, migration 30) are judged with the same `earned_jump` the
+session plan speaks from, and an earned lift's working sets are raised in the
+routine, backed up first. It only raises. Machines and cables now go up 10 lb
+("or the nearest pin"); he picks the closest and the log keeps what he used.
+He keeps the routine as is at Hevy's end of workout prompt, since "update"
+copies an off day's lighter weights and nothing raises them back. First live
+raise: Lower Strength leg extension 150 to 160 after 15, 15. Hevy replaces a routine whole on update and has no undo, so an edit
 must keep the old routine locally first, and an exercise name has to resolve
 to one of 451 templates, so a change is read back before it is sent. He builds
 and edits routines in the app, not by voice. Logging workouts by voice is not

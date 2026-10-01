@@ -115,6 +115,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── calendar_tools.py      # Google Calendar reads, freebusy, changes with undo, app view
 │   ├── oura_tools.py          # Oura readiness, sleep, heart rate, activity
 │   ├── hevy_tools.py          # Hevy workouts, lift history, routines, session targets; read only
+│   ├── hevy_progress.py       # raises a routine's weight when a workout earned it, on a timer
 │   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
@@ -124,7 +125,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1238 passing, 6 skipped, Sep 30 2026)
+│   └── tests/                 # pytest suite (1247 passing, 6 skipped, Oct 1 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -149,6 +150,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── label_wake.py          # label wake hits and misses by ear, worst first
 │   ├── label_spoken.py        # listen to Nova's replies on the laptop, mark what sounded off
 │   ├── healthcheck.py         # what broke, on a timer, not by trying to use it
+│   ├── hevy_progress.py       # runs src/hevy_progress.py, from miles-hevy.timer
 │   ├── radar.py               # read and tune the presence radar over its UART
 │   ├── wifi_watchdog.sh       # brings wlan0 back, on a timer, when it drops
 │   ├── google_auth.py         # one time Google OAuth, writes data/token.json
@@ -368,7 +370,7 @@ STT: Deepgram Nova 3 online, falling back to whisper.cpp (base.en, beam search a
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: SpeechBrain ECAPA (192 dim cosine similarity); an unverified voice is a guest.
-Memory: SQLite WAL mode, schema migrations to version 29.
+Memory: SQLite WAL mode, schema migrations to version 30.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.
@@ -427,6 +429,9 @@ Landed since v0.7.1, unreleased:
   last done, all converted back to the pounds he logged; a session plan per
   routine that says whether to add a rep or add weight, from the rep ranges
   on his Hevy routines, and flags a stall
+- Automatic progression: `miles-hevy.timer` raises a lift's weight in the Hevy
+  routine once a workout earns it (10 lb squat and deadlift families and
+  machines, 5 lb otherwise), and the session plan says what moved
 
 ## What Is Next
 

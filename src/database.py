@@ -688,6 +688,31 @@ def _migration_029_presence_energy(conn):
     """)
 
 
+def _migration_030_hevy_progressions(conn):
+    """What hevy_progress.py raised in his routines, and which workouts it has
+    already looked at.
+
+    One row per lift raised. A workout that earned nothing still gets one row
+    with exercise NULL, so it is marked as seen and never judged twice: judging
+    it again after the routine was raised would compare the old session to the
+    new weight. workout_start is kept so a session plan can say which raise
+    followed which session."""
+    conn.execute("""
+        CREATE TABLE hevy_progressions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            processed_at TEXT NOT NULL,
+            workout_id TEXT NOT NULL,
+            workout_start TEXT NOT NULL,
+            routine_id TEXT NOT NULL,
+            routine_title TEXT NOT NULL,
+            exercise TEXT,
+            from_lb REAL,
+            to_lb REAL
+        )
+    """)
+    conn.execute("CREATE INDEX idx_hevy_progressions_workout ON hevy_progressions (workout_id)")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -718,6 +743,7 @@ MIGRATIONS = [
     (27, _migration_027_presence_log),
     (28, _migration_028_memory_pair_dismissals),
     (29, _migration_029_presence_energy),
+    (30, _migration_030_hevy_progressions),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -1619,6 +1645,37 @@ def get_recent_messages(limit=20):
     conn.close()
     rows.reverse()
     return [{"role": role, "content": content} for role, content in rows]
+
+
+def hevy_workouts_seen():
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute("SELECT DISTINCT workout_id FROM hevy_progressions").fetchall()
+    conn.close()
+    return {row[0] for row in rows}
+
+
+def record_hevy_progression(workout, routine, raises):
+    """raises is [(exercise, from_lb, to_lb)]; empty still marks the workout seen."""
+    now = datetime.now().isoformat()
+    rows = [(now, workout["id"], workout["start_time"], routine["id"], routine["title"], *r)
+            for r in raises] or [(now, workout["id"], workout["start_time"], routine["id"],
+                                  routine["title"], None, None, None)]
+    conn = sqlite3.connect(DB_PATH)
+    conn.executemany(
+        "INSERT INTO hevy_progressions (processed_at, workout_id, workout_start, routine_id,"
+        " routine_title, exercise, from_lb, to_lb) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+
+
+def hevy_raises_after(workout_start):
+    """{exercise: (from_lb, to_lb)} raised because of the session that started then."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT exercise, from_lb, to_lb FROM hevy_progressions"
+        " WHERE workout_start = ? AND exercise IS NOT NULL", (workout_start,)).fetchall()
+    conn.close()
+    return {exercise: (from_lb, to_lb) for exercise, from_lb, to_lb in rows}
 
 
 def last_reply_at():
