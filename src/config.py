@@ -164,16 +164,21 @@ BARGE_IN_THRESHOLD = 0.30
 # stops. Its own switch, so the wake word keeps working with this off. Decided by
 # interrupt_speech.py, on BARGE_IN_CHANNEL, beside the wake model.
 #
-# Replayed Oct 1 2026 on wake_eval session 20261001T114604 (him saying "hey nova"
-# over her, her on the array's jack): at -40 dBFS RMS for 300ms it caught him 29
-# of 29 with no stop in 231s of her alone, whose longest qualifying run was 180ms.
-# At -35 it caught 24; at 400ms, 20, because his phrase only just clears 300ms.
 # Anyone's speech stops her, a TV's included; whose it was is decided afterward
 # on the whole interruption. The floor is the knob for a busy room: raising it
-# keeps only nearer, louder voices. Retune from live misses, not from this
-# session alone.
+# keeps only nearer, louder voices.
+#
+# -37, from three sessions replayed through this code on Oct 1 2026: him saying
+# "hey nova" over her from three spots (wake_eval 20261001T114604), claps over
+# her (barge_in_eval 20261001T134904), and her alone while people talked outside
+# the room (20261001T141710_silence). At -40 he was caught 29 of 29, but one
+# clap, one burst of her own echo and 7 outside voices stopped her too. At -37:
+# 29 of 29, and none of the rest. The margin is about 1dB each way: -38 let 3
+# outside voices through, -36 lost one take from his farthest spot, -35 lost 6.
+# Requiring 360ms instead lost him before it lost the outside voices. Retune
+# from data/barge_in_stops, not from these sessions alone.
 BARGE_IN_SPEECH = True
-BARGE_IN_SPEECH_FLOOR = -40.0
+BARGE_IN_SPEECH_FLOOR = -37.0
 BARGE_IN_SPEECH_MS = 300
 
 # The audio behind every barge in stop, wake or speech, so each one can be heard:
