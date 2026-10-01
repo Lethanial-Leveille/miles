@@ -126,10 +126,12 @@ VOICEPRINT_SAMPLE_CAP = 60
 # and a second reader on that stream is the kind of bug that shows up as
 # occasional silence rather than an exception. Turn it on deliberately and
 # watch it.
-# Off again Sep 30 2026 after a day of testing on the array: "hey nova" said
-# over her never woke the watcher in production. What was tried and measured is
-# in BACKEND_TODO.md, Barge in on the array.
-BARGE_IN = False
+# Off Sep 30 2026, when "hey nova" over her never woke the watcher: her echo
+# crossed two USB clocks and the canceller could not lock. On Oct 1 2026, with her
+# playing from the array's own jack, the wake model heard him over her 27 of 29
+# times on BARGE_IN_CHANNEL. What was tried and measured is in BACKEND_TODO.md,
+# Barge in on the array.
+BARGE_IN = True
 
 # Which of the array's two channels barge in listens on, while she plays.
 # Sep 30 2026, "hey nova" said over her: channel 0, the processed output, chopped

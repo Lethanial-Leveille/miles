@@ -646,7 +646,17 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
    was never deaf over her; the canceller was not cancelling.** Channel 1 is
    still the recognition beam on 2.1.1. Channel 0 stays deaf over her (double
    talk suppression), so barge in listens on channel 1, as `BARGE_IN_CHANNEL`
-   already says. Next: `BARGE_IN` on, and tried live.
+   already says.
+
+   **`BARGE_IN` on, Oct 1 2026 12:06.** First live use: two interrupts, both
+   stopped her (1.0s and 1.2s into a piece); a reply left alone played to the
+   end, watcher peak 0.00 throughout. **The logged peak on a HEARD line is not a
+   margin.** The watcher stops at the first frame over `BARGE_IN_THRESHOLD`, so
+   the peak is wherever the score was when it crossed (0.31, 0.40), not how high
+   it would have gone; the evaluation, which runs on, has a median of 0.99. The
+   watcher's fresh model per piece costs a little: the 0.40 frame scored 0.49
+   with the model warmed on the 8.9s before it. Worth keeping one warm watcher
+   only if live misses show up.
 4. ~~Speech detection on channel 0, `PP_DTSENSITIVE`, or a retrain~~: not
    needed, the wake word on channel 1 is enough (step 3).
 5. A stop button: on 2.1.1, `MUTE_FUNCTION_ENABLE` 0 frees the mute button and
