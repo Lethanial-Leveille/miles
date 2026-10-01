@@ -72,6 +72,7 @@ with silence_stderr():
 import speaker_encoder
 import early_verify
 import verification
+import endpoint
 from verification import (VERIFIED, REJECTED, NO_AUDIO, RETRY,
                           MIN_EMBED_SECONDS, MIN_TRUSTWORTHY_SECONDS)
 
@@ -81,7 +82,7 @@ from config import (
     TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
     BARGE_IN_CHANNEL,
-    VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
+    VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, COMMAND_ONSET_S, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL, MIC_NAME_HINT,
     MIC_CAPTURE_CHANNELS, MIC_CHANNEL, MIC_CAPTURE_RATE,
     capsule_name, SPEAKER_ENCODER,
@@ -253,10 +254,12 @@ def record_command(on_wake=None):
     silent_chunks   = 0
     longest_pause   = 0
     chunks_for_silence = int(SILENCE_LIMIT / 0.03)
+    chunks_for_onset   = int(COMMAND_ONSET_S / 0.03)
     max_chunks      = int(MAX_RECORD / 0.03)
     min_chunks      = int(MIN_RECORD / 0.03)
     total_chunks    = 0
     last_speech_at  = None
+    heard_speech    = False
 
     cancel_speculation()
     spec_chunks = int(SPECULATIVE_SILENCE_MS / 30.0)
@@ -278,6 +281,8 @@ def record_command(on_wake=None):
             cancel_speculation()
             frames, total_chunks, silent_chunks, longest_pause = [], 0, 0, 0
             last_speech_at = time.monotonic()
+            # The command starts after this wake, so it gets the onset wait too.
+            heard_speech = False
             continue
 
         # Endpoint on speech absence rather than quiet. Room noise loud enough
@@ -291,6 +296,7 @@ def record_command(on_wake=None):
             longest_pause = max(longest_pause, silent_chunks)
             silent_chunks = 0
             last_speech_at = time.monotonic()
+            heard_speech = True
 
             # He spoke through the pause, so anything started on it covers only
             # part of the turn. Discard and let the next pause try again.
@@ -307,7 +313,9 @@ def record_command(on_wake=None):
             maybe_speculate(frames, silent_chunks, spec_chunks,
                             total_chunks > min_chunks, turn_type='initial')
 
-        if total_chunks > min_chunks and silent_chunks >= chunks_for_silence:
+        if endpoint.recording_done(total_chunks, min_chunks, silent_chunks,
+                                   heard_speech, chunks_for_silence,
+                                   chunks_for_onset):
             break
 
     timing.mark('max_pause_ms', longest_pause * 30.0)

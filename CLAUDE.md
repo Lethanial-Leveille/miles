@@ -98,6 +98,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── ld2410.py              # the presence radar's report frames, decoded from its serial stream
 │   ├── presence.py            # reads the radar on a thread, logs present/absent/silent changes
 │   ├── wake_gate.py           # drops a wake that arrived too quiet to be him
+│   ├── endpoint.py            # when a command recording is finished: the stop decision alone
 │   ├── wake_capture.py        # what to evict when a capture directory is full
 │   ├── speaker_encoder.py     # Encoder abstraction behind verify_voice
 │   ├── early_verify.py        # voice embedding started beside the speculative transcript
@@ -129,7 +130,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1249 passing, 6 skipped, Oct 1 2026)
+│   └── tests/                 # pytest suite (1254 passing, 6 skipped, Oct 1 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -216,7 +217,9 @@ of the value itself.
   was 0.5. Below it a voice is answered as a guest, not refused)
 - `VAD_MODE = 2` (webrtcvad)
 - `VAD_PREROLL_MS = 300`, `VAD_ONSET_FRAMES = 2`
-- `SILENCE_LIMIT = 1.2`
+- `SILENCE_LIMIT = 1.2` (after he has spoken; `endpoint.py`)
+- `COMMAND_ONSET_S = 3.0` (how long a command waits for him to start; was
+  SILENCE_LIMIT until Oct 1 2026, and a pause after the chime lost the question)
 - `MAX_RECORD = 30.0`
 - `TTS_FLUSH_MARGIN_MS = 250`
 - `EXPECTED_MIC_GAIN = 60` (the array's `Headset` capture control, at its maximum;
