@@ -205,6 +205,12 @@ VAD_ONSET_FRAMES = 2
 # hidden it goes back to costing full price.
 SILENCE_LIMIT = 1.2
 
+# How long a command recording waits for him to start, before any speech. Not
+# SILENCE_LIMIT, which is for knowing he has finished: a pause after the chime is
+# not the end of a question he has not asked yet. The same as FOLLOWUP_TIMEOUT,
+# the wait for a follow up. See endpoint.py.
+COMMAND_ONSET_S = 3.0
+
 # Hard ceiling on one recording.
 #
 # 30 since the night of Sep 13 2026. It was 18, just under Whisper's twenty
