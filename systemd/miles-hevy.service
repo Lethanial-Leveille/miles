@@ -1,0 +1,15 @@
+[Unit]
+Description=M.I.L.E.S. Hevy progression: raise the weights a workout earned
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=theycallmelee
+WorkingDirectory=/home/theycallmelee/miles
+# HEVY_API_KEY lives in .env.
+EnvironmentFile=/home/theycallmelee/miles/.env
+ExecStart=/usr/bin/python3 /home/theycallmelee/miles/scripts/hevy_progress.py
+
+# No Restart. A failed run leaves its workout unjudged, so the next timer fire
+# simply tries it again inside the three day window.

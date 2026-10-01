@@ -1,0 +1,15 @@
+[Unit]
+Description=Raise Hevy routine weights every 15 minutes, after a workout earns it
+
+[Timer]
+# Hevy's own end of workout prompt can rewrite the routine in the seconds after
+# he finishes; fifteen minutes is long after that and long before the next
+# session, so the raise lands on the routine he will actually open.
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=30s
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

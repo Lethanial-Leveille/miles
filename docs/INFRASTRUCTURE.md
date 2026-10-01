@@ -52,6 +52,9 @@ Timer driven, not long running:
 
 - `miles-health.timer` runs scripts/healthcheck.py every fifteen minutes
 - `miles-wifi.timer` runs scripts/wifi_watchdog.sh every two minutes
+- `miles-hevy.timer` runs scripts/hevy_progress.py every fifteen minutes: a
+  workout from a routine that earned a jump raises that lift's weight in the
+  routine (src/hevy_progress.py). Needs HEVY_API_KEY from .env
 
 `miles-wifi` checks whether wlan0 has a carrier and a global scope IPv4
 address, and runs `nmcli connection up Alsander` when either is missing. It

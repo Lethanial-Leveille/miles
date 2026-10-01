@@ -28,6 +28,7 @@ import re
 import requests
 
 import config  # noqa: F401  loads .env, which holds HEVY_API_KEY
+from database import hevy_raises_after
 from tools import Permission, tool
 
 _API = "https://api.hevyapp.com/v1"
@@ -283,12 +284,16 @@ _TEN_POUND_LIFTS = {"Squat (Barbell)", "Front Squat", "Deadlift (Barbell)",
                     "Romanian Deadlift (Barbell)"}
 
 
+def _on_a_stack(exercise_title):
+    return "(Machine)" in exercise_title or "Cable" in exercise_title or exercise_title == "Face Pull"
+
+
 def _increment(exercise_title):
-    """Pounds to add, or None for "the next pin"."""
-    if exercise_title in _TEN_POUND_LIFTS:
+    """Pounds to add. Machines and cables go up ten, his choice on Oct 1 2026:
+    every stack is different, so he takes the nearest pin and the log keeps
+    what he actually used."""
+    if exercise_title in _TEN_POUND_LIFTS or _on_a_stack(exercise_title):
         return 10
-    if "(Machine)" in exercise_title or "Cable" in exercise_title or exercise_title == "Face Pull":
-        return None
     return 5
 
 
@@ -303,6 +308,27 @@ def _planned(routine_sets):
     ranged = next((s["rep_range"] for s in working
                    if (s.get("rep_range") or {}).get("start") and s["rep_range"].get("end")), None)
     return len(working), ranged
+
+
+def _earned(last_sets, weight, count, high):
+    """Every working set at the working weight reached the top of the range,
+    and there were at least as many as the routine plans."""
+    at_weight = [s for s in last_sets if (s.get("weight_kg") or 0) == weight and s.get("reps")]
+    return len(at_weight) >= max(count, 1) and all(s["reps"] >= high for s in at_weight)
+
+
+def earned_jump(last_sets, exercise_title, routine_sets=()):
+    """(from, to) in pounds when the last session earned more weight, else None.
+
+    The one decision the spoken target and the automatic raise in
+    hevy_progress.py both read, so what Nova says and what the routine holds
+    cannot disagree. Bodyweight lifts have nothing to raise and return None."""
+    count, rep_range = _planned(routine_sets)
+    weight = working_weight(last_sets)
+    lb = pounds(weight)
+    if not rep_range or not lb or not _earned(last_sets, weight, count, rep_range["end"]):
+        return None
+    return lb, lb + _increment(exercise_title)
 
 
 def target(last_sets, exercise_title, routine_sets=()):
@@ -328,16 +354,16 @@ def target(last_sets, exercise_title, routine_sets=()):
         return "Add one rep to any set"
 
     low, high = rep_range["start"], rep_range["end"]
-    at_weight = [s for s in last_sets if (s.get("weight_kg") or 0) == weight and s.get("reps")]
-    earned = len(at_weight) >= max(count, 1) and all(s["reps"] >= high for s in at_weight)
 
     if not lb:
-        if earned:
+        if _earned(last_sets, weight, count, high):
             return f"Every set hit {high} last time: make it harder, with added weight or a harder version"
         return f"Add one rep to any set; when every set hits {high}, make it harder"
-    if earned:
-        step = _increment(exercise_title)
-        up = _load_words(lb + step, exercise_title) if step else "the next pin"
+    jump = earned_jump(last_sets, exercise_title, routine_sets)
+    if jump:
+        up = _load_words(jump[1], exercise_title)
+        if _on_a_stack(exercise_title):
+            up += ", or the nearest pin,"
         return f"Go up to {up} and start at {low} reps"
     return f"Stay at {_load_words(lb, exercise_title)} and add one rep to any set; go up when every set hits {high}"
 
@@ -359,7 +385,7 @@ def lift_sessions(workouts):
     return by_lift
 
 
-def plan_session(routine, sessions_by_lift, today, tz=None):
+def plan_session(routine, sessions_by_lift, today, tz=None, raised_after=lambda start: {}):
     """Each lift in the routine: what he did last time, what to aim for, and
     whether it has stalled. The target reads the routine's rep range, so it
     can say when to add weight.
@@ -382,6 +408,11 @@ def plan_session(routine, sessions_by_lift, today, tz=None):
         entry["last_time"] = {**_when(last["start_time"], today, tz),
                               "sets": [set_words(s, title) for s in last["sets"]]}
         entry["target"] = target(last["sets"], title, e.get("sets", []))
+        # Said so she can tell him the routine moved, rather than him finding a
+        # new number at the gym; hevy_progress.py does the raising.
+        raised = raised_after(last["start_time"]).get(title)
+        if raised:
+            entry["raised_in_routine_after_last_time"] = f"{raised[0]:g} to {raised[1]:g} pounds"
         if len(past) >= 3:
             s0, s1, s2 = (_session_score(p["sets"]) for p in past[:3])
             entry["stalled"] = s0 <= s1 and s1 <= s2
@@ -529,4 +560,5 @@ def get_session_plan(routine):
         return f"Several routines match {routine}: {', '.join(matches)}. Ask which one."
 
     workouts = _all_pages("workouts", "workouts", _NAME_SEARCH_PAGES)
-    return plan_session(routines[matches[0]], lift_sessions(workouts), datetime.date.today())
+    return plan_session(routines[matches[0]], lift_sessions(workouts), datetime.date.today(),
+                        raised_after=hevy_raises_after)
