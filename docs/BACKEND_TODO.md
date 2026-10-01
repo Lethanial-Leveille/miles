@@ -531,22 +531,63 @@ alone read 98 degrees, steady. Talking over her, the reading left her direction
 on 16 percent of reads from his seat and 3 percent from another spot, against 4
 to 14 percent with nobody talking: it never heard him.
 
-**Next, in the order he chose:**
-1. **Retrain the wake model**, measured before it is trusted. First an
-   evaluation set: him saying "hey nova" over her playback at cues, both
-   channels recorded, plus her alone, which must never fire; score
-   `hey_nova.onnx` on it as the number to beat. Then label the array's wake
-   hits so normal wakes are in the set too. Train on synthetic "hey nova" mixed
-   over her replies as captured by the array; his real clips stay in the
-   evaluation set only. Train off the Pi: the negative set is gigabytes and the
-   SD card has stalled before.
-2. **Turn her volume down** and rerun the silent A/B above. Less drive means
-   less distortion and a smaller echo against him; the one physical change not
-   yet tried.
-3. A stop button: the array's mute button can be released to software with
-   `GPI_EVENT_CONFIG` 0 and read with `GPI_EVENT_PENDING`. Persisting that needs
-   `SAVE_CONFIGURATION`; ask first.
-4. Speakers on the array's jack stays last: the 16kHz playback sounded degraded.
+**The wake model over her, scored on a recorded set (Oct 1 2026).**
+`scripts/record_wake_eval.py` records him saying "hey nova" at cues over her
+replies (reference on), her alone, and quiet wakes, both channels, into
+`data/wake_eval/` (evaluation only, never trained on). Each take is labelled by
+his confirmation, not the cue. `hey_nova.onnx`, fed 80ms frames like the watcher:
+
+| Session | Speaker | Over her, heard (ch0, ch1) | Quiet room | Her alone, loud moments ch0 | Him over her vs her, ch0 |
+|---|---|---|---|---|---|
+| 003125 | 192 | 0 of 30, 0 of 30 | 9 of 9 | minus 10.6 dBFS | minus 0.9 dB |
+| 004958 | 108, mic moved | 2 of 30, 4 of 30 | 8 of 9 | minus 49.9 dBFS | plus 14.1 dB |
+| 010635 | 120 | 0 of 18, 1 of 18 | 6 of 6 | minus 16.2 dBFS | plus 3.8 dB |
+
+No false fires in any session. The model hears him in a quiet room and is deaf
+over her, on both channels, from every spot.
+
+**The 108 session was the canceller, not the volume.** Six silent runs
+alternating 108 and 120 the same night gave her loud moments at minus 16 to
+minus 17 dBFS and minus 13 to minus 14: the 3dB the volume step should give,
+steady. During session 004958 the canceller was about 30dB better than in any
+run before or after, with the same mic, code and volume, and nothing logged
+says why. **Every single run comparison is suspect until that swing is
+explained**, including the volume conclusion first drawn from it. The chip's AGC
+gain drifts too (44 in the afternoon, 54 to 62 across the six runs), which is a
+few dB, not thirty.
+
+**Even in the good session he was missed.** Plus 9 to 14dB over her, and still
+2 to 4 of 30. On channel 0 his phrase over her carried about 10dB less of its
+energy between 1.5 and 3 kHz than in the quiet room, consistent with double talk
+suppression by frequency (`PP_FMIN_SPEINDEX`); channel 1 showed no such loss and
+missed as often, so that is a lead, not the explanation.
+
+**Whisper is no detector of "hey nova".** On the quiet takes, which the wake
+model scores 0.9, `base.en` writes "Ain't over", "Game over". A keyword search of
+its transcripts as evidence of absence was wrong and is retracted; what it does
+show is whose voice dominates a window (her sentences at 192, his fragments in
+the good session).
+
+**Speaker volume is 120 of 255** (was 192), saved with `alsactl store`. Kept for
+everyday use; he chose it by ear. **The array's own playback volume, through
+which the echo reference reaches the canceller, is 40 of 60, minus 20 dB**, and
+the reference measured 12dB under her echo at the canceller's input. Unexamined.
+
+**Next, in order:**
+1. **Find what puts the canceller in its good state.** Automated, no one
+   talking: many silent runs, logging `AEC_AECCONVERGED`, `PP_AGCGAIN` and the
+   residual, with AGC off (`PP_AGCONOFF` 0, not saved) so levels are real, and
+   runs right after a miles-voice restart against later ones. Then the
+   reference level: the array's `PCM` playback at 40 against 60, and
+   `AEC_FAR_EXTGAIN`. Nothing that changes the chip is saved without asking.
+2. **Only once runs repeat:** `PP_DTSENSITIVE` 15 against 0 with
+   `record_wake_eval.py --takes 3`, several sessions each.
+3. **Retrain the wake model** on what the chip makes of him over her, on Colab:
+   the negative feature set is 17.3GB, more than the Mac has free.
+4. A stop button: the array's mute button released to software with
+   `GPI_EVENT_CONFIG` 0, read with `GPI_EVENT_PENDING`; persisting it needs
+   `SAVE_CONFIGURATION`, ask first.
+5. Speakers on the array's jack stays last: the 16kHz playback sounded degraded.
 
 ### 9. What the array still needs (Sep 30 2026)
 

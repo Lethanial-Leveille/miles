@@ -48,7 +48,8 @@ by name in PyAudio rather than hardcoded to a card number, since ALSA card
 numbers shift on reboot. It does beamforming, noise suppression and AGC on chip
 and hands over two channels; the pipeline keeps channel 0. Amazon Basics USB speakers
 via QianLink USB to 3.5mm adapter, also resolved by name at runtime in `tts.py`
-using `SPEAKER_NAME_HINT` rather than a fixed device string. An LD2410C mmWave
+using `SPEAKER_NAME_HINT` rather than a fixed device string. Its `PCM` volume is
+120 of 255, saved with `alsactl store` (lowered from 192 on Oct 1 2026 for barge in). An LD2410C mmWave
 presence radar on the GPIO UART (`dtparam=uart0=on`, `/dev/ttyAMA0`); wiring and
 tuning in [BACKEND_TODO.md](docs/BACKEND_TODO.md#presence-detection). Development machine
 is a MacBook connected via VS Code Remote SSH at theycallmelee@miles.local, local
