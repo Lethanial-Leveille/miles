@@ -47,10 +47,12 @@ USB 4 mic array (since Sep 30 2026, firmware 2.1.1_48k2ch since Oct 1; the
 Razer Seiren V3 Mini before it, unplugged Oct 1), found
 by name in PyAudio rather than hardcoded to a card number, since ALSA card
 numbers shift on reboot. It does beamforming, noise suppression and AGC on chip
-and hands over two channels; the pipeline keeps channel 0. Amazon Basics USB speakers
-via QianLink USB to 3.5mm adapter, also resolved by name at runtime in `tts.py`
-using `SPEAKER_NAME_HINT` rather than a fixed device string. Its `PCM` volume is
-120 of 255, saved with `alsactl store` (lowered from 192 on Oct 1 2026 for barge in). An LD2410C mmWave
+and hands over two channels; the pipeline keeps channel 0. Amazon Basics speakers
+plug into the array's own 3.5mm jack (since Oct 1 2026; the QianLink AB13X USB
+adapter before it), so the echo canceller hears her on the array's own clock.
+Resolved by name at runtime in `tts.py` using `SPEAKER_NAME_HINT`. The array's
+`PCM` playback is 54 of 60 (minus 6dB, against distortion on her loudest
+syllables), saved with `alsactl store`; loudness comes from the speakers' knob. An LD2410C mmWave
 presence radar on the GPIO UART (`dtparam=uart0=on`, `/dev/ttyAMA0`); wiring and
 tuning in [BACKEND_TODO.md](docs/BACKEND_TODO.md#presence-detection). Development machine
 is a MacBook connected via VS Code Remote SSH at theycallmelee@miles.local, local
@@ -127,7 +129,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1255 passing, 6 skipped, Oct 1 2026)
+│   └── tests/                 # pytest suite (1249 passing, 6 skipped, Oct 1 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -287,8 +289,6 @@ of the value itself.
 - `BARGE_IN = False`, `BARGE_IN_THRESHOLD = 0.30`, `BARGE_IN_CHANNEL = 1`
   (wake word only. Tried on the array Sep 30 2026 and off again: a clearly
   spoken wake over her scored 0.00. `play()` now stops mid sentence)
-- `AEC_REFERENCE = False` (her replies copied to the array's USB output as the
-  echo reference, speakers left on the AB13X; off with barge in)
 
 ### Model and prompt — why: [BRAIN.md](docs/BRAIN.md)
 - `MODEL_A = "claude-haiku-4-5"` — **this is the production model**
@@ -324,7 +324,8 @@ of the value itself.
 - `TTS_HEDGE_AFTER_MS = 1500` (a request with no audio by then is sent again; first to
   answer plays)
 - `TTS_PHONEME_TAGS = True`
-- `SPEAKER_NAME_HINT = "AB13X"` (resolved by name at runtime in tts.py)
+- `SPEAKER_NAME_HINT = "XVF3800"` (the array's jack since Oct 1 2026; resolved by
+  name at runtime in tts.py)
 - `PHRASE_DIR = ~/miles/data/phrases`, gitignored. `PHRASES` in `phrasebank.py`
   is the versioned source of truth; the WAVs are derived from it.
 - `ACK_SPOKEN_CHANCE = 0.75`

@@ -181,7 +181,6 @@ def main():
     mic_card = tts._resolve_speaker_device(MIC_NAME_HINT, fallback=None)
     if mic_card is None:
         sys.exit("The array was not found; nothing recorded.")
-    tts.REFERENCE_DEVICE = mic_card          # the echo reference, as barge in runs it
     tts.timing.note_tts = lambda *a, **k: None
     mic = mic_card.replace("plughw", "hw")
 
