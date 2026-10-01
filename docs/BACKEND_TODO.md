@@ -605,7 +605,7 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
 `models/xvf3800_firmware/` (gitignored) for flashing either way.
 
 **Next, in order:**
-1. **Resample the mic (BUILT Oct 1 2026, waiting on the flash).**
+1. **Resample the mic (LIVE Oct 1 2026 11:12, on 2.1.1_48k2ch).**
    `mic_channel.ChannelPick` reads three times the frames, filters every channel
    on every read with its state carried across reads (121 tap Kaiser FIR, cut at
    7.5kHz: flat to 6.5k, 82dB down from 8.8k, 0.6ms per read on the Pi), and
@@ -616,10 +616,13 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
    stale while barge in reads channel 1. Checked offline on archived 16kHz audio
    raised to 48kHz and brought back down: 60 wake hits moved by a median
    minus 0.005 (worst minus 0.148, none fell below 0.4), 30 of his recordings
-   verified at a median 0.491 against 0.483. **Still to check after the flash**,
-   on audio the chip actually delivers at 48kHz: channel 0 and 1 mean what
-   `mic_channel.py` assumes, wake hits score as before, he verifies at his usual
-   scores.
+   verified at a median 0.491 against 0.483. Live, first turns after the flash:
+   five wakes at 0.66 to 0.96 (median 0.844, against 0.705 for 25 on 2.0.6),
+   short commands verified at 0.42 to 0.51 (0.30 to 0.58 before), a 15s turn at
+   0.641, every Deepgram transcript right, 13 percent of a core while
+   listening. Empty follow ups (3 of 4) are not new: 10 of 15 on 2.0.6. **Not
+   yet checked:** that channel 1 is still the recognition beam on 2.1.1; the
+   wake evaluation in step 3 reads both channels and will show it.
 2. **Move the speakers to the jack for good.** Flash 2.1.1 48k, speaker plug in
    the array, `SPEAKER_NAME_HINT` to the array, array `PCM` raised from its
    saved 40 (it was quiet), and `_Reference` with `AEC_REFERENCE` retired: the
