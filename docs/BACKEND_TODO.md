@@ -677,6 +677,32 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
    The build, in order, each tried before the next:
    1. Detect: `watch_for_interrupt` adds the rule above on `BARGE_IN_CHANNEL`,
       beside the wake word, with the floor and duration in `config.py`.
+      **LIVE Oct 1 2026, at -37 dBFS** (`interrupt_speech.py`). Two sessions
+      were added and all three replayed through the shipped code, a fresh VAD
+      per take as the watcher makes one per sentence:
+
+      | Floor, 300ms | Him, 29 takes | Claps, 30 (`barge_in_eval/20261001T134904`) | Her echo | Voices outside the room (`..._silence`, about 150s) |
+      |---|---|---|---|---|
+      | minus 40 | 29 | 1 | 1 | 7 |
+      | minus 38 | 29 | 0 | 0 | 3 |
+      | **minus 37** | **29** | **0** | **0** | **0** |
+      | minus 36 | 28 | 0 | 0 | 0 |
+      | minus 35 | 23 | 0 | 0 | 0 |
+
+      About 1dB of margin each way; his farthest spot ("wherever you would
+      naturally be") drops first. **webrtcvad is stateful**: shown only frames
+      over the floor (the first version, to save CPU) it learned her loudest
+      moments as the background and missed him 2 of 29, so it hears every frame
+      (0.05ms per 80ms read). Every stop keeps its audio in
+      `data/barge_in_stops`; retune from there.
+
+      **Open: does a long silence leave the canceller worse?** On both eval
+      sessions the take right after he changed spots was the worst in its
+      session for echo (her clip's envelope on channel 1 at r 0.56 to 0.83
+      against about 0.3), recovering by the next take; one of the four stopped
+      her. Body moving or the longer quiet: the test meant to separate them
+      (`..._silence`, her clips after 5s to 300s of quiet) was spoiled by people
+      talking outside the room. Rerun it with the house quiet.
    2. Keep what he said: the watcher's frames from his onset, with a preroll,
       seed the next recording, which endpoints as a command does. Channel 0
       chops his voice while she plays, so the interrupting stretch comes from

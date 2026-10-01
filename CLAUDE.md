@@ -294,7 +294,7 @@ of the value itself.
   `BARGE_IN_CHANNEL = 1` (the wake word only, heard on the recognition beam. Off
   Sep 30 while her echo crossed two USB clocks; with her on the array's jack the
   model heard him over her 27 of 29. `play()` stops mid sentence)
-- `BARGE_IN_SPEECH = True` (since Oct 1 2026), `BARGE_IN_SPEECH_FLOOR = -40.0`,
+- `BARGE_IN_SPEECH = True` (since Oct 1 2026), `BARGE_IN_SPEECH_FLOOR = -37.0`,
   `BARGE_IN_SPEECH_MS = 300` (any speech over her stops her, not only the wake
   word: 30ms frames over the floor that webrtcvad calls speech, that many in a
   row, on `BARGE_IN_CHANNEL`; `interrupt_speech.py`. Anyone's speech counts)
