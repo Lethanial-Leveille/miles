@@ -657,8 +657,35 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
    watcher's fresh model per piece costs a little: the 0.40 frame scored 0.49
    with the model warmed on the 8.9s before it. Worth keeping one warm watcher
    only if live misses show up.
-4. ~~Speech detection on channel 0, `PP_DTSENSITIVE`, or a retrain~~: not
-   needed, the wake word on channel 1 is enough (step 3).
+4. **Barge in on any speech of his ("wait wait wait... actually"), asked Oct 1
+   2026.** He wants an interruption to be a conversation, not only the wake
+   word. Measured the same day on session 114604, webrtcvad mode 2 on 30ms
+   frames, over 326s of her playing:
+
+   | Trigger | False stops on her | Caught him over her |
+   |---|---|---|
+   | ch1, level over minus 40 dBFS, speech for 300ms | **0** | **29 of 29** |
+   | ch1, over minus 35 | 0 | 24 of 29 |
+   | ch0, over minus 45 | 0 | 28 of 29 |
+
+   With the canceller working her echo is speech on 1 percent of ch0 frames
+   (46 to 94 percent on Sep 30, when it was not), median minus 55 dBFS; his
+   voice over her peaks at minus 15 (ch0) and minus 26 (ch1). **Not shown:**
+   one session, one room, and he said "hey nova", not "wait"; nothing here says
+   whose speech it is, so someone else, a TV, a cough or a laugh would stop her.
+
+   The build, in order, each tried before the next:
+   1. Detect: `watch_for_interrupt` adds the rule above on `BARGE_IN_CHANNEL`,
+      beside the wake word, with the floor and duration in `config.py`.
+   2. Keep what he said: the watcher's frames from his onset, with a preroll,
+      seed the next recording, which endpoints as a command does. Channel 0
+      chops his voice while she plays, so the interrupting stretch comes from
+      channel 1; check verification and transcription on that mix.
+   3. A conversation: history keeps only what she said before he cut in,
+      marked as interrupted, so "actually" reaches Claude in context.
+   4. Live tests, including other voices and a TV, to decide whether the
+      interruption needs a voiceprint check.
+
 5. A stop button: on 2.1.1, `MUTE_FUNCTION_ENABLE` 0 frees the mute button and
    `GPI_EVENT_PENDING` reads presses; persisting it needs `SAVE_CONFIGURATION`,
    ask first.
