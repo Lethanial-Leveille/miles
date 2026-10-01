@@ -531,23 +531,43 @@ def _with_recalled(messages: list, query: str, log: bool = True) -> list:
     }]
 
 
-NAMED_TURN_NOTE = "[He said your name to start this.]"
+# Quoted by the prompt and the ignore tool, so all three name the same thing.
+NAMED_TURN_MARK = "Your wake word was heard just before this"
+NAMED_TURN_NOTE = (f"[{NAMED_TURN_MARK}. Answer any question or request in it, even "
+                   "mid conversation. If it holds none, only people talking, call ignore.]")
+FOLLOWUP_NOTE = ("[Heard in the window after your reply. Answer it if it speaks to you "
+                 "or follows from what you said. If it is people talking to each other, "
+                 "call ignore.]")
 
 
-def _with_named_note(messages: list, named: bool) -> list:
-    """On a turn he opened with the wake word, say so in the final user turn.
+def _with_named_note(messages: list, named: bool, followup: bool = False) -> list:
+    """Say in the final user turn how this voice turn was opened.
 
     The wake phrase is stripped before the transcript reaches Claude, so a
     question asked by name looked exactly like room chatter caught in the follow
     up window. On Sep 26 2026, with friends talking, "Is Trump a good president?"
     and a question about a Porsche around the Nurburgring, both asked after
     "hey nova", were ignored as not addressed to her. Same placement as the
-    clock, after the cache breakpoint; the database keeps the raw message."""
-    if not named or not messages or messages[-1]["role"] != "user":
+    clock, after the cache breakpoint; the database keeps the raw message.
+
+    The note used to say "He said your name to start this", as fact. On Oct 1
+    2026 a false wake during his phone call carried it, and she answered three
+    stretches of the call with "I only caught fragments". The wake word was
+    heard; whether he said it is what the note can no longer claim. Each note
+    ends on the decision, where the model weighs it most. scripts/replay_ignore.py,
+    30 of his past turns three runs each: she stayed silent on room talk 44 of 63
+    times (16 before) and answered 22 of 24 meant for her (24 before; the misses
+    were a garbled reply to her, "Actually, never mind oranges"). A firmer note
+    reached 56 of 63 and ignored "Is Trump a good president?" every time.
+
+    followup is a voice follow up opened without the wake word. Only the voice
+    loop knows either, so a typed turn gets neither note."""
+    note = NAMED_TURN_NOTE if named else FOLLOWUP_NOTE if followup else None
+    if note is None or not messages or messages[-1]["role"] != "user":
         return messages
     return messages[:-1] + [{
         **messages[-1],
-        "content": f"{messages[-1]['content']}\n\n{NAMED_TURN_NOTE}",
+        "content": f"{messages[-1]['content']}\n\n{note}",
     }]
 
 
@@ -711,7 +731,7 @@ class TurnRequest(NamedTuple):
 
 
 def _fingerprint(user_text, channel, tier, model, prompt, history, pending_alerts,
-                 named=False):
+                 named=False, followup=False):
     """What a request was built from, as one comparable string.
 
     A speculative turn builds its request before the endpoint, and the real turn
@@ -726,6 +746,7 @@ def _fingerprint(user_text, channel, tier, model, prompt, history, pending_alert
         "user_text": user_text, "channel": channel, "tier": tier, "model": model,
         "prompt": prompt, "history": history,
         "alerts": [a.summary for a in pending_alerts], "named": named,
+        "followup": followup,
     }, sort_keys=True)
     return hashlib.sha256(material.encode()).hexdigest()
 
@@ -755,11 +776,11 @@ def _prompt_for(channel, tier):
 
 
 def turn_fingerprint(user_text, channel, tier, model, history, pending_alerts,
-                     named=False):
+                     named=False, followup=False):
     """build_request's fingerprint without the rest of it: no recall, about 3ms.
     What the real turn checks a speculation against."""
     return _fingerprint(user_text, channel, tier, model, _prompt_for(channel, tier),
-                        history, pending_alerts, named)
+                        history, pending_alerts, named, followup)
 
 
 def _log_recall_later(user_text):
@@ -771,7 +792,8 @@ def _log_recall_later(user_text):
 
 
 def build_request(user_text, channel, tier, model, history, pending_alerts,
-                  log_recall=True, named=False, last_reply=None) -> TurnRequest:
+                  log_recall=True, named=False, last_reply=None,
+                  followup=False) -> TurnRequest:
     """The request for one turn, with no side effects.
 
     Nothing here saves a message, consumes an alert, advances the confirmation
@@ -791,12 +813,12 @@ def build_request(user_text, channel, tier, model, history, pending_alerts,
     personal = tier == "hokage"
     enhanced_prompt = _prompt_for(channel, tier)
     fingerprint = _fingerprint(user_text, channel, tier, model, enhanced_prompt,
-                               history, pending_alerts, named)
+                               history, pending_alerts, named, followup)
 
     # Folded before the clock, so all three land inside the same final user turn.
     recent = _with_alerts(_trim_history(history), pending_alerts)
     recent = _with_recalled(recent, user_text, log=log_recall) if personal else recent
-    recent = _with_named_note(recent, named)
+    recent = _with_named_note(recent, named, followup)
     recent = _with_gap_note(recent, last_reply)
     recent = _with_current_time(recent)
     recent = _with_text_note(recent, channel)
@@ -863,7 +885,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                          channel: str = "voice",
                          tier: str = "hokage", on_text=None,
                          speculation=None, named=False,
-                         conversation_start=None) -> TurnResult:
+                         conversation_start=None, followup=False) -> TurnResult:
     """Run one turn.
 
     speculation, when given, is a speculative_turn.SpeculativeTurn that may
@@ -872,7 +894,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     loop passes one.
 
     named is True when he opened this turn with the wake word; see
-    _with_named_note. Only the voice loop knows, so only it passes True.
+    _with_named_note. Only the voice loop knows, so only it passes True. The
+    same for followup, a follow up he opened without it.
 
     conversation_start is the last message id before this conversation began.
     Below hokage it bounds the history; see _history_for.
@@ -908,7 +931,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     replay = None
     if speculation is not None:
         replay = speculation.claim(
-            turn_fingerprint(user_text, channel, tier, model, history, pending, named))
+            turn_fingerprint(user_text, channel, tier, model, history, pending, named,
+                             followup))
     if replay is not None:
         request = speculation.request
         head_start_ms = (time.monotonic() - speculation.opened_at) * 1000.0
@@ -918,7 +942,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             _log_recall_later(user_text)
     else:
         request = build_request(user_text, channel, tier, model, history, pending,
-                                named=named, last_reply=last_reply_at())
+                                named=named, last_reply=last_reply_at(),
+                                followup=followup)
     recent       = request.messages
     system_param = request.system
 
@@ -1259,7 +1284,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 def ask_nova(user_text: str, device: str = "pi",
              channel: str = "voice", tier: str = None, on_text=None,
              speculation=None, named=False,
-             conversation_start=None) -> TurnResult:
+             conversation_start=None, followup=False) -> TurnResult:
     # None means "look it up", so a demotion set in one turn is in force on the
     # next without the caller having to thread it through.
     loop = _thread_loop()
@@ -1267,7 +1292,7 @@ def ask_nova(user_text: str, device: str = "pi",
         return loop.run_until_complete(
             ask_nova_async(user_text, device=device, channel=channel,
                            tier=tier or effective_tier(), on_text=on_text,
-                           speculation=speculation, named=named,
+                           speculation=speculation, named=named, followup=followup,
                            conversation_start=conversation_start))
     finally:
         _cancel_leftovers(loop)

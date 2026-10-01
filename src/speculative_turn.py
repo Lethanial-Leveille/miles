@@ -302,7 +302,8 @@ def consider(text, turn_type, embedded_seconds, embedding, voiceprint):
         history = get_recent_messages(19) + [{"role": "user", "content": user_text}]
         return brain.build_request(user_text, "voice", brain.effective_tier(), MODEL_A,
                                    history, alerts.peek_for_fold(), log_recall=False,
-                                   named=named, last_reply=last_reply_at())
+                                   named=named, last_reply=last_reply_at(),
+                                   followup=turn_type == "followup")
 
     turn = SpeculativeTurn(make_request)
     with _current_lock:
