@@ -73,6 +73,7 @@ import speaker_encoder
 import early_verify
 import verification
 import endpoint
+import interrupt_speech
 from verification import (VERIFIED, REJECTED, NO_AUDIO, RETRY,
                           MIN_EMBED_SECONDS, MIN_TRUSTWORTHY_SECONDS)
 
@@ -81,7 +82,7 @@ from config import (
     WHISPER_MODEL, WHISPER_CLI, WHISPER_SEGMENT_SECONDS, WHISPER_INITIAL_PROMPT,
     TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
-    BARGE_IN_CHANNEL,
+    BARGE_IN_CHANNEL, BARGE_IN_SPEECH, BARGE_IN_SPEECH_FLOOR, BARGE_IN_SPEECH_MS,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, COMMAND_ONSET_S, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL, MIC_NAME_HINT,
     MIC_CAPTURE_CHANNELS, MIC_CHANNEL, MIC_CAPTURE_RATE,
@@ -94,6 +95,7 @@ from config import (
     CAPTURE_WAKE_MISSES, WAKE_MISS_DIR, WAKE_MISS_MAX_FILES,
     CAPTURE_WAKE_HITS, WAKE_HIT_DIR, WAKE_HIT_MAX_FILES,
     WAKE_GATED_DIR, WAKE_GATED_MAX_FILES,
+    BARGE_IN_STOP_DIR, BARGE_IN_STOP_MAX_FILES,
 )
 from audio_segments import audio_ctx_for, segment_bounds
 from wake_listener import WakeListener
@@ -423,8 +425,11 @@ def listen_for_followup(timeout=10, on_wake=None):
     return TEMP_WAV
 
 
-def _save_wake_clip(frames, score, directory, max_files, label):
+def _save_wake_clip(frames, score, directory, max_files, label, stem=None):
     """Keep the audio behind a wake decision, named by score so it sorts.
+
+    stem replaces the score in the name for a capture that has none: a barge in
+    stop on speech is named by why it stopped and where his speech began.
 
     Shared by both directions because they are the same operation and only the
     question differs. wake_misses asks why she did not hear him; wake_hits asks
@@ -436,7 +441,7 @@ def _save_wake_clip(frames, score, directory, max_files, label):
     try:
         os.makedirs(directory, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%dT%H%M%S_%f")[:-3]
-        dest  = os.path.join(directory, f"{score:.3f}_{stamp}.wav")
+        dest  = os.path.join(directory, f"{stem or f'{score:.3f}'}_{stamp}.wav")
         _write_wav(frames, dest)
 
         # Never by name: the name leads with the score so it sorts by severity,
@@ -950,31 +955,40 @@ _barge_in_count = 0
 
 
 def watch_for_interrupt(stop_event):
-    """Listen for the wake word while Nova is speaking. Returns True if heard.
+    """Listen for him while Nova is speaking. Returns True if heard.
 
     Runs on its own thread during playback, when the main loop is blocked on
     aplay and nothing else is reading the stream. Two readers on one PyAudio
     stream would interleave frames and produce intermittent deafness rather
     than an error, so the caller must guarantee exclusivity.
 
-    No echo cancellation, and none is needed. Her own voice reaches the
-    microphone but the wake model only fires on one phrase, which her speech
-    does not contain. That is the whole reason this is cheap when general barge
-    in is not.
+    Two ways to stop her: the wake word, and with BARGE_IN_SPEECH any speech
+    loud and long enough (interrupt_speech.py). The wake word needs nothing from
+    the echo canceller, since her speech never contains the phrase. The speech
+    rule depends on it entirely: it works only because her echo, played from the
+    array's own jack, stays under the floor. Move the speakers off the array and
+    turn BARGE_IN_SPEECH off.
 
     A fresh model instance rather than the shared one: the main loop's
-    detection state must not be disturbed by frames captured mid sentence."""
+    detection state must not be disturbed by frames captured mid sentence. Its
+    own VAD too, since the main loop's is not this thread's to share."""
     try:
         with silence_stderr():
             watcher = Model(wakeword_model_paths=[WAKE_MODEL_PATH])
     except Exception as e:
         print(f"  barge in: wake model did not load: {e!r}", flush=True)
         return False
+    speech = None
+    if BARGE_IN_SPEECH:
+        vad = webrtcvad.Vad(VAD_MODE)
+        speech = interrupt_speech.SpeechOnset(
+            BARGE_IN_SPEECH_FLOOR, BARGE_IN_SPEECH_MS,
+            lambda frame: vad.is_speech(frame, RATE))
 
     # Logged per sentence, because a watcher that quietly scores low, or quietly
     # dies on an exception, looks exactly like one that heard nothing. The first
     # live test on Sep 30 2026 failed with no way to tell which.
-    heard = False
+    heard = None             # "wake" or "speech", whichever stopped her
     peak, frames = 0.0, 0
     kept = []
     while not stop_event.is_set():
@@ -993,12 +1007,15 @@ def watch_for_interrupt(stop_event):
             for _, score in watcher.predict(frame).items():
                 peak = max(peak, score)
                 if score > BARGE_IN_THRESHOLD:
-                    heard = True
+                    heard = "wake"
                     stop_event.set()
                     break
         except Exception as e:
             print(f"  barge in: wake model failed: {e!r}", flush=True)
             break
+        if heard is None and speech is not None and speech.feed(data):
+            heard = "speech"
+            stop_event.set()
     global _barge_in_count
     _barge_in_count += 1
     path = BARGE_IN_WAV.format(_barge_in_count % BARGE_IN_KEEP)
@@ -1015,10 +1032,23 @@ def watch_for_interrupt(stop_event):
                 wf.writeframes(audio_bytes)
         except OSError:
             pass
+    if heard:
+        # Every stop, not only the last few sentences: build/ is overwritten
+        # within four, and the first live session on Oct 1 2026 lost both stops
+        # he suspected were claps before anyone could look at them.
+        stem = (f"speech_{speech.onset / RATE:.2f}s" if heard == "speech"
+                else f"wake_{peak:.2f}")
+        _save_wake_clip(kept, peak, BARGE_IN_STOP_DIR, BARGE_IN_STOP_MAX_FILES,
+                        "barge in stop", stem=stem)
     level_text = f", loudest {level:.1f} dBFS" if level is not None else ""
-    print(f"  barge in: {'HEARD' if heard else 'watched'} {frames * CHUNK / RATE:.1f}s, "
-          f"peak {peak:.2f}{level_text} ({os.path.basename(path)})", flush=True)
-    return heard
+    # Where his speech began in the kept WAV, so a stop on a TV or a cough can
+    # be found and listened to.
+    onset_text = (f", speech from {speech.onset / RATE:.2f}s"
+                  if heard == "speech" else "")
+    print(f"  barge in: {'HEARD ' + heard if heard else 'watched'} "
+          f"{frames * CHUNK / RATE:.1f}s, peak {peak:.2f}{level_text}{onset_text} "
+          f"({os.path.basename(path)})", flush=True)
+    return heard is not None
 
 
 def wake_word_audio(seconds=1.5):

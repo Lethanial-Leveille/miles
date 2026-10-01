@@ -160,6 +160,29 @@ BARGE_IN_CHANNEL = 1
 #
 BARGE_IN_THRESHOLD = 0.30
 
+# Barge in on any speech, not only the wake word: he talks over her and she
+# stops. Its own switch, so the wake word keeps working with this off. Decided by
+# interrupt_speech.py, on BARGE_IN_CHANNEL, beside the wake model.
+#
+# Replayed Oct 1 2026 on wake_eval session 20261001T114604 (him saying "hey nova"
+# over her, her on the array's jack): at -40 dBFS RMS for 300ms it caught him 29
+# of 29 with no stop in 231s of her alone, whose longest qualifying run was 180ms.
+# At -35 it caught 24; at 400ms, 20, because his phrase only just clears 300ms.
+# Anyone's speech stops her, a TV's included; whose it was is decided afterward
+# on the whole interruption. The floor is the knob for a busy room: raising it
+# keeps only nearer, louder voices. Retune from live misses, not from this
+# session alone.
+BARGE_IN_SPEECH = True
+BARGE_IN_SPEECH_FLOOR = -40.0
+BARGE_IN_SPEECH_MS = 300
+
+# The audio behind every barge in stop, wake or speech, so each one can be heard:
+# a stop on a clap or the TV is invisible in a log line. Named by why it stopped
+# and, for speech, where his speech began in the clip. Up to about 15s each, so
+# 100 is about 50MB at most.
+BARGE_IN_STOP_DIR       = os.path.expanduser("~/miles/data/barge_in_stops")
+BARGE_IN_STOP_MAX_FILES = 100
+
 # ── Voice activity detection ──
 # webrtcvad replaces the bare amplitude threshold that used to gate capture.
 # Amplitude cannot tell speech from a running AC unit, which is what drove the
