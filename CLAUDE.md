@@ -286,9 +286,10 @@ of the value itself.
   fails or has not answered by then)
 
 ### Barge in — why: `config.py` comments and [BACKEND_TODO.md](docs/BACKEND_TODO.md)
-- `BARGE_IN = False`, `BARGE_IN_THRESHOLD = 0.30`, `BARGE_IN_CHANNEL = 1`
-  (wake word only. Tried on the array Sep 30 2026 and off again: a clearly
-  spoken wake over her scored 0.00. `play()` now stops mid sentence)
+- `BARGE_IN = True` (since Oct 1 2026), `BARGE_IN_THRESHOLD = 0.30`,
+  `BARGE_IN_CHANNEL = 1` (the wake word only, heard on the recognition beam. Off
+  Sep 30 while her echo crossed two USB clocks; with her on the array's jack the
+  model heard him over her 27 of 29. `play()` stops mid sentence)
 
 ### Model and prompt — why: [BRAIN.md](docs/BRAIN.md)
 - `MODEL_A = "claude-haiku-4-5"` — **this is the production model**
@@ -439,12 +440,15 @@ Landed since v0.7.1, unreleased:
   routine once a workout earns it (10 lb squat and deadlift families and
   machines, 5 lb otherwise), and the session plan says what moved
 
+- The ReSpeaker XVF3800 on its 48kHz firmware, resampled to 16kHz at the
+  stream; speakers on its own jack, so its echo canceller works
+- Barge in: "hey nova" over her stops her mid sentence
+
 ## What Is Next
 
 - SSH via Cloudflare Tunnel: ssh.lethanial.com + Cloudflare Access policy
 - v0.8+: Morning briefings (Fall 2026), Mac control, HealthKit, EventKit,
-  MusicKit, WeatherKit migration, barge in (wake word version built, off;
-  full barge in needs AEC), parallel processing
+  MusicKit, WeatherKit migration, parallel processing
 
 ## Coding Preferences
 
