@@ -573,21 +573,43 @@ everyday use; he chose it by ear. **The array's own playback volume, through
 which the echo reference reaches the canceller, is 40 of 60, minus 20 dB**, and
 the reference measured 12dB under her echo at the canceller's input. Unexamined.
 
+**Root cause: two USB clocks (Oct 1 2026, late).** Measured inside the chip by
+routing the canceller's input (`AUDIO_MGR_OP_L 3 0`) and its residual for the
+same mic (`AUDIO_MGR_OP_R 7 0` with `AEC_ASROUTONOFF` 0; all unsaved, restored)
+during silent runs. With speakers on the AB13X and the reference sent to the
+array, the canceller removed **about 1 dB**, the same with the reference as
+without it, across ten runs. At sample resolution her echo slid against the
+reference by 17 to 52 samples (1 to 3ms) within one 16s clip, in every run: two
+independent clocks and two independent playback buffers, so the echo path never
+holds still long enough for a linear filter to lock. Every channel 0 result
+before this, the 30dB swings included, was post processing suppression working
+around a canceller that was not cancelling.
+
+With the speaker's 3.5mm plug in **the array's own jack**, one device and one
+clock, array `PCM` at 60 for the test: minus 7 dB at first (a filter learned on
+the old path), climbing over about two minutes of her speech to **14 to 15 dB**
+over the last four runs, which is the ceiling of this measurement (her echo was
+only 9 to 15dB above the room). It cancelled everything it could see. On the
+2.0.6 firmware the jack is quiet at the array's `PCM` 40 and the `AIC3104`
+level commands do not exist (status 65); they arrive in 2.1.
+
 **Next, in order:**
-1. **Find what puts the canceller in its good state.** Automated, no one
-   talking: many silent runs, logging `AEC_AECCONVERGED`, `PP_AGCGAIN` and the
-   residual, with AGC off (`PP_AGCONOFF` 0, not saved) so levels are real, and
-   runs right after a miles-voice restart against later ones. Then the
-   reference level: the array's `PCM` playback at 40 against 60, and
-   `AEC_FAR_EXTGAIN`. Nothing that changes the chip is saved without asking.
-2. **Only once runs repeat:** `PP_DTSENSITIVE` 15 against 0 with
-   `record_wake_eval.py --takes 3`, several sessions each.
-3. **Retrain the wake model** on what the chip makes of him over her, on Colab:
-   the negative feature set is 17.3GB, more than the Mac has free.
+1. **The 48kHz firmware, so the jack sounds right.** The array plays only
+   16kHz on 2.0.6, which is why the jack sounded degraded and the speakers went
+   on the AB13X. `respeaker_xvf3800_usb_dfu_firmware_v2.1.1_48k2ch.bin` in
+   Seeed's repo, flashed with `dfu-util` over the same cable; no purchase. Read
+   `xmos_firmwares/dfu_guide.md` first and ask before flashing. Test for the
+   clicks in processed capture reported in issue 39, and check that channel 0
+   and channel 1 still mean what `mic_channel.py` assumes. Then speakers on the
+   jack, `play()` to the array only, `_Reference` and `AEC_REFERENCE` retired.
+2. Rerun `record_wake_eval.py` with the canceller locked, before touching any
+   chip setting. The wake model was deaf over her when the canceller was not
+   working; it has never been tested when it was.
+3. Only then speech detection on channel 0, `PP_DTSENSITIVE`, or a retrain,
+   whichever the evaluation points at.
 4. A stop button: the array's mute button released to software with
    `GPI_EVENT_CONFIG` 0, read with `GPI_EVENT_PENDING`; persisting it needs
    `SAVE_CONFIGURATION`, ask first.
-5. Speakers on the array's jack stays last: the 16kHz playback sounded degraded.
 
 ### 9. What the array still needs (Sep 30 2026)
 
