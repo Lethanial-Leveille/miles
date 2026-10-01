@@ -86,7 +86,7 @@ new drift is caught.
 |---|---|---|
 | Which model serves turns | `grep MODEL_A src/config.py` | Aug 11 2026 |
 | Which tools Nova actually has | `python3 -c "import brain; from tools import registry; print(registry.names())"` | Sep 25 2026 (30) |
-| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Sep 30 2026 (1238) |
+| Test count | `cd src && python -m pytest tests/ -q \| tail -1` | Oct 1 2026 (1247) |
 | Perceived latency | preflight step 6 | Aug 11 2026 (4938ms median) |
 | Prefix token count (never trust a written figure) | `count_tokens` on the tool schemas plus `build_enhanced_prompt` output, since tools sit inside the cached prefix, vs the 4096 floor | Sep 25 2026 (17774: tools 7103, system 10670) |
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Sep 27 2026 (0.15, ecapa) |
@@ -1520,5 +1520,16 @@ it would cut her off on nearly every reply. **Chosen, in his order:** retrain
 `hey_nova.onnx` against an evaluation set recorded over her playback, then try a
 lower speaker volume. Reopen speech detection only if a volume or enclosure
 change gets her residual reliably under his speech; the numbers are in
+[BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
+
+### The speakers move to the array's jack, on the 48kHz firmware (Oct 1 2026) (DECIDED)
+
+Reverses "the speakers stay off it" above. Both of its reasons fell the same
+night: the reference over a second USB device does not work, because the two
+clocks slide her echo 1 to 3ms against the reference within a reply and the
+canceller removed about 1 dB; on the array's own jack it reached 14 to 15 dB.
+And the 16kHz playback that sounded degraded is gone on `v2.1.1_48k2ch`, which
+he judged by ear to sound like the AB13X. Blocked only on resampling the mic
+from 48kHz, which the firmware forces on capture too. The numbers are in
 [BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
 
