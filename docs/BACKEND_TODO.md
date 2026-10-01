@@ -631,11 +631,24 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
    reference now. Playback still goes through ALSA's linear converter, 22050 to
    48000; by his ear that was not what sounded off. The canceller needs about two
    minutes of her speech on the new path before any measurement.
-3. Rerun `record_wake_eval.py` with the canceller locked, before touching any
-   chip setting. The wake model was deaf over her only ever while the canceller
-   was not working.
-4. Only then speech detection on channel 0, `PP_DTSENSITIVE`, or a retrain,
-   whichever the evaluation points at.
+3. **Rerun the wake evaluation (DONE Oct 1 2026, session 114604).** After about
+   two minutes of her speech on the jack. Scored with the same script over all
+   four sessions, which reproduces every earlier figure in the table above:
+
+   | Session | Over her, ch0 | Over her, ch1 | Quiet, ch0 / ch1 | Her alone, highest |
+   |---|---|---|---|---|
+   | 003125, two clocks | 0/30 | 0/30 | 9/9, 9/9 | 0.00 |
+   | 004958, two clocks | 2/30 | 4/30 | 8/9, 8/9 | 0.00 |
+   | 010635, two clocks | 0/18 | 1/18 | 6/6, 5/6 | 0.00 |
+   | **114604, her on the jack** | 3/29 | **27/29** (28 at 0.30), median 0.99 | 8/9, 9/9 | 0.07 |
+
+   Every spot: 9/10, 9/9, 9/10; the one real miss scored 0.11. **The wake model
+   was never deaf over her; the canceller was not cancelling.** Channel 1 is
+   still the recognition beam on 2.1.1. Channel 0 stays deaf over her (double
+   talk suppression), so barge in listens on channel 1, as `BARGE_IN_CHANNEL`
+   already says. Next: `BARGE_IN` on, and tried live.
+4. ~~Speech detection on channel 0, `PP_DTSENSITIVE`, or a retrain~~: not
+   needed, the wake word on channel 1 is enough (step 3).
 5. A stop button: on 2.1.1, `MUTE_FUNCTION_ENABLE` 0 frees the mute button and
    `GPI_EVENT_PENDING` reads presses; persisting it needs `SAVE_CONFIGURATION`,
    ask first.
