@@ -319,6 +319,21 @@ never having with her, and the difference is whether she says anything at all.
 In the follow up loop it breaks the conversation rather than reopening the
 window, so an exchange nearby cannot hold her attention turn after turn.
 
+**The note on a voice turn says what was heard, not what he did (Oct 1 2026).**
+It used to say "[He said your name to start this.]" as fact. A false wake
+during his phone call carried it, and she answered three stretches of the call
+with "I only caught fragments", which the prompt's own example had taught her.
+Now a wake turn says the wake word was heard and to answer any question in it,
+a follow up says it was heard after her reply, and both end on calling ignore
+when it is people talking; the prompt adds that misheard speech is short and a
+long run of conversation is not a mishearing. Measured with
+`scripts/replay_ignore.py` on 30 of his turns, three runs each: silent on room
+talk 44 of 63 (16 before), answered 22 of 24 meant for her (24 before; the
+misses were "Actually, never mind oranges", a garbled reply to her). A firmer
+note reached 56 of 63 and ignored "Is Trump a good president?", the Sep 26 case
+the note was first written for, every time. **Run the replay before changing
+any of this wording.**
+
 ## Tools and the permission gate
 
 **The model proposes, the executor decides.** A tool call is a request. Between

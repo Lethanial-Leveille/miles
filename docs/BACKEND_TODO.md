@@ -847,6 +847,37 @@ because nobody reread it against `stream_router.py`.
 
 ## Not blocked, and worth doing anytime
 
+### Retrain the wake model on his false wakes (asked Oct 1 2026)
+
+**Why:** on Oct 1 2026 at 14:57 `hey_nova.onnx` woke at 0.73 during his phone
+call, loud enough (minus 7.8 dBFS) to pass the level gate, and she answered
+three stretches of the call. The prompt now catches most of that after the fact
+(`scripts/replay_ignore.py`: silent on room talk 44 of 63, from 16), but a
+false wake still chimes, records 30 seconds and sends it to Deepgram and Claude.
+Only the wake model can stop it before that. The model is dated Apr 8 2026,
+trained before this apartment, this mic and the array.
+
+**Why not a local filter instead:** measured Sep 25 2026 and rejected, see
+[Rejecting a false wake before the Claude call](#rejecting-a-false-wake-before-the-claude-call-tested-do-not-build).
+Sentence case and recording length both would have rejected real commands.
+
+**What exists, Oct 1 2026:** `data/wake_hits` 220 clips, 49 labelled (27 his
+wake phrase, 22 not); `data/wake_misses` 400, 29 labelled (all not the phrase);
+`data/wake_gated` 15, unlabelled. Most hits predate the array (Sep 30), so the
+array's own false wake rate is not yet known. `data/wake_eval/` is the test set
+and **must never be trained on**.
+
+**In order:**
+1. Label the array era hits with `scripts/label_wake.py`, his voice in
+   conversation especially. That is the false wake the level gate cannot see,
+   since it arrives loud.
+2. Train with openWakeWord's pipeline (synthetic positives, his labelled clips,
+   room and conversation negatives), on a laptop or GPU, not the Pi.
+3. Score the candidate against the current model on `data/wake_eval/` (quiet
+   wakes, his wake over her) and on held out labelled hits. Ship only if it
+   wakes for him as often and falsely less; barge in reads the same model on
+   channel 1, so check that column too.
+
 ### A log of her own gaps, for him to review (asked Sep 30 2026)
 
 He wants her to see what she could be better at. She cannot change her code and

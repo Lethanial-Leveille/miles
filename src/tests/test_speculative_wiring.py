@@ -364,5 +364,35 @@ def test_the_voice_loop_names_first_turns_and_wake_word_follow_ups():
 def test_the_prompt_and_the_ignore_tool_both_carry_the_rule():
     import prompts
     from tools import registry
-    assert brain.NAMED_TURN_NOTE in prompts.NOT_ADDRESSED_TO_YOU
-    assert brain.NAMED_TURN_NOTE in registry.get("ignore").description
+    assert brain.NAMED_TURN_MARK in brain.NAMED_TURN_NOTE
+    assert brain.NAMED_TURN_MARK in prompts.NOT_ADDRESSED_TO_YOU
+    assert brain.NAMED_TURN_MARK in registry.get("ignore").description
+
+
+def test_a_voice_follow_up_carries_its_own_note_and_a_typed_turn_none():
+    """Oct 1 2026: three stretches of a phone call reached her as follow ups and
+    each drew "I only caught fragments". A typed message is never a follow up."""
+    messages = [{"role": "user", "content": "Yeah I told him already"}]
+    assert brain._with_named_note(messages, False, followup=True)[-1]["content"].endswith(
+        brain.FOLLOWUP_NOTE)
+    assert brain._with_named_note(messages, False) == messages
+    named = brain._with_named_note(messages, True, followup=True)
+    assert named[-1]["content"].endswith(brain.NAMED_TURN_NOTE), "the wake word outranks"
+
+
+def test_the_follow_up_note_reaches_the_request_and_the_fingerprint(memories):
+    args = ("What about tomorrow", "voice", "hokage", config.MODEL_A,
+            [{"role": "user", "content": "What about tomorrow"}], [])
+    follow = brain.build_request(*args, log_recall=False, followup=True)
+    plain = brain.build_request(*args, log_recall=False)
+    assert brain.FOLLOWUP_NOTE in follow.messages[-1]["content"]
+    assert brain.FOLLOWUP_NOTE not in plain.messages[-1]["content"]
+    assert follow.fingerprint != plain.fingerprint
+
+
+def test_follow_ups_are_marked_by_the_voice_loop_and_the_speculation():
+    """A speculation built without the flag would never match the real turn,
+    and every follow up would lose its head start."""
+    assert "run_turn(followup_text, named=said_wake, followup=True," in (
+        SRC / "voice_main.py").read_text()
+    assert 'followup=turn_type == "followup"' in (SRC / "speculative_turn.py").read_text()

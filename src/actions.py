@@ -543,7 +543,10 @@ def cancel_reminder_tool(content):
         "see. The follow up window stays open after a turn, so it does pick up "
         "the room.\n\n"
         "Never call this for a clear question or request in a message marked "
-        "\"[He said your name to start this.]\": he asked you by name.\n\n"
+        "\"Your wake word was heard just before this\": he most likely asked you "
+        "by name. "
+        "The mark alone, on a message that asks nothing of you, does not make it "
+        "yours.\n\n"
         "Say NOTHING alongside this call. Not an explanation, not an offer to "
         "help, not a single word. Announcing that you are not part of a "
         "conversation is itself joining it, and it is worse than silence "
@@ -555,7 +558,12 @@ def cancel_reminder_tool(content):
         "explaining your non participation out loud is the better answer.\n\n"
         "Do not use this merely because a request is unclear or you lack the "
         "information to answer. Asking him to repeat himself is right when he "
-        "was talking to you. This is only for when he was not."
+        "was talking to you. This is only for when he was not.\n\n"
+        "Unclear means a short turn that may have been meant for you. A long "
+        "stretch of conversation, one side of a phone call, or several people "
+        "talking is not an unclear request. Answering it with what you caught, "
+        "such as 'I only caught fragments', is the same failure as announcing "
+        "that you are not part of it."
     ),
     input_schema={"type": "object", "properties": {}, "required": []},
     permission=Permission.CONTROL,

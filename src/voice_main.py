@@ -177,7 +177,7 @@ def _local_allowed(match, tier):
     return permits(spec, tier)
 
 
-def run_turn(text, named=False, tier=None, conversation_start=None):
+def run_turn(text, named=False, tier=None, conversation_start=None, followup=False):
     """Run one turn, returning None if it could not be completed.
 
     The boundary is here rather than in brain.py because brain serves two
@@ -205,6 +205,7 @@ def run_turn(text, named=False, tier=None, conversation_start=None):
         if match is not None and _local_allowed(match, tier):
             return _run_local(match, text)
         return ask_nova(text, speculation=speculation, named=named, tier=tier,
+                        followup=followup,
                         conversation_start=conversation_start)
     except anthropic.APIConnectionError as exc:
         # The exception says a connection failed, not which one. Ask locally so
@@ -527,7 +528,7 @@ try:
                     conversation_start = latest_message_id()
 
                 start  = time.time()
-                result = run_turn(followup_text, named=said_wake,
+                result = run_turn(followup_text, named=said_wake, followup=True,
                                   tier=None if session_is_him else GUEST_TIER,
                                   conversation_start=conversation_start)
 
