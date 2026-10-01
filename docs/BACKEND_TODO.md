@@ -623,11 +623,14 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
    listening. Empty follow ups (3 of 4) are not new: 10 of 15 on 2.0.6. **Not
    yet checked:** that channel 1 is still the recognition beam on 2.1.1; the
    wake evaluation in step 3 reads both channels and will show it.
-2. **Move the speakers to the jack for good.** Flash 2.1.1 48k, speaker plug in
-   the array, `SPEAKER_NAME_HINT` to the array, array `PCM` raised from its
-   saved 40 (it was quiet), and `_Reference` with `AEC_REFERENCE` retired: the
-   array's own playback is the reference. Allow two minutes of her speech for
-   the canceller to learn the new path.
+2. **Move the speakers to the jack (DONE Oct 1 2026).** Speaker plug in the
+   array, AB13X unplugged, `SPEAKER_NAME_HINT` to "XVF3800". Array `PCM` 54 of 60:
+   at 60 her loudest syllables sounded rough by his ear, so the level comes from
+   the speakers' knob instead. `_Reference` and `AEC_REFERENCE` removed from
+   `tts.py` and `config.py`; the array's own playback is the canceller's
+   reference now. Playback still goes through ALSA's linear converter, 22050 to
+   48000; by his ear that was not what sounded off. The canceller needs about two
+   minutes of her speech on the new path before any measurement.
 3. Rerun `record_wake_eval.py` with the canceller locked, before touching any
    chip setting. The wake model was deaf over her only ever while the canceller
    was not working.

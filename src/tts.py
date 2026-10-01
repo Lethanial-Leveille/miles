@@ -13,7 +13,6 @@ from config import (
     ELEVENLABS_API_KEY, TTS_VOICE_ID,
     DEFAULT_TTS_MODEL, TTS_OUTPUT_FORMAT, TTS_APP_OUTPUT_FORMAT, TTS_PHONEME_TAGS,
     TTS_VOICE_SETTINGS, SPEAKER_NAME_HINT, TTS_HEDGE_AFTER_MS, speak_lock,
-    AEC_REFERENCE, MIC_NAME_HINT,
 )
 
 CHIME_PATH = os.path.expanduser("~/miles/assets/wake_chime.wav")
@@ -104,11 +103,6 @@ def _resolve_speaker_device(name_hint, fallback="plughw:0,0"):
 
 
 SPEAKER_DEVICE = _resolve_speaker_device(SPEAKER_NAME_HINT)
-
-# The mic array's own output, where the echo reference goes. None when off or
-# missing: no reference, never the wrong device. See AEC_REFERENCE in config.py.
-REFERENCE_DEVICE = (_resolve_speaker_device(MIC_NAME_HINT, fallback=None)
-                    if AEC_REFERENCE else None)
 
 
 def play_chime():
@@ -367,120 +361,6 @@ def _open_aplay():
     return proc
 
 
-class _Reference:
-    """A copy of her voice for the mic array's echo canceller, fed on its own thread.
-
-    Never allowed to hold up the speaker. Writing to this aplay from play()
-    directly would mean a stalled array freezes her mid sentence, because the
-    write would block. So chunks go through a queue, and if the array falls
-    well behind, the reference is dropped for this utterance: barge in gets
-    worse for a sentence, and she keeps talking.
-
-    Stalled is judged by time, not by how much is queued. A synthesis already
-    fetched arrives all at once: play() queued 5.85s of audio in its first 4ms,
-    and the feeder had written all of it by 0.32s. A limit of three seconds
-    queued dropped the reference at the start of every such sentence, logged as
-    "fell 3.0s behind", while ALSA showed the array starting 4.7ms before the
-    speaker and playing in real time (Sep 30 2026). A healthy aplay frees room
-    in its pipe every period, tens of ms; one that takes nothing for a second
-    has hung."""
-
-    _STALL_S = 1.0
-
-    def __init__(self, device):
-        self._proc = subprocess.Popen(
-            ["aplay", "-q", "-D", device, "-f", "S16_LE", "-r", "22050", "-c", "1"],
-            stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        )
-        self._chunks = queue.Queue()
-        self._pending = 0
-        self._progress_at = time.monotonic()    # when the array last took audio
-        self._pending_lock = threading.Lock()
-        self._dropped = False
-        self._exited = threading.Event()
-        threading.Thread(target=self._feed, daemon=True).start()
-
-    def _feed(self):
-        try:
-            while True:
-                chunk = self._chunks.get()
-                if chunk is None:
-                    break
-                self._proc.stdin.write(chunk)
-                self._proc.stdin.flush()
-                with self._pending_lock:
-                    self._pending -= len(chunk)
-                    self._progress_at = time.monotonic()
-            self._proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            self._proc.kill()
-            # Closed here rather than left to the garbage collector, which
-            # flushes the dead pipe and prints a traceback into the journal.
-            try:
-                self._proc.stdin.close()
-            except OSError:
-                pass
-        self._proc.wait()
-        self._exited.set()
-
-    def write(self, chunk):
-        if self._dropped:
-            return
-        now = time.monotonic()
-        with self._pending_lock:
-            if self._pending == 0:
-                # Nothing was waiting, so the feeder was idle, not stuck. The
-                # first chunk after a pause in synthesis starts the clock fresh.
-                self._progress_at = now
-            stalled = now - self._progress_at
-            self._pending += len(chunk)
-        if stalled > self._STALL_S:
-            self._dropped = True
-            print(f"  echo reference: the array took nothing for {stalled:.1f}s; "
-                  f"dropped for this sentence", flush=True)
-            self.stop()
-            return
-        self._chunks.put_nowait(chunk)
-
-    def _end(self):
-        # Wakes a feeder waiting on the queue. One inside a write is ended by
-        # killing the process instead, and then never reads this.
-        self._chunks.put_nowait(None)
-
-    def finish(self):
-        """No more audio. The feeder plays out what is queued and exits, and
-        this waits at most half a second for that. A bounded queue here once
-        meant waiting forever for room nobody would make, the freeze this class
-        exists to prevent, caught by a test."""
-        if not self._dropped:
-            self._chunks.put_nowait(None)
-        self._release()
-
-    def stop(self):
-        self._proc.kill()
-        self._end()
-        self._release()
-
-    def _release(self):
-        """Wait, briefly, for this aplay to let go of the array. The array's
-        output is one device: a reference still draining when the next sentence
-        opens its own made that one fail or stall, so on Sep 30 2026 only the
-        first sentence of any reply ever had a reference. Bounded, because a
-        hung array must still never hold her up."""
-        if not self._exited.wait(0.5):
-            self._proc.kill()
-
-
-def _open_reference():
-    if REFERENCE_DEVICE is None:
-        return None
-    try:
-        return _Reference(REFERENCE_DEVICE)
-    except OSError as e:
-        print(f"  echo reference not started: {e}", flush=True)
-        return None
-
-
 def play(synthesis, interrupt=None):
     """Play a started synthesis to the end.
 
@@ -499,7 +379,7 @@ def play(synthesis, interrupt=None):
 
     with speak_lock:
         started = time.monotonic()
-        aplay, reference, waited_ms = None, None, None
+        aplay, waited_ms = None, None
         try:
             for chunk in synthesis.chunks():
                 # Barge in, checked per chunk. Checked only once the whole
@@ -510,15 +390,10 @@ def play(synthesis, interrupt=None):
                 if aplay is None:
                     ttfb_ms = (time.monotonic() - synthesis.requested_at) * 1000.0
                     aplay = _open_aplay()
-                    # Opened together, so the reference leads her echo by the
-                    # 18.5ms that was measured, not by whatever lies between.
-                    reference = _open_reference()
                 # Flush after every write. Without it Python buffers up to 64KB
                 # and adds about 1.5s of phantom latency; see VOICE_OUTPUT.md.
                 aplay.stdin.write(chunk)
                 aplay.stdin.flush()
-                if reference is not None:
-                    reference.write(chunk)
                 if waited_ms is None:
                     waited_ms = (time.monotonic() - started) * 1000.0
                     timing.note_tts(ttfb_ms,
@@ -540,11 +415,6 @@ def play(synthesis, interrupt=None):
                             aplay.kill()
                             break
                 aplay.wait()
-            if reference is not None:
-                if interrupt is not None and interrupt.is_set():
-                    reference.stop()
-                else:
-                    reference.finish()
 
     if synthesis.error is not None:
         print(f"TTS error (ElevenLabs): {synthesis.error}", flush=True)

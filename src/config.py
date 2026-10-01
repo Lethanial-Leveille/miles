@@ -138,18 +138,6 @@ BARGE_IN = False
 # everything else stays on MIC_CHANNEL. See AUDIO_PIPELINE.md.
 BARGE_IN_CHANNEL = 1
 
-# Her replies are also written to the array's own USB output, with nothing
-# plugged into its jack, purely as the echo canceller's reference. Without it
-# she drowned him out on BARGE_IN_CHANNEL (every live try failed, peak 0.00);
-# with it "hey nova" over her woke at 0.88 and 0.98. The speakers stay on the
-# AB13X, because the array plays 16kHz only and sounded degraded. Measured Sep 30
-# 2026: her echo reaches the mic 18.5ms after the reference, inside the
-# canceller's 192ms window, and did not drift over the clip.
-# Off with barge in: nothing reads the cancelled audio while she talks, and the
-# reference writer reported falling three seconds behind in play() even while
-# the array played the same clip in real time, which is not yet explained.
-AEC_REFERENCE = False
-
 # Barge in has its own threshold, and it is deliberately lower than
 # WAKE_THRESHOLD rather than sharing it.
 #
@@ -787,7 +775,7 @@ WEB_SEARCH_LOCATION = {
 # ALSA card numbers shift between boots, so the speaker is resolved by name
 # at runtime in tts.py rather than hardcoded here. This is just the name to
 # search for in /proc/asound/cards.
-SPEAKER_NAME_HINT = "AB13X"
+SPEAKER_NAME_HINT = "XVF3800"
 
 # ── Shared state ──
 speak_lock = threading.Lock()
