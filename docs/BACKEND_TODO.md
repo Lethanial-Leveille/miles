@@ -593,23 +593,42 @@ only 9 to 15dB above the room). It cancelled everything it could see. On the
 2.0.6 firmware the jack is quiet at the array's `PCM` 40 and the `AIC3104`
 level commands do not exist (status 65); they arrive in 2.1.
 
+**The 48kHz firmware, tried and rolled back the same night (Oct 1 2026).**
+`v2.1.1_48k2ch` flashed cleanly with `sudo dfu-util -R -e -a 1 -D <image>` and
+came back as version 2.1.1, same USB IDs, chip control and the udev rule still
+working without root, routing defaults unchanged, `AIC3104_HP_LEVEL` 8. **It
+offers 48kHz only, for capture as well as playback**, two channels each, so
+miles-voice, which opens the mic at `RATE` 16000, could not run on it. Through
+the jack she **sounded like the AB13X by his ear**, and there were no clicks in
+30s of quiet room or during a 17s playback (issue 39 not reproduced, small
+sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
+`models/xvf3800_firmware/` (gitignored) for flashing either way.
+
 **Next, in order:**
-1. **The 48kHz firmware, so the jack sounds right.** The array plays only
-   16kHz on 2.0.6, which is why the jack sounded degraded and the speakers went
-   on the AB13X. `respeaker_xvf3800_usb_dfu_firmware_v2.1.1_48k2ch.bin` in
-   Seeed's repo, flashed with `dfu-util` over the same cable; no purchase. Read
-   `xmos_firmwares/dfu_guide.md` first and ask before flashing. Test for the
-   clicks in processed capture reported in issue 39, and check that channel 0
-   and channel 1 still mean what `mic_channel.py` assumes. Then speakers on the
-   jack, `play()` to the array only, `_Reference` and `AEC_REFERENCE` retired.
-2. Rerun `record_wake_eval.py` with the canceller locked, before touching any
-   chip setting. The wake model was deaf over her when the canceller was not
-   working; it has never been tested when it was.
-3. Only then speech detection on channel 0, `PP_DTSENSITIVE`, or a retrain,
+1. **Resample the mic, so the pipeline runs on the 48kHz firmware.** In
+   `mic_channel.ChannelPick`: read three times the frames, keep the channel,
+   low pass and keep every third sample, so every reader still gets 16kHz mono
+   and a read of N still returns N. The filter state must carry across reads,
+   for both channels, since barge in reads channel 1 through the same stream;
+   a filter restarted per read puts a seam in every 80ms frame, which no test
+   of a single read would catch. `get_read_available` divides by three.
+   `audio.py` opens at a new capture rate constant; `enroll.py` opens its own
+   stream and needs the same. scipy 1.17 is installed. Then, before trusting it:
+   the suite, a wake scored the same on resampled audio, and the voiceprint
+   still verifying him at its usual scores.
+2. **Move the speakers to the jack for good.** Flash 2.1.1 48k, speaker plug in
+   the array, `SPEAKER_NAME_HINT` to the array, array `PCM` raised from its
+   saved 40 (it was quiet), and `_Reference` with `AEC_REFERENCE` retired: the
+   array's own playback is the reference. Allow two minutes of her speech for
+   the canceller to learn the new path.
+3. Rerun `record_wake_eval.py` with the canceller locked, before touching any
+   chip setting. The wake model was deaf over her only ever while the canceller
+   was not working.
+4. Only then speech detection on channel 0, `PP_DTSENSITIVE`, or a retrain,
    whichever the evaluation points at.
-4. A stop button: the array's mute button released to software with
-   `GPI_EVENT_CONFIG` 0, read with `GPI_EVENT_PENDING`; persisting it needs
-   `SAVE_CONFIGURATION`, ask first.
+5. A stop button: on 2.1.1, `MUTE_FUNCTION_ENABLE` 0 frees the mute button and
+   `GPI_EVENT_PENDING` reads presses; persisting it needs `SAVE_CONFIGURATION`,
+   ask first.
 
 ### 9. What the array still needs (Sep 30 2026)
 
