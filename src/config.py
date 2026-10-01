@@ -287,6 +287,11 @@ MIC_NAME_HINT        = "XVF3800"
 MIC_CAPTURE_CHANNELS = 2
 MIC_CHANNEL          = 0
 
+# What the array delivers, which the firmware decides: 16000 on 2.0.6, 48000 on
+# 2.1.1_48k2ch, which offers nothing else. mic_channel.py brings it down to RATE,
+# so change this with the firmware and nothing else. Must be a multiple of RATE.
+MIC_CAPTURE_RATE     = 16000
+
 
 def _resolve_mixer_card(name_hint, cards_path="/proc/asound/cards"):
     """The ALSA card number carrying the microphone, found by name.

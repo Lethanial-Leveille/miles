@@ -91,7 +91,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── deepgram_stt.py        # the online transcript, with whisper as the floor
 │   ├── wake_listener.py       # hears the wake word during a recording
 │   ├── mic_watchdog.py        # exits when the mic stops delivering, so systemd reopens it
-│   ├── mic_channel.py         # keeps one channel of the array, so the pipeline stays mono
+│   ├── mic_channel.py         # keeps one channel of the array at 16kHz, so the pipeline stays mono
 │   ├── ld2410.py              # the presence radar's report frames, decoded from its serial stream
 │   ├── presence.py            # reads the radar on a thread, logs present/absent/silent changes
 │   ├── wake_gate.py           # drops a wake that arrived too quiet to be him
@@ -126,7 +126,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1247 passing, 6 skipped, Oct 1 2026)
+│   └── tests/                 # pytest suite (1255 passing, 6 skipped, Oct 1 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -222,6 +222,8 @@ of the value itself.
   restarts it; `mic_watchdog.py`)
 - `MIC_CAPTURE_CHANNELS = 2`, `MIC_CHANNEL = 0` (the array offers only two;
   `mic_channel.py` keeps one, so every reader stays mono)
+- `MIC_CAPTURE_RATE = 16000` (what the array firmware delivers: 16000 on 2.0.6,
+  48000 on 2.1.1_48k2ch. `mic_channel.py` filters it down to `RATE`)
 - `MIC_NAME_HINT = "XVF3800"`. `MIC_MIXER_CARD` is **derived** from it at import
   by `_resolve_mixer_card`, never written literally, and is `None` on a miss so
   callers report "cannot check" rather than measuring the wrong device.
