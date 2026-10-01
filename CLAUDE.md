@@ -43,7 +43,8 @@ github.com/Lethanial-Leveille/miles-app.
 ## Hardware
 
 Raspberry Pi 5 (8GB), headless Raspberry Pi OS Lite 64 bit. ReSpeaker XVF3800
-USB 4 mic array (since Sep 30 2026; the Razer Seiren V3 Mini before it), found
+USB 4 mic array (since Sep 30 2026, firmware 2.1.1_48k2ch since Oct 1; the
+Razer Seiren V3 Mini before it, unplugged Oct 1), found
 by name in PyAudio rather than hardcoded to a card number, since ALSA card
 numbers shift on reboot. It does beamforming, noise suppression and AGC on chip
 and hands over two channels; the pipeline keeps channel 0. Amazon Basics USB speakers
@@ -222,8 +223,9 @@ of the value itself.
   restarts it; `mic_watchdog.py`)
 - `MIC_CAPTURE_CHANNELS = 2`, `MIC_CHANNEL = 0` (the array offers only two;
   `mic_channel.py` keeps one, so every reader stays mono)
-- `MIC_CAPTURE_RATE = 16000` (what the array firmware delivers: 16000 on 2.0.6,
-  48000 on 2.1.1_48k2ch. `mic_channel.py` filters it down to `RATE`)
+- `MIC_CAPTURE_RATE = 48000` (what the array firmware delivers: 48000 on
+  2.1.1_48k2ch, live since Oct 1 2026; 16000 on 2.0.6, the rollback.
+  `mic_channel.py` filters it down to `RATE`)
 - `MIC_NAME_HINT = "XVF3800"`. `MIC_MIXER_CARD` is **derived** from it at import
   by `_resolve_mixer_card`, never written literally, and is `None` on a miss so
   callers report "cannot check" rather than measuring the wrong device.
