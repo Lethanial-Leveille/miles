@@ -99,6 +99,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── presence.py            # reads the radar on a thread, logs present/absent/silent changes
 │   ├── wake_gate.py           # drops a wake that arrived too quiet to be him
 │   ├── endpoint.py            # when a command recording is finished: the stop decision alone
+│   ├── interrupt_speech.py    # whether he has started talking over her: barge in on speech
 │   ├── wake_capture.py        # what to evict when a capture directory is full
 │   ├── speaker_encoder.py     # Encoder abstraction behind verify_voice
 │   ├── early_verify.py        # voice embedding started beside the speculative transcript
@@ -130,7 +131,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1254 passing, 6 skipped, Oct 1 2026)
+│   └── tests/                 # pytest suite (1266 passing, 6 skipped, Oct 1 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -293,6 +294,12 @@ of the value itself.
   `BARGE_IN_CHANNEL = 1` (the wake word only, heard on the recognition beam. Off
   Sep 30 while her echo crossed two USB clocks; with her on the array's jack the
   model heard him over her 27 of 29. `play()` stops mid sentence)
+- `BARGE_IN_SPEECH = True` (since Oct 1 2026), `BARGE_IN_SPEECH_FLOOR = -40.0`,
+  `BARGE_IN_SPEECH_MS = 300` (any speech over her stops her, not only the wake
+  word: 30ms frames over the floor that webrtcvad calls speech, that many in a
+  row, on `BARGE_IN_CHANNEL`; `interrupt_speech.py`. Anyone's speech counts)
+- `BARGE_IN_STOP_DIR = ~/miles/data/barge_in_stops`, `BARGE_IN_STOP_MAX_FILES = 100`
+  (the audio behind every stop, so a false one can be heard)
 
 ### Model and prompt — why: [BRAIN.md](docs/BRAIN.md)
 - `MODEL_A = "claude-haiku-4-5"` — **this is the production model**

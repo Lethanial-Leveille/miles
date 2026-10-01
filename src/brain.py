@@ -148,7 +148,8 @@ _SYNTHESIS_AHEAD = 2
 
 
 def _play_with_barge_in(synthesis):
-    """Play one synthesized sentence, listening for the wake word while it plays.
+    """Play one synthesized sentence, listening for him while it plays: the
+    wake word, or any speech loud enough (BARGE_IN_SPEECH).
 
     Returns (interrupted, waited_ms).
 
@@ -259,7 +260,7 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
                 print(f"  rest of reply ({len(sentences)} sentences) waited "
                       f"{waited_ms:.0f}ms for audio", flush=True)
             if interrupted:
-                # He said the wake word over her. Drop the rest rather than
+                # He said the wake word, or spoke, over her. Drop the rest rather than
                 # finishing the thought he interrupted, which is the entire
                 # point of being able to interrupt.
                 break
