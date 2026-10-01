@@ -605,17 +605,21 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
 `models/xvf3800_firmware/` (gitignored) for flashing either way.
 
 **Next, in order:**
-1. **Resample the mic, so the pipeline runs on the 48kHz firmware.** In
-   `mic_channel.ChannelPick`: read three times the frames, keep the channel,
-   low pass and keep every third sample, so every reader still gets 16kHz mono
-   and a read of N still returns N. The filter state must carry across reads,
-   for both channels, since barge in reads channel 1 through the same stream;
-   a filter restarted per read puts a seam in every 80ms frame, which no test
-   of a single read would catch. `get_read_available` divides by three.
-   `audio.py` opens at a new capture rate constant; `enroll.py` opens its own
-   stream and needs the same. scipy 1.17 is installed. Then, before trusting it:
-   the suite, a wake scored the same on resampled audio, and the voiceprint
-   still verifying him at its usual scores.
+1. **Resample the mic (BUILT Oct 1 2026, waiting on the flash).**
+   `mic_channel.ChannelPick` reads three times the frames, filters every channel
+   on every read with its state carried across reads (121 tap Kaiser FIR, cut at
+   7.5kHz: flat to 6.5k, 82dB down from 8.8k, 0.6ms per read on the Pi), and
+   keeps every third sample, so readers still get 16kHz mono. Turned on by
+   `MIC_CAPTURE_RATE` alone: 16000 today, which passes audio through exactly as
+   before, 48000 after the flash; `audio.py` and `enroll.py` both read it. Tests
+   break on the two traps: a filter restarted per read, and channel 0 going
+   stale while barge in reads channel 1. Checked offline on archived 16kHz audio
+   raised to 48kHz and brought back down: 60 wake hits moved by a median
+   minus 0.005 (worst minus 0.148, none fell below 0.4), 30 of his recordings
+   verified at a median 0.491 against 0.483. **Still to check after the flash**,
+   on audio the chip actually delivers at 48kHz: channel 0 and 1 mean what
+   `mic_channel.py` assumes, wake hits score as before, he verifies at his usual
+   scores.
 2. **Move the speakers to the jack for good.** Flash 2.1.1 48k, speaker plug in
    the array, `SPEAKER_NAME_HINT` to the array, array `PCM` raised from its
    saved 40 (it was quiet), and `_Reference` with `AEC_REFERENCE` retired: the
@@ -644,9 +648,8 @@ session, and the enclosure will move all of them again.
 - **AEC by reference only.** Tried the same day; see
   [Barge in on the array](#barge-in-on-the-array-tried-sep-30-2026-off).
 - **`xvf_host`**: direction of arrival, the LED ring, AEC and beam parameters.
-- **48kHz firmware (`_48k2ch`)**: skipped. Nothing says the jack plays at 48kHz,
-  and an open, unanswered report (respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY
-  issue 39) has clicks in processed capture on it.
+- **48kHz firmware (`_48k2ch`)**: tried Oct 1 2026, and the speakers move to it;
+  see [Barge in on the array](#barge-in-on-the-array-tried-sep-30-2026-off).
 
 ---
 

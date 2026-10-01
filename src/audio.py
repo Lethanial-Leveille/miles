@@ -83,7 +83,7 @@ from config import (
     BARGE_IN_CHANNEL,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL, MIC_NAME_HINT,
-    MIC_CAPTURE_CHANNELS, MIC_CHANNEL,
+    MIC_CAPTURE_CHANNELS, MIC_CHANNEL, MIC_CAPTURE_RATE,
     capsule_name, SPEAKER_ENCODER,
     ARCHIVE_RECORDINGS, ARCHIVE_DIR, ARCHIVE_MAX_FILES,
     TTS_FLUSH_MARGIN_MS,
@@ -219,14 +219,15 @@ with silence_stderr():
     stream = _audio.open(
         format=FORMAT,
         channels=MIC_CAPTURE_CHANNELS,
-        rate=RATE,
+        rate=MIC_CAPTURE_RATE,
         input=True,
         input_device_index=mic_index,
-        frames_per_buffer=CHUNK,
+        frames_per_buffer=CHUNK * mic_channel.decimation(MIC_CAPTURE_RATE, RATE),
     )
 
-# Every reader below expects mono. See mic_channel.py.
-stream = mic_channel.ChannelPick(stream, MIC_CAPTURE_CHANNELS, MIC_CHANNEL)
+# Every reader below expects mono at RATE. See mic_channel.py.
+stream = mic_channel.ChannelPick(stream, MIC_CAPTURE_CHANNELS, MIC_CHANNEL,
+                                 capture_rate=MIC_CAPTURE_RATE, rate=RATE)
 
 # A read that never returns is a deaf assistant with every service reporting
 # active. The guard ends the process instead, and systemd reopens the device.

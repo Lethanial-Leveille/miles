@@ -61,7 +61,7 @@ import speaker_encoder
 
 from config import (
     RATE, CHANNELS, CHUNK, SPEAKER_NAME_HINT,
-    MIC_NAME_HINT, MIC_CAPTURE_CHANNELS, MIC_CHANNEL,
+    MIC_NAME_HINT, MIC_CAPTURE_CHANNELS, MIC_CHANNEL, MIC_CAPTURE_RATE,
     VOICEPRINT_PATH, ENROLLMENT_DATA_PATH, ENROLLMENT_AUDIO_DIR,
     SPEAKER_ENCODER,
     MIN_VOICED_SECONDS, ENROLL_RECORD_SECONDS,
@@ -291,12 +291,13 @@ def main():
 
     speaker = resolve_speaker_device(SPEAKER_NAME_HINT)
 
-    stream = audio.open(format=FORMAT, channels=MIC_CAPTURE_CHANNELS, rate=RATE,
-                        input=True, input_device_index=mic_index,
-                        frames_per_buffer=CHUNK)
-    # The same channel the voice loop hears, or the voiceprint is built on a
-    # different signal than the one it will verify. See mic_channel.py.
-    stream = mic_channel.ChannelPick(stream, MIC_CAPTURE_CHANNELS, MIC_CHANNEL)
+    stream = audio.open(format=FORMAT, channels=MIC_CAPTURE_CHANNELS,
+                        rate=MIC_CAPTURE_RATE, input=True, input_device_index=mic_index,
+                        frames_per_buffer=CHUNK * mic_channel.decimation(MIC_CAPTURE_RATE, RATE))
+    # The same channel and the same filter the voice loop hears, or the
+    # voiceprint is built on a different signal than the one it will verify.
+    stream = mic_channel.ChannelPick(stream, MIC_CAPTURE_CHANNELS, MIC_CHANNEL,
+                                     capture_rate=MIC_CAPTURE_RATE, rate=RATE)
 
     encoder = speaker_encoder.get_encoder(SPEAKER_ENCODER)
 
