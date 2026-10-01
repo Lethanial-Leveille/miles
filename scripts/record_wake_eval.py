@@ -42,8 +42,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+import numpy as np
+
+import mic_channel
 import tts
-from config import MIC_NAME_HINT
+from config import MIC_NAME_HINT, MIC_CAPTURE_RATE, RATE
 from label_wake import _voice_service_paused
 
 EVAL_DIR = os.path.join(ROOT, "data", "wake_eval")
@@ -138,8 +141,13 @@ def _take(session, number, kind, spot, clip, mic):
     print(f"\n=== take {number}: {kind}{where}, {seconds:.0f}s. {what}")
     input("    press Enter when ready... ")
 
-    rec = subprocess.Popen(["arecord", "-q", "-D", mic, "-f", "S16_LE", "-r", "16000",
-                            "-c", "2", "-d", str(int(seconds + 3)), path])
+    # Recorded at whatever the firmware delivers (48kHz only on 2.1.1), then
+    # brought to RATE by the pipeline's own filter, so a take scores what the
+    # wake model in production would have heard.
+    raw_path = path + ".raw.wav"
+    rec = subprocess.Popen(["arecord", "-q", "-D", mic, "-f", "S16_LE",
+                            "-r", str(MIC_CAPTURE_RATE), "-c", "2",
+                            "-d", str(int(seconds + 3)), raw_path])
     t0 = time.monotonic()
     time.sleep(1.0)
     play_at = time.monotonic() - t0
@@ -153,11 +161,42 @@ def _take(session, number, kind, spot, clip, mic):
     for c in cue_threads:
         c.join()
     rec.wait()
+    _to_pipeline_rate(raw_path, path)
 
     said = _confirm(len(cues_at))
     return {"file": os.path.basename(path), "kind": kind, "spot": spot, "clip": clip,
             "play_at": round(play_at, 3), "play_s": round(seconds, 3) if pcm else 0.0,
             "cues": [{"at": at, "said": s} for at, s in zip(heard_at, said)]}
+
+
+class _Recorded:
+    """A finished recording, read the way ChannelPick reads the live stream."""
+
+    def __init__(self, data):
+        self._data, self._at = data, 0
+
+    def read(self, frames, **kwargs):
+        size = frames * 4                       # two channels of 16 bit
+        chunk = self._data[self._at:self._at + size].ljust(size, b"\0")
+        self._at += size
+        return chunk
+
+
+def _to_pipeline_rate(raw_path, path):
+    """Both channels at RATE, through mic_channel's filter, as one stereo wav."""
+    with wave.open(raw_path) as w:
+        data, frames = w.readframes(w.getnframes()), w.getnframes()
+    out_frames = frames // mic_channel.decimation(MIC_CAPTURE_RATE, RATE)
+    channels = [np.frombuffer(
+        mic_channel.ChannelPick(_Recorded(data), 2, pick, capture_rate=MIC_CAPTURE_RATE,
+                                rate=RATE).read(out_frames), dtype=np.int16)
+        for pick in (0, 1)]
+    with wave.open(path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes(np.column_stack(channels).tobytes())
+    os.remove(raw_path)
 
 
 def _plan(takes):
