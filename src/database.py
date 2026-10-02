@@ -713,6 +713,27 @@ def _migration_030_hevy_progressions(conn):
     conn.execute("CREATE INDEX idx_hevy_progressions_workout ON hevy_progressions (workout_id)")
 
 
+def _migration_031_checkin_log(conn):
+    """What the evening check in said, one row per point.
+
+    The key is what keeps a point from being said twice ("gym_lost:2026-09-21"
+    is said once that week, across restarts). A night with nothing to say still
+    gets a row with key NULL, so the check in knows it already ran. skipped
+    names the sources that failed, so a night Oura was down reads as that and
+    not as a good night."""
+    conn.execute("""
+        CREATE TABLE checkin_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ran_at TEXT NOT NULL,
+            night TEXT NOT NULL,
+            key TEXT,
+            summary TEXT,
+            skipped TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX idx_checkin_log_night ON checkin_log (night)")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -744,6 +765,7 @@ MIGRATIONS = [
     (28, _migration_028_memory_pair_dismissals),
     (29, _migration_029_presence_energy),
     (30, _migration_030_hevy_progressions),
+    (31, _migration_031_checkin_log),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -1676,6 +1698,36 @@ def hevy_raises_after(workout_start):
         " WHERE workout_start = ? AND exercise IS NOT NULL", (workout_start,)).fetchall()
     conn.close()
     return {exercise: (from_lb, to_lb) for exercise, from_lb, to_lb in rows}
+
+
+def checkin_ran(night):
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT 1 FROM checkin_log WHERE night = ? LIMIT 1",
+                       (night.isoformat(),)).fetchone()
+    conn.close()
+    return row is not None
+
+
+def checkin_said():
+    """Every key the check in has ever said. Keys carry their own week or
+    stretch, so an old one never matches a new point and needs no pruning."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute("SELECT key FROM checkin_log WHERE key IS NOT NULL").fetchall()
+    conn.close()
+    return {row[0] for row in rows}
+
+
+def record_checkin(night, points, skipped=()):
+    """points is [Point]; empty still marks the night as run."""
+    now = datetime.now().isoformat()
+    skipped = ",".join(skipped) or None
+    rows = [(now, night.isoformat(), p.key, p.summary, skipped) for p in points] \
+        or [(now, night.isoformat(), None, None, skipped)]
+    conn = sqlite3.connect(DB_PATH)
+    conn.executemany("INSERT INTO checkin_log (ran_at, night, key, summary, skipped)"
+                     " VALUES (?, ?, ?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
 
 
 def last_reply_at():
