@@ -19,6 +19,8 @@ next. Restarting the frame grid per read would change every frame boundary from
 what was measured.
 """
 
+import threading
+
 import numpy as np
 
 FRAME = 480        # 30ms at 16kHz, VAD_FRAME everywhere else in the pipeline
@@ -70,3 +72,56 @@ class SpeechOnset:
                 self.onset = (self.frames - self.run) * FRAME
                 return True
         return False
+
+
+def seed_from(kept, onset, preroll_samples):
+    """What the next recording starts with: his audio from a preroll before his
+    onset. The same preroll every recording keeps, so a soft first consonant
+    is not cut off where the run of loud frames began."""
+    return kept[max(0, onset - preroll_samples) * 2:]
+
+
+class Carrier:
+    """Keeps recording him after a speech stop, until the voice loop claims it.
+
+    Between her stopping and the follow up listener opening, the turn still has
+    to finish, and on Oct 1 2026 what he said in that gap was flushed as if it
+    were her echo: "Are you?" reached Claude as all that was left of his
+    interruption. This reads on, so nothing is dropped and the buffer never
+    overflows. Its own thread rather than the watcher's, because the player
+    waits on the watcher, and every interruption would wait with it.
+
+    One reader at a time on the mic stream: claim stops the reading before
+    returning, and whoever claims is the next reader. Stops by itself at
+    max_seconds in case nothing claims it."""
+
+    def __init__(self, seed, read, max_seconds, rate=16000):
+        self._chunks = [seed]
+        self._size = len(seed)
+        self._read = read
+        self._max_bytes = int(max_seconds * rate) * 2
+        self._release = threading.Event()
+        self._done = threading.Event()
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        try:
+            while not self._release.is_set() and self._size < self._max_bytes:
+                data = self._read()
+                self._chunks.append(data)
+                self._size += len(data)
+        except Exception as e:
+            print(f"  barge in: carrying his speech failed: {e!r}", flush=True)
+        finally:
+            self._done.set()
+
+    def claim(self, timeout=1.0):
+        """Everything kept, once the reading has stopped. A read is 80ms, so the
+        timeout is only reached if the mic itself has stalled, which the mic
+        watchdog ends the process for."""
+        self._release.set()
+        if not self._done.wait(timeout):
+            print("  barge in: the carrier did not stop; the mic may be stalled", flush=True)
+        return b"".join(self._chunks)

@@ -131,7 +131,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1269 passing, 6 skipped, Oct 1 2026)
+│   └── tests/                 # pytest suite (1278 passing, 6 skipped, Oct 2 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -453,7 +453,8 @@ Landed since v0.7.1, unreleased:
 
 - The ReSpeaker XVF3800 on its 48kHz firmware, resampled to 16kHz at the
   stream; speakers on its own jack, so its echo canceller works
-- Barge in: "hey nova" over her stops her mid sentence
+- Barge in: "hey nova" over her stops her mid sentence; so does any speech of
+  his, and what he said is kept and answered as the next turn
 
 ## What Is Next
 

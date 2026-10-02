@@ -123,3 +123,104 @@ def test_every_stop_keeps_its_audio():
     saves = next(n for n in ast.walk(watcher)
                  if isinstance(n, ast.If) and ast.unparse(n.test) == "heard")
     assert "BARGE_IN_STOP_DIR" in ast.unparse(saves)
+
+
+# ── step 2: keeping what he said ──
+
+import threading
+import time
+
+from interrupt_speech import Carrier, seed_from
+
+
+def test_the_seed_starts_a_preroll_before_his_onset():
+    kept = bytes(range(200)) * 100                   # 10000 samples
+    assert seed_from(kept, 5000, 4800) == kept[200 * 2:]
+    assert seed_from(kept, 1000, 4800) == kept, "never before the first byte"
+
+
+def test_the_carrier_keeps_reading_until_claimed():
+    reads = []
+
+    def read():
+        reads.append(1)
+        time.sleep(0.005)
+        return b"\x01\x00" * 1280
+
+    carrier = Carrier(b"seed", read, max_seconds=30)
+    carrier.start()
+    time.sleep(0.05)
+    pcm = carrier.claim()
+    assert pcm.startswith(b"seed") and len(reads) >= 2
+    count = len(reads)
+    time.sleep(0.03)
+    assert len(reads) == count, "after the claim it must never read the mic again"
+
+
+def test_the_carrier_stops_by_itself_at_the_cap():
+    carrier = Carrier(b"", lambda: b"\x00\x00" * 1600, max_seconds=1.0)
+    carrier.start()
+    assert carrier._done.wait(1.0)
+    assert len(carrier.claim()) == 16000 * 2
+
+
+def test_a_failing_read_ends_the_carrier_with_what_it_had():
+    def read():
+        raise OSError("gone")
+    carrier = Carrier(b"seed", read, max_seconds=30)
+    carrier.start()
+    assert carrier.claim() == b"seed"
+
+
+def _source_of(module, name):
+    import ast
+    import pathlib
+    tree = ast.parse((pathlib.Path(__file__).resolve().parent.parent / module).read_text())
+    return next(n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def test_only_a_speech_stop_is_carried_and_only_after_the_watcher_reads_no_more():
+    import ast
+    watcher = _source_of("audio.py", "watch_for_interrupt")
+    hand_off = next(n for n in ast.walk(watcher) if isinstance(n, ast.If)
+                    and ast.unparse(n.test) == "heard == 'speech'"
+                    and "Carrier(" in ast.unparse(n))
+    loop = next(n for n in ast.walk(watcher) if isinstance(n, ast.While))
+    assert hand_off.lineno > loop.end_lineno, "two readers on one stream"
+    assert "channel=BARGE_IN_CHANNEL" in ast.unparse(hand_off)
+
+
+def test_a_flush_releases_the_carrier_before_it_reads():
+    import ast
+    flush = ast.unparse(_source_of("audio.py", "flush_input"))
+    assert flush.index("claim_interruption()") < flush.index("stream.read")
+
+
+def test_the_voice_loop_claims_his_interruption_instead_of_flushing_it():
+    """Oct 1 2026: what he said after cutting in was flushed as her echo, and
+    "Are you?" was all that reached Claude."""
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parent.parent / "voice_main.py").read_text()
+    assert source.count("interruption = audio.claim_interruption()\n") == 2, (
+        "both replies, the first and every follow up, can be interrupted")
+    assert "seed=interruption" in source
+    assert "learn=not interrupted_turn" in source
+
+
+def test_an_interruption_never_teaches_the_voiceprint():
+    import ast
+    verify = ast.unparse(_source_of("audio.py", "verify_voice"))
+    keep = next(line for line in verify.splitlines() if "accepted and learn" in line)
+    assert keep
+
+
+def test_a_short_interruption_keeps_her_listening():
+    """Oct 2 2026: "Wait." then a pause; 0.48s of voice ended the conversation
+    with him mid thought."""
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parent.parent / "voice_main.py").read_text()
+    for branch in ("if is_noise_transcript(followup_text):",
+                   "if followup_result == audio.NO_AUDIO:"):
+        body = source[source.index(branch):].split("break", 1)[0]
+        assert "if interrupted_turn:" in body and "continue" in body, branch

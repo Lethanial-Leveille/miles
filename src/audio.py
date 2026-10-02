@@ -144,6 +144,10 @@ def flush_input(margin_ms=None):
     most of it in place."""
     margin_ms = TTS_FLUSH_MARGIN_MS if margin_ms is None else margin_ms
 
+    # A carrier still reading would be a second reader; a caller that flushes
+    # has decided it does not want what he said.
+    claim_interruption()
+
     while True:
         available = stream.get_read_available()
         if available < VAD_FRAME:
@@ -334,7 +338,16 @@ def record_command(on_wake=None):
     return TEMP_WAV
 
 
-def listen_for_followup(timeout=10, on_wake=None):
+def listen_for_followup(timeout=10, on_wake=None, seed=None):
+    """Record a follow up, or return None if he does not start within timeout.
+
+    seed is an interruption from claim_interruption: he has already started,
+    so there is no wait for onset. Its frames go through the same endpointing
+    as live ones, so a pause he has already left counts toward the end, and
+    the rest is read on the channel the seed came from: over her only channel
+    1 heard him (Oct 2 2026, sentences read over her: 5.2 percent of words
+    wrong on channel 1, 64 on channel 0), and in a quiet room the two scored
+    the same."""
     timeout_chunks    = int(timeout / 0.03)
     max_chunks        = int(MAX_RECORD / 0.03)
     min_chunks        = int(0.5 / 0.03)
@@ -346,10 +359,13 @@ def listen_for_followup(timeout=10, on_wake=None):
 
     waiting_chunks = 0
     speech_chunks  = 0
-    speech_started = False
+    speech_started = seed is not None
+    channel = BARGE_IN_CHANNEL if seed is not None else None
+    seeded = deque(seed[i:i + VAD_FRAME * 2]
+                   for i in range(0, len(seed or b"") - VAD_FRAME * 2 + 1, VAD_FRAME * 2))
 
     # Phase 1: wait up to timeout for speech to begin
-    while waiting_chunks < timeout_chunks:
+    while not speech_started and waiting_chunks < timeout_chunks:
         data = stream.read(VAD_FRAME, exception_on_overflow=False)
         preroll.append(data)
         waiting_chunks += 1
@@ -366,7 +382,7 @@ def listen_for_followup(timeout=10, on_wake=None):
     if not speech_started:
         return None
 
-    frames = list(preroll)
+    frames = [] if seed is not None else list(preroll)
 
     # Phase 2: record until silence (mirrors record_command)
     total_chunks   = len(frames)
@@ -379,7 +395,8 @@ def listen_for_followup(timeout=10, on_wake=None):
     wake = _recording_wake()
 
     while total_chunks < max_chunks:
-        data   = stream.read(VAD_FRAME, exception_on_overflow=False)
+        data   = (seeded.popleft() if seeded else
+                  stream.read(VAD_FRAME, exception_on_overflow=False, channel=channel))
         frames.append(data)
         total_chunks += 1
 
@@ -420,7 +437,8 @@ def listen_for_followup(timeout=10, on_wake=None):
     # time spent waiting for speech as though it were recorded audio, which is
     # why the logs showed follow ups of 11 to 13 seconds that were nothing of
     # the sort. The wav itself was always correct.
-    print(f"Follow up recorded {total_chunks * 0.03:.1f}s", flush=True)
+    print(f"Follow up recorded {total_chunks * 0.03:.1f}s"
+          f"{', from his interruption' if seed is not None else ''}", flush=True)
     _write_wav(frames)
     return TEMP_WAV
 
@@ -953,6 +971,26 @@ BARGE_IN_WAV = os.path.expanduser("~/miles/build/barge_in_{}.wav")
 BARGE_IN_KEEP = 4
 _barge_in_count = 0
 
+# What he said over her, still being recorded, until the voice loop claims it.
+_pending_interruption = None
+_pending_lock = threading.Lock()
+
+
+def claim_interruption():
+    """His interruption so far as 16kHz mono bytes on BARGE_IN_CHANNEL, or None.
+
+    Stops the carrier before returning, so the caller is free to read the mic.
+    Anything about to read the stream after her reply calls this first;
+    flush_input does, so every path that flushes also releases it."""
+    global _pending_interruption
+    with _pending_lock:
+        carrier, _pending_interruption = _pending_interruption, None
+    if carrier is None:
+        return None
+    pcm = carrier.claim()
+    print(f"  barge in: kept {len(pcm) / 2 / RATE:.1f}s of what he said", flush=True)
+    return pcm
+
 
 def watch_for_interrupt(stop_event):
     """Listen for him while Nova is speaking. Returns True if heard.
@@ -1048,6 +1086,20 @@ def watch_for_interrupt(stop_event):
     print(f"  barge in: {'HEARD ' + heard if heard else 'watched'} "
           f"{frames * CHUNK / RATE:.1f}s, peak {peak:.2f}{level_text}{onset_text} "
           f"({os.path.basename(path)})", flush=True)
+    if heard == "speech":
+        # Started only once this thread has stopped reading, so the two never
+        # read the stream at once. A wake word stop is not carried: what he
+        # says after "hey nova" is a fresh command and the follow up hears it.
+        global _pending_interruption
+        carrier = interrupt_speech.Carrier(
+            interrupt_speech.seed_from(b"".join(kept), speech.onset,
+                                       VAD_PREROLL_MS * RATE // 1000),
+            lambda: stream.read(CHUNK, exception_on_overflow=False,
+                                channel=BARGE_IN_CHANNEL),
+            MAX_RECORD, RATE)
+        with _pending_lock:
+            _pending_interruption = carrier
+        carrier.start()
     return heard is not None
 
 
@@ -1079,7 +1131,7 @@ def wake_word_audio(seconds=1.5):
 
 
 def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence=None,
-                 session_trusted=False, recording_path=None):
+                 session_trusted=False, recording_path=None, learn=True):
     from config import (VERIFY_THRESHOLD,
                         VOICEPRINT_LEARN_MIN_SIMILARITY,
                         VOICEPRINT_LEARN_MIN_SECONDS)
@@ -1197,7 +1249,9 @@ def verify_voice(wav_path, transcript=None, turn_type='initial', wake_confidence
     # is the accept threshold: a sample that merely passed is not evidence
     # strong enough to change what "he sounds like" means, and the profile is
     # not correctable once a wrong one is averaged in.
-    if (accepted
+    # learn is False for an interruption: it was recorded on BARGE_IN_CHANNEL,
+    # which the voiceprint was not enrolled on, with her voice under his.
+    if (accepted and learn
             and similarity >= VOICEPRINT_LEARN_MIN_SIMILARITY
             and embedded_duration_seconds >= VOICEPRINT_LEARN_MIN_SECONDS):
         # Tagged with whichever encoder is live, never a literal. The column

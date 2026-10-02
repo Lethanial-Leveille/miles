@@ -707,6 +707,31 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
       seed the next recording, which endpoints as a command does. Channel 0
       chops his voice while she plays, so the interrupting stretch comes from
       channel 1; check verification and transcription on that mix.
+      **LIVE Oct 2 2026.** Measured first (`record_wake_eval.py --sentence`,
+      `barge_in_eval/20261002T004951`, a sentence shown at each cue, scored
+      per channel with the pipeline's own Deepgram call and encoder):
+
+      | | Words wrong, quiet | Over her | Verify, quiet | Over her (median, lowest) |
+      |---|---|---|---|---|
+      | channel 0 | 1.4% | 64.4% | 0.454 | 0.280, 0.229 |
+      | channel 1 | 1.4% | 5.2% | 0.447 | 0.505, 0.408 |
+
+      So the whole interruption is recorded on channel 1. Pessimistic: she
+      played through his whole sentence there, and live she stops 0.34s in.
+      On a speech stop the watcher hands off to `interrupt_speech.Carrier`,
+      which keeps reading until `audio.claim_interruption()`; `flush_input`
+      claims first, so there is one reader at a time on every path. The voice
+      loop claims instead of flushing after a reply and seeds
+      `listen_for_followup`. An interruption never teaches the voiceprint
+      (`learn=False`). First live test: every interruption arrived whole
+      ("Wait. I'm sorry. Can you say that a little bit slower?"). "Wait." then
+      a pause was 0.48s of voice, under what verification takes, and ended
+      the conversation; a short or noise interruption now reopens the window.
+
+      **Not possible yet: "say it slower".** v3 ignores `speed` (VOICE_OUTPUT.md);
+      she repeats at the same pace. Worth trying: told to slow down, she
+      rewrites in short sentences with ellipses, which v3 does pause on. By
+      ear before keeping it.
    3. A conversation: history keeps only what she said before he cut in,
       marked as interrupted, so "actually" reaches Claude in context.
    4. Live tests, including other voices and a TV, to decide whether the
