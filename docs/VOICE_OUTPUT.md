@@ -333,8 +333,10 @@ ElevenLabs specific:
 - Emma voice catalog deprecates Dec 31 2026, save to "My Voices" before then
 - Python's `stdin.write()` to the aplay subprocess buffers up to 64KB by default.
   ALWAYS call `flush()` after every write or you get ~1.5s phantom latency.
-- aplay's ALSA buffer holds ~185ms of audio after writing stops (relevant for
-  future barge in support)
+- aplay is opened with an 8192 frame ALSA buffer, 0.37s at 22050Hz, and the
+  pipe in front of it holds more. Barge in kills aplay rather than waiting it
+  out, and counts what was heard as wall time since the first write
+  (`synthesis.heard_s`, Oct 2 2026), since what is queued was never heard
 - v3 stability above 0.7 makes it ignore audio tags
 - v3 has no WebSocket support. It accepts `use_speaker_boost` and any stability; whether it honors them is unmeasured (checked Sep 13 2026)
 - v3 ignores `speed`: 1.0 and 1.1 rendered to identical lengths

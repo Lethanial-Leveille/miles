@@ -1533,3 +1533,52 @@ he judged by ear to sound like the AB13X. Blocked only on resampling the mic
 from 48kHz, which the firmware forces on capture too. The numbers are in
 [BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
 
+### Any speech stops her, his or anyone's, at -37 dBFS on channel 1 (Oct 2 2026) (DONE)
+
+Barge in fires on 300ms of speech louder than the floor on `BARGE_IN_CHANNEL`,
+beside the wake word. **Whose speech it is is not checked**, chosen with him:
+a voiceprint needs about two seconds of speech, so checking first would mean
+her talking over him for two seconds, which defeats interrupting. Who it was
+is decided afterward, on the whole interruption, as any turn is; a busy room
+costs her the rest of a sentence, and the ignore tool keeps her from answering
+it. The floor came up from -40 to -37 when people talking outside the room
+stopped her 7 times; -37 kept all 29 of his takes and none of the rest, with
+about 1dB of margin each way. Numbers in
+[BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
+**DIVERGENCE:** the plan had `watch_for_interrupt` return why it stopped. It
+runs as a thread target, whose return value is discarded, so the reason went to
+the log and the audio to a carrier object instead.
+
+### An interruption is recorded on channel 1 and never teaches the voiceprint (Oct 2 2026) (DONE)
+
+Measured before building: sentences read over her came through channel 1 with
+5.2 percent of words wrong against 64.4 on channel 0, and verified at a median
+0.505; in a quiet room the two channels scored the same. So the whole
+interruption, before and after she stops, is one channel. It is still kept out
+of the voiceprint samples: the voiceprint was enrolled on channel 0, her voice
+is under his, and the store has been poisoned once. Her history keeps only the
+words he heard, marked "[You were cut off here.]".
+
+### The wake note says what was heard, and she ignores more than she used to (Oct 1 2026) (DONE)
+
+After she answered his phone call three times
+([INCIDENTS.md](INCIDENTS.md#she-answered-his-phone-call-three-times-oct-1-2026)),
+four wordings were replayed over 30 of his turns. The chosen one stays silent
+on room talk 44 of 63 times (16 before) and answers 22 of 24 meant for her (24
+before): a garbled reply to her ("Actually, never mind oranges") is sometimes
+taken for room talk. **Chosen knowing that cost**, because missing a reply
+costs him a repeat and answering room talk talks over him. A firmer wording
+reached 56 of 63 and ignored "Is Trump a good president?", the Sep 26 case, and
+was rejected for it. Any change to this wording is replayed first
+(`scripts/replay_ignore.py`); see [BRAIN.md](BRAIN.md#the-ignore-tool).
+
+### The wake threshold stays at 0.4 on the array (Oct 2 2026) (DECIDED)
+
+His roommates hear the chime on false wakes. On his labels no threshold
+separates his wakes from the false ones: 0.55 cuts 6 of 8 false wakes and
+misses 3 of his 18, and a missed wake is worse than a stray chime. A score and
+level rule is scored offline (`scripts/wake_rule.py`) and acts only once more
+labelled days, his other spots included, say it costs him nothing. The real fix
+is retraining the model; see
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#on-the-array-oct-2-2026-still-no-threshold).
+

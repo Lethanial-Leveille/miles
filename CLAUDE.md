@@ -293,7 +293,8 @@ of the value itself.
 
 ### Barge in — why: `config.py` comments and [BACKEND_TODO.md](docs/BACKEND_TODO.md)
 - `BARGE_IN = True` (since Oct 1 2026), `BARGE_IN_THRESHOLD = 0.30`,
-  `BARGE_IN_CHANNEL = 1` (the wake word only, heard on the recognition beam. Off
+  `BARGE_IN_CHANNEL = 1` (the recognition beam: the wake word and his speech are
+  heard there, and an interruption is recorded there. Off
   Sep 30 while her echo crossed two USB clocks; with her on the array's jack the
   model heard him over her 27 of 29. `play()` stops mid sentence)
 - `BARGE_IN_SPEECH = True` (since Oct 1 2026), `BARGE_IN_SPEECH_FLOOR = -37.0`,
