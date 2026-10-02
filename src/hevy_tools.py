@@ -288,11 +288,36 @@ def _on_a_stack(exercise_title):
     return "(Machine)" in exercise_title or "Cable" in exercise_title or exercise_title == "Face Pull"
 
 
-def _increment(exercise_title):
+# The apartment's heaviest dumbbell is 50 (Oct 2 2026). He logs a one dumbbell
+# lift per hand and a two dumbbell lift as the two added together, so a
+# dumbbell lift logged above 50 can only be a pair: split squat 100 is 50 and
+# 50. A pair below 50 in total would be read as one hand; none is logged so.
+_DUMBBELL_MAX_LB = 50
+
+
+def _is_a_pair(exercise_title, lb):
+    return _on_dumbbells(exercise_title) and lb > _DUMBBELL_MAX_LB
+
+
+def _on_dumbbells(exercise_title):
+    return "dumbbell" in exercise_title.lower()
+
+
+def _cap(exercise_title, lb):
+    """The heaviest this lift can be loaded, or None for no limit known."""
+    if not _on_dumbbells(exercise_title):
+        return None
+    return 2 * _DUMBBELL_MAX_LB if _is_a_pair(exercise_title, lb) else _DUMBBELL_MAX_LB
+
+
+def _increment(exercise_title, lb=0):
     """Pounds to add. Machines and cables go up ten, his choice on Oct 1 2026:
     every stack is different, so he takes the nearest pin and the log keeps
-    what he actually used."""
+    what he actually used. A pair of dumbbells goes up ten, five a hand; five
+    on the pair would be a dumbbell that does not exist."""
     if exercise_title in _TEN_POUND_LIFTS or _on_a_stack(exercise_title):
+        return 10
+    if _is_a_pair(exercise_title, lb):
         return 10
     return 5
 
@@ -323,12 +348,24 @@ def earned_jump(last_sets, exercise_title, routine_sets=()):
     The one decision the spoken target and the automatic raise in
     hevy_progress.py both read, so what Nova says and what the routine holds
     cannot disagree. Bodyweight lifts have nothing to raise and return None."""
+    jump = _jump_if_earned(last_sets, exercise_title, routine_sets)
+    if jump is None or _at_cap(exercise_title, *jump):
+        return None
+    return jump
+
+
+def _jump_if_earned(last_sets, exercise_title, routine_sets):
     count, rep_range = _planned(routine_sets)
     weight = working_weight(last_sets)
     lb = pounds(weight)
     if not rep_range or not lb or not _earned(last_sets, weight, count, rep_range["end"]):
         return None
-    return lb, lb + _increment(exercise_title)
+    return lb, lb + _increment(exercise_title, lb)
+
+
+def _at_cap(exercise_title, from_lb, to_lb):
+    cap = _cap(exercise_title, from_lb)
+    return cap is not None and to_lb > cap
 
 
 def target(last_sets, exercise_title, routine_sets=()):
@@ -359,12 +396,20 @@ def target(last_sets, exercise_title, routine_sets=()):
         if _earned(last_sets, weight, count, high):
             return f"Every set hit {high} last time: make it harder, with added weight or a harder version"
         return f"Add one rep to any set; when every set hits {high}, make it harder"
+    earned = _jump_if_earned(last_sets, exercise_title, routine_sets)
+    if earned and _at_cap(exercise_title, *earned):
+        return (f"Already at the heaviest dumbbells, {_load_words(lb, exercise_title)}. Stay "
+                f"there and slow the lowering to three seconds, or add a set")
     jump = earned_jump(last_sets, exercise_title, routine_sets)
     if jump:
         up = _load_words(jump[1], exercise_title)
         if _on_a_stack(exercise_title):
             up += ", or the nearest pin,"
         return f"Go up to {up} and start at {low} reps"
+    cap = _cap(exercise_title, lb)
+    if cap is not None and lb >= cap:
+        return (f"Stay at {_load_words(lb, exercise_title)}, the heaviest dumbbells, and add one "
+                f"rep to any set; once every set hits {high}, slow the lowering or add a set")
     return f"Stay at {_load_words(lb, exercise_title)} and add one rep to any set; go up when every set hits {high}"
 
 

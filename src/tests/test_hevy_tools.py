@@ -276,7 +276,7 @@ def test_a_heavy_single_does_not_count_against_the_top():
 @pytest.mark.parametrize("title,expected", [
     ("Squat (Barbell)", "Go up to 305 pounds"),
     ("Romanian Deadlift (Barbell)", "Go up to 305 pounds"),
-    ("Incline Bench Press (Dumbbell)", "Go up to 300 pounds"),
+    ("Overhead Press (Barbell)", "Go up to 300 pounds"),
     ("Pull Up (Weighted)", "Go up to 300 pounds added"),
     ("Leg Extension (Machine)", "Go up to 305 pounds, or the nearest pin, and start"),
     ("Face Pull", "Go up to 305 pounds, or the nearest pin, and start"),
@@ -327,3 +327,37 @@ def test_a_plan_says_when_the_routine_was_raised():
                                    raised_after=lambda start: raised.get(start, {}))
     assert plan["lifts"][0]["raised_in_routine_after_last_time"] == "185 to 190 pounds"
     assert "raised_in_routine_after_last_time" not in plan["lifts"][1]
+
+
+LB50 = 50 * hevy_tools._KG_PER_LB
+LB100 = 100 * hevy_tools._KG_PER_LB
+
+
+def test_one_dumbbell_at_fifty_is_not_raised():
+    """Oct 2 2026: the apartment's dumbbells stop at 50 a hand."""
+    last = [_set(weight_kg=LB50, reps=12) for _ in range(3)]
+    planned = _ranged(3, 8, 12, LB50)
+    assert hevy_tools.earned_jump(last, "Incline Bench Press (Dumbbell)", planned) is None
+    assert hevy_tools.target(last, "Incline Bench Press (Dumbbell)", planned).startswith(
+        "Already at the heaviest dumbbells, 50 pounds")
+
+
+def test_a_pair_is_capped_at_a_hundred_and_steps_by_ten():
+    """Split squat 100 is two 50s; calf raise 90 is two 45s, so next is two 50s."""
+    assert hevy_tools.earned_jump([_set(weight_kg=LB100, reps=12)] * 2,
+                                  "Bulgarian Split Squat (Dumbbell)", _ranged(2, 8, 12, LB100)) is None
+    kg90 = 90 * hevy_tools._KG_PER_LB
+    assert hevy_tools.earned_jump([_set(weight_kg=kg90, reps=15)] * 2,
+                                  "Standing Calf Raise (Dumbbell)", _ranged(2, 10, 15, kg90)) == (90, 100)
+
+
+def test_one_dumbbell_below_the_cap_still_goes_up_five():
+    kg45 = 45 * hevy_tools._KG_PER_LB
+    assert hevy_tools.earned_jump([_set(weight_kg=kg45, reps=12)] * 3,
+                                  "Dumbbell Row", _ranged(3, 8, 12, kg45)) == (45, 50)
+
+
+def test_at_the_cap_the_target_never_says_go_up():
+    last = [_set(weight_kg=LB50, reps=r) for r in (7, 8, 8)]
+    words = hevy_tools.target(last, "Incline Bench Press (Dumbbell)", _ranged(3, 8, 12, LB50))
+    assert "heaviest dumbbells" in words and "go up" not in words
