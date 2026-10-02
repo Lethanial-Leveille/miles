@@ -154,6 +154,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── label_transcripts.py   # hand labelled truth + word error rate per STT
 │   ├── label_speakers.py      # label who is speaking in the eval clips, by ear
 │   ├── label_wake.py          # label wake hits and misses by ear, worst first
+│   ├── wake_rule.py           # what a score and level wake rule would have cost, from his labels
 │   ├── label_spoken.py        # listen to Nova's replies on the laptop, mark what sounded off
 │   ├── replay_ignore.py       # his past turns through the live prompt: does she stay silent on room talk
 │   ├── healthcheck.py         # what broke, on a timer, not by trying to use it
