@@ -57,6 +57,34 @@ session real work.
 
 ---
 
+## She answered his phone call, three times (Oct 1 2026)
+
+At 14:57:54 the wake word fired at 0.73 during his phone call, loud enough
+(minus 7.8 dBFS) to pass the level gate. She answered three 30 second stretches
+of the call with "I only caught fragments there. What did you want to ask?",
+each reply making the next stretch read as an answer to her.
+
+Two causes, both in what she was told. The note on a wake turn said "[He said
+your name to start this.]" as fact, and a false wake carries it. And
+`WHAT_REACHES_YOU` taught "I only caught 'live right now'" as a complete answer,
+which she copied onto speech that was never misheard. Replayed over 30 of his
+past turns (`scripts/replay_ignore.py`), she stayed silent on room talk only 16
+of 63 times: this was the normal case, found by one bad evening. Fixed by
+rewording; the trade is in the decision log. The wake itself is not fixed:
+[BACKEND_TODO.md](BACKEND_TODO.md#retrain-the-wake-model-on-his-false-wakes-asked-oct-1-2026).
+
+## Barge in on speech fed webrtcvad only the loud frames (Oct 1 2026)
+
+Live 13:19:31 to 13:59:28. To save CPU, `SpeechOnset` asked webrtcvad about a
+frame only once it was over the floor. webrtcvad adapts its noise estimate to
+what it is shown, so it learned her loudest moments as the background and began
+calling him not speech: replayed with a fresh VAD per take, as the watcher makes
+one, it missed 2 of the 29 takes it had caught. The scratch replay that
+measured 29 of 29 had run VAD on every frame, so the measurement and the
+shipped code disagreed and nothing said so. Found by a clap session whose
+scoring disagreed with itself. **Replay through the shipped class, never a
+copy of the rule.** The saving was 0.05ms per 80ms read.
+
 ## Memories could not be found (Sep 28 2026)
 
 He named Obsession, a horror film, one of his three favourite films of 2026, and

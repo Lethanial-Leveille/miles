@@ -536,6 +536,17 @@ any real fix. See `docs/BACKEND_TODO.md`.
 > [INCIDENTS.md](INCIDENTS.md#no-threshold-separates-true-from-false-wakes-any-more-sep-8-2026)
 > before acting on the empty band claim.
 
+### On the array, Oct 2 2026: still no threshold
+
+He labelled the 26 wakes since the 48kHz firmware: 18 his, 8 not. Raising the
+threshold to 0.55 cuts 6 false wakes and loses 3 of his, and two of his that a
+transcript would call false (0.402 and 0.447, the wake word and a pause) were
+real, so **label by ear before reading anything into an empty transcript**.
+Left at 0.4. A rule on score and level together is the candidate, scored
+offline by `scripts/wake_rule.py`; the numbers and what has to happen before it
+acts are in
+[BACKEND_TODO.md](BACKEND_TODO.md#retrain-the-wake-model-on-his-false-wakes-asked-oct-1-2026).
+
 ### Settled Sep 25 2026, on 49 labelled hits: the score cannot do it
 
 The empty band is not merely stale, it is **the opposite of what the model

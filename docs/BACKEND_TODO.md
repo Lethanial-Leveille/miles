@@ -747,7 +747,16 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
       through a second player, whose watcher read the mic beside the carrier.
       Once cut, the rest is collected silently and no bridge plays.
    4. Live tests, including other voices and a TV, to decide whether the
-      interruption needs a voiceprint check.
+      interruption needs a voiceprint check. **DEFERRED to ordinary use (Oct 2
+      2026, his call):** he runs it naturally and comes back if it goes badly.
+      Every stop keeps its audio in `data/barge_in_stops`, named by where the
+      speech began. When it is picked up: a `stops` set in `label_wake.py`
+      (him, someone else, TV, her own voice, noise), then false stops per hour
+      of her talking. Raise the floor first, measured on the recordings; a
+      voiceprint check on the interruption is the last resort, because it
+      needs about two seconds of speech and she would talk over him for that
+      long. Also open: miles-server still runs the Oct 1 `ignore` wording;
+      services restart only when he asks, and typed turns carry neither note.
 
 5. A stop button: on 2.1.1, `MUTE_FUNCTION_ENABLE` 0 frees the mute button and
    `GPI_EVENT_PENDING` reads presses; persisting it needs `SAVE_CONFIGURATION`,
