@@ -176,9 +176,18 @@ class Synthesis:
         self._started = 0         # attempts sent
         self._ended = 0           # attempts that have stopped, for any reason
         self._finished = False    # _DONE has been queued
+        self._received = 0        # bytes the winner has delivered
         self._attempt()
         if TTS_HEDGE_AFTER_MS is not None:
             threading.Thread(target=self._hedge, daemon=True).start()
+
+    @property
+    def audio_s(self):
+        """How long the whole utterance is, once all of it has arrived, or None.
+        Counted on arrival: audio only holds what has been played so far."""
+        if not self._finished or self.error is not None:
+            return None
+        return self._received / PCM_BYTES_PER_S
 
     def _attempt(self):
         with self._lock:
@@ -210,6 +219,7 @@ class Synthesis:
                 # the plan counts against the other.
                 if not mine:
                     return
+                self._received += len(chunk)
                 self._chunks.put(chunk)
         except Exception as e:
             with self._lock:
@@ -346,6 +356,10 @@ def _report_underruns(lines):
             print(f"  speaker ran dry: {text}", flush=True)
 
 
+# What aplay is fed, as opened below: 22050Hz, 16 bit, mono.
+PCM_BYTES_PER_S = 22050 * 2
+
+
 def _open_aplay():
     proc = subprocess.Popen(
         [
@@ -377,6 +391,12 @@ def play(synthesis, interrupt=None):
     if synthesis is None:
         return None
 
+    # How much of this utterance was heard when barge in stopped it, in
+    # seconds, or None when it played to the end. brain keeps only the heard
+    # part in her history, so Claude knows where he cut in.
+    synthesis.heard_s = None
+    first_write_at, written = None, 0
+
     with speak_lock:
         started = time.monotonic()
         aplay, waited_ms = None, None
@@ -394,6 +414,9 @@ def play(synthesis, interrupt=None):
                 # and adds about 1.5s of phantom latency; see VOICE_OUTPUT.md.
                 aplay.stdin.write(chunk)
                 aplay.stdin.flush()
+                written += len(chunk)
+                if first_write_at is None:
+                    first_write_at = time.monotonic()
                 if waited_ms is None:
                     waited_ms = (time.monotonic() - started) * 1000.0
                     timing.note_tts(ttfb_ms,
@@ -415,6 +438,14 @@ def play(synthesis, interrupt=None):
                             aplay.kill()
                             break
                 aplay.wait()
+            # Playback runs in real time from the first write, so the time since
+            # then is what reached the room; what sits queued in the pipe and the
+            # ALSA buffer was never heard. Capped at what was written, for a
+            # download that fell behind and left her silent part of the time.
+            if interrupt is not None and interrupt.is_set():
+                synthesis.heard_s = (0.0 if first_write_at is None else
+                                     min(time.monotonic() - first_write_at,
+                                         written / PCM_BYTES_PER_S))
 
     if synthesis.error is not None:
         print(f"TTS error (ElevenLabs): {synthesis.error}", flush=True)
