@@ -892,6 +892,16 @@ wake phrase, 22 not); `data/wake_misses` 400, 29 labelled (all not the phrase);
 array's own false wake rate is not yet known. `data/wake_eval/` is the test set
 and **must never be trained on**.
 
+**Before that, a cheaper candidate, not live (Oct 2 2026).** He labelled the
+26 array wakes: 18 his, 8 not. No threshold separates them (0.55 cuts 6 false
+wakes and loses 3 of his). A score under 0.6 needing a peak above minus 9 dBFS
+cut 6 of 8 and lost none of his, but it was drawn from those same clips, his 4
+low scoring wakes were all from his seat, and one real wake of his scored 0.656
+at minus 27 dBFS. `scripts/wake_rule.py` scores the rule on every labelled clip,
+from the audio already kept, so nothing new runs live. **Label a few more days
+of wakes, his other spots included, and run it before the rule acts on
+anything.**
+
 **In order:**
 1. Label the array era hits with `scripts/label_wake.py`, his voice in
    conversation especially. That is the false wake the level gate cannot see,
