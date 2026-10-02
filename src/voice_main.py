@@ -426,8 +426,11 @@ try:
             timing.end_turn(transcript=user_text, response=nova_response)
 
             # Nova's own voice is buffered on the mic by now. Left in place it
-            # trips the follow up window immediately.
-            audio.flush_input()
+            # trips the follow up window immediately. Unless he cut her off: then
+            # what is buffered is him, kept by the barge in carrier.
+            interruption = audio.claim_interruption()
+            if interruption is None:
+                audio.flush_input()
 
             # ── Follow up conversation loop ──
             in_conversation = True
@@ -439,15 +442,20 @@ try:
                     break
 
                 # Between turns, before the window opens. Without this an
-                # alert would wait for the whole conversation to end.
-                for alert in alerts.take_for_speech():
-                    tts.speak(alert.text)
-                    audio.flush_input()
+                # alert would wait for the whole conversation to end. Not over
+                # an interruption: the flush after it would throw away what he
+                # is still saying, so the alert waits one turn.
+                if interruption is None:
+                    for alert in alerts.take_for_speech():
+                        tts.speak(alert.text)
+                        audio.flush_input()
 
                 print(f"Listening for follow up... ({FOLLOWUP_TIMEOUT}s timeout)", flush=True)
                 timing.begin_turn('followup')
                 followup_path = audio.listen_for_followup(timeout=FOLLOWUP_TIMEOUT,
-                                                          on_wake=tts.play_chime)
+                                                          on_wake=tts.play_chime,
+                                                          seed=interruption)
+                interrupted_turn, interruption = interruption is not None, None
                 followup_turns += 1
                 recording = (audio.archive_recording(followup_path, 'followup')
                              if followup_path else None)
@@ -466,9 +474,15 @@ try:
                 # hallucinated token, drew a response, and opened another
                 # window to be tripped again.
                 if is_noise_transcript(followup_text):
+                    timing.abandon_turn()
+                    if interrupted_turn:
+                        # She has already stopped for it. Ending here leaves him
+                        # in silence; a cough that cut her off just times out.
+                        print(f"Nothing usable in his interruption ({followup_text!r}); "
+                              "still listening.", flush=True)
+                        continue
                     print(f"No speech detected (transcript: {followup_text!r}). "
                           "Returning to wake word.\n", flush=True)
-                    timing.abandon_turn()
                     break
 
                 # Saying the wake word during the window starts a fresh turn
@@ -504,11 +518,20 @@ try:
                                                       turn_type='followup',
                                                       session_trusted=(not said_wake
                                                                        and session_is_him),
-                                                      recording_path=recording)
+                                                      recording_path=recording,
+                                                      learn=not interrupted_turn)
 
                 if followup_result == audio.NO_AUDIO:
-                    print("Nothing to verify. Returning to wake word.\n", flush=True)
                     timing.abandon_turn()
+                    if interrupted_turn:
+                        # "Wait." and then a pause to think, Oct 2 2026: 0.48s
+                        # of voice, too short to verify, and she went back to
+                        # waiting for her name with him mid thought. She stopped
+                        # for him, so she keeps listening for the rest.
+                        print("His interruption was too short to answer; still listening.",
+                              flush=True)
+                        continue
+                    print("Nothing to verify. Returning to wake word.\n", flush=True)
                     break
 
                 if followup_result == audio.RETRY:
@@ -553,7 +576,9 @@ try:
                 print(f"(Total: {time.time() - start:.2f}s)\n", flush=True)
                 timing.end_turn(transcript=followup_text, response=nova_response)
 
-                audio.flush_input()
+                interruption = audio.claim_interruption()
+                if interruption is None:
+                    audio.flush_input()
 
                 # Nova decided the conversation was over and said so in her own
                 # words. She has already spoken the farewell, so there is

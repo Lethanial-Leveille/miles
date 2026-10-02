@@ -28,6 +28,12 @@ the score measures memory instead of hearing.
     python3 scripts/record_wake_eval.py             # a full session, about fifteen minutes
     python3 scripts/record_wake_eval.py --takes 3   # a short try of each kind
     python3 scripts/record_wake_eval.py --clap      # claps over her, for barge in
+    python3 scripts/record_wake_eval.py --sentence  # sentences over her and quiet
+
+--sentence shows a sentence to read at each cue, over her and in a quiet room,
+into data/barge_in_eval/. Barge in keeps what he says over her from channel 1,
+which nothing downstream has heard before; this scores Deepgram and voice
+verification on each channel against the sentence shown.
 
 --clap records only over her, with "CLAP" cues asking for one, two or three
 claps, into data/barge_in_eval/. Barge in on speech stops her on anything loud
@@ -61,6 +67,28 @@ CLAP_DIR = os.path.join(ROOT, "data", "barge_in_eval")
 # What a clap cue asks for. Several kinds, because a single clap and a run of
 # them are different shapes to the speech rule: one decays, the other may not.
 CLAPS = ["CLAP ONCE", "CLAP TWICE", "CLAP THREE TIMES"]
+
+# What a sentence cue shows. Requests he makes, and interruptions, long enough
+# to verify (about three seconds and up) and known in advance, so a transcript
+# can be scored against what was said rather than against the other channel.
+SENTENCES = [
+    "What's the weather going to be like in Gainesville tomorrow afternoon?",
+    "Set a timer for twenty minutes and remind me to check the oven.",
+    "Can you tell me what I have on my calendar for Thursday?",
+    "How many grams of protein are in a cup of Greek yogurt?",
+    "Remind me to call my mom when I get back from class tonight.",
+    "What was my readiness score this morning and how did I sleep?",
+    "Move my study session on Friday to four in the afternoon please.",
+    "What's the difference between a pipelined processor and a superscalar one?",
+    "Add a reminder to submit the lab report before midnight on Sunday.",
+    "How long would it take to drive from Gainesville to Tampa right now?",
+    "What did I lift during my last upper body workout on Hevy?",
+    "Actually wait, I meant the other one, the one from yesterday.",
+    "No no no, hold on, go back to what you said about oranges.",
+    "Wait, stop, that's not what I asked, I wanted the one for Saturday.",
+    "Hold on, can you say that last part again a little slower?",
+    "Actually never mind that, what time does the gym close tonight?",
+]
 SPOKEN_DIR = os.path.join(ROOT, "data", "spoken")
 
 README = """# Wake word evaluation set
@@ -138,7 +166,10 @@ def _take(session, number, kind, spot, clip, mic):
 
     # Cues at random moments, kept clear of the start and end and of each
     # other, so the model is heard over different parts of her sentences.
-    if kind in ("over", "clap"):
+    if kind in ("say_over", "say_quiet"):
+        seconds = max(seconds, 6.0)
+        cues_at = [random.uniform(2.0, max(2.5, seconds - 7.0))] if kind == "say_over" else [1.5]
+    elif kind in ("over", "clap"):
         first = random.uniform(2.0, seconds / 2 - 1.5)
         cues_at = [first, random.uniform(max(first + 3.0, seconds / 2), seconds - 2.0)]
     elif kind == "quiet":
@@ -149,7 +180,9 @@ def _take(session, number, kind, spot, clip, mic):
     where = f" from {spot}" if spot else ""
     what = {"over": "she plays; say it at each cue", "her": "she plays; stay silent",
             "quiet": "no playback; say it at the cue",
-            "clap": "she plays; clap as each cue says, say nothing"}[kind]
+            "clap": "she plays; clap as each cue says, say nothing",
+            "say_over": "she plays; at the cue, read the sentence aloud at a normal level",
+            "say_quiet": "no playback; at the cue, read the sentence aloud"}[kind]
     print(f"\n=== take {number}: {kind}{where}, {seconds:.0f}s. {what}")
     input("    press Enter when ready... ")
 
@@ -157,15 +190,20 @@ def _take(session, number, kind, spot, clip, mic):
     # brought to RATE by the pipeline's own filter, so a take scores what the
     # wake model in production would have heard.
     raw_path = path + ".raw.wav"
+    tail = 7 if kind in ("say_over", "say_quiet") else 3   # room to finish the sentence
     rec = subprocess.Popen(["arecord", "-q", "-D", mic, "-f", "S16_LE",
                             "-r", str(MIC_CAPTURE_RATE), "-c", "2",
-                            "-d", str(int(seconds + 3)), raw_path])
+                            "-d", str(int(seconds + tail)), raw_path])
     t0 = time.monotonic()
     time.sleep(1.0)
     play_at = time.monotonic() - t0
     heard_at = []
-    asks = ([random.choice(CLAPS) for _ in cues_at] if kind == "clap"
-            else ['SAY  "HEY NOVA"'] * len(cues_at))
+    if kind == "clap":
+        asks = [random.choice(CLAPS) for _ in cues_at]
+    elif kind in ("say_over", "say_quiet"):
+        asks = [f'READ:  "{random.choice(SENTENCES)}"' for _ in cues_at]
+    else:
+        asks = ['SAY  "HEY NOVA"'] * len(cues_at)
     cue_threads = [threading.Thread(target=_cue, args=(1.0 + at, t0, heard_at, ask))
                    for at, ask in zip(cues_at, asks)]
     for c in cue_threads:
@@ -214,11 +252,14 @@ def _to_pipeline_rate(raw_path, path):
     os.remove(raw_path)
 
 
-def _plan(takes, clap=False):
+def _plan(takes, clap=False, sentence=False):
     """The order he goes through: over her by spot, her alone, then quiet."""
     plan = []
     if clap:
         return [("clap", spot) for spot in SPOTS for _ in range(takes)]
+    if sentence:
+        return ([("say_over", spot) for spot in SPOTS for _ in range(takes)]
+                + [("say_quiet", spot) for spot in SPOTS for _ in range(max(1, takes // 2))])
     for spot in SPOTS:
         plan += [("over", spot)] * takes
     plan += [("her", None)] * max(1, takes * 4 // 5)
@@ -234,6 +275,8 @@ def main():
                         help="over her takes per spot (default 5)")
     parser.add_argument("--clap", action="store_true",
                         help="clap at the cues instead, into data/barge_in_eval")
+    parser.add_argument("--sentence", action="store_true",
+                        help="read a sentence at each cue, into data/barge_in_eval")
     args = parser.parse_args()
 
     mic_card = tts._resolve_speaker_device(MIC_NAME_HINT, fallback=None)
@@ -242,9 +285,10 @@ def main():
     tts.timing.note_tts = lambda *a, **k: None
     mic = mic_card.replace("plughw", "hw")
 
-    root = CLAP_DIR if args.clap else EVAL_DIR
+    barge_in = args.clap or args.sentence
+    root = CLAP_DIR if barge_in else EVAL_DIR
     os.makedirs(root, exist_ok=True)
-    if not args.clap:
+    if not barge_in:
         with open(os.path.join(EVAL_DIR, "README.md"), "w") as f:
             f.write(README)
     session = os.path.join(root, time.strftime("%Y%m%dT%H%M%S"))
@@ -252,13 +296,14 @@ def main():
 
     clips = _clips()
     random.shuffle(clips)
-    plan = _plan(args.takes, clap=args.clap)
+    plan = _plan(args.takes, clap=args.clap, sentence=args.sentence)
     print(f"{len(plan)} takes into {session}. Ctrl+C stops; takes already done are kept.")
 
     manifest = os.path.join(session, "manifest.jsonl")
     with _voice_service_paused():
         for number, (kind, spot) in enumerate(plan, 1):
-            clip = clips[number % len(clips)] if kind in ("over", "her", "clap") else None
+            clip = (clips[number % len(clips)] if kind in ("over", "her", "clap", "say_over")
+                    else None)
             row = _take(session, number, kind, spot, clip, mic)
             # One line per take, written at once, so an interrupted session
             # keeps everything it recorded.
