@@ -461,6 +461,8 @@ Landed since v0.7.1, unreleased:
 ## What Is Next
 
 - SSH via Cloudflare Tunnel: ssh.lethanial.com + Cloudflare Access policy
+- An evening check in that notices instead of asking: gym pace, sleep, NeetCode
+  commits, Bible time; plan in [BACKEND_TODO.md](docs/BACKEND_TODO.md#accountability-she-notices-she-does-not-ask-planned-oct-2-2026)
 - v0.8+: Morning briefings (Fall 2026), Mac control, HealthKit, EventKit,
   MusicKit, WeatherKit migration, parallel processing
 

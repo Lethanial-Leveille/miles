@@ -891,6 +891,68 @@ removed, so both describe a pipeline that no longer runs.
 **Do not estimate this one.** It was wrong in mechanism for weeks precisely
 because nobody reread it against `stream_router.py`.
 
+## Accountability: she notices, she does not ask (planned Oct 2 2026)
+
+**Why this, of everything.** Asked what would make Nova more useful, his own
+data answered: calendar work is about 87 of her tool calls, more than anything
+else, and that night he asked her for "a daily LeetCode session, because I need
+to be more consistent". Jarvis's usefulness is closing loops, and Nova only
+speaks when spoken to. **The design rule is his:** she should know, not ask. "Did
+you do X?" every day is a survey he would tune out within a week. Where a fact
+can be read from a service, it is read; only what has no source is ever asked,
+and then only once.
+
+**His targets:** gym 4 days a week (judged on weekly pace, mentioned only when
+behind), LeetCode daily, sleep 8 to 9 hours (trends, "third night under six",
+never one bad night). Classes are on Zoom, so travel time and maps are dropped.
+
+**Build in this order, each live and used before the next:**
+
+1. **The evening check in.** Around midnight, the first time he is in the room
+   and not mid conversation, once a night. Says only what is off; on a good day
+   one line or nothing. Once he answers a point ("skipping the gym today") it is
+   dropped, not raised again tomorrow. Sources, all but one connected today:
+   Hevy (gym pace), Oura (sleep trend, steps), the calendar (tomorrow's first
+   class), and **Google Tasks** for Bible time, the one thing with no other
+   record. Tasks is a separate API from Calendar, so `google_auth.py` is run once
+   more with its scope; she can also tick a task off when he tells her ("done with
+   Bible time"). Details to settle in the design:
+   - **"Today" is the day he just lived.** At 12:30am the new date has barely
+     started; a check in reading it would say he has not trained "today".
+   - **Spoken through `alerts.py`**, the way reminders are: queued, and the voice
+     loop announces it at the next safe moment, never over a conversation.
+   - **"In the room" from the radar, as "seen in the last 15 minutes".** Measured
+     Oct 2 00:57 to 01:40, while he sat at the desk talking to her: the radar
+     said present only about 30 percent of the time, with absent stretches up to
+     about 10 minutes, but never longer. Instantaneous presence is unreliable as
+     mounted; recent presence is enough for this. Fall back to the first wake
+     after 11:30pm if it is not.
+2. **LeetCode, known without asking.** He solves on NeetCode, which can commit
+   each solution to a GitHub repo, so "a commit landed today" is a supported
+   signal through GitHub's official API (no token for a public repo, a read only
+   token for a private one). Better than LeetCode's own submissions lookup,
+   which is unofficial. **Ask him for the repo name.**
+3. **"Your class starts in five minutes."** Zoom classes, from the calendar, only
+   when the radar has seen him recently. **Ask whether his classes are on his
+   calendar**; if not, that comes first.
+4. **Class tutor, with an iPad canvas.** Drawing on the iPad (PencilKit, in the
+   Swift app repo) and Claude reading and adding to it. Cheap per use (a sketch
+   read costs a fraction of a cent); the cost is weeks of app work. He was unsure
+   how much he would use it, so **name a weekly use before building**, and test
+   whether Claude reads his handwriting well enough by photographing a page of
+   notes first.
+5. **Assignments, through Notion, next semester.** Canvas would not cooperate;
+   Notion's API is solid, but moving his coursework there is the slow part.
+
+**Gmail (he wants it in, use not yet known).** The candidate that fits this
+plan: **Canvas emails its notifications**, so assignments and announcements may
+already be in his inbox, which could cover item 5 this semester without Notion
+or Canvas's API. Second: recruiter replies, beside the Prowl job search tools.
+Either way, read only (`gmail.readonly`, another `google_auth.py` run), filtered
+by sender on the Pi, and only the subjects of what matched sent to Claude. His
+mail is the most private thing she would read, and the rest of it has no reason
+to leave the Pi. Look at what Canvas actually sends before deciding.
+
 ## Not blocked, and worth doing anytime
 
 ### Retrain the wake model on his false wakes (asked Oct 1 2026)
