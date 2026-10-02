@@ -734,6 +734,18 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
       ear before keeping it.
    3. A conversation: history keeps only what she said before he cut in,
       marked as interrupted, so "actually" reaches Claude in context.
+      **LIVE Oct 2 2026.** `play()` records how long a sentence played before
+      the stop (`heard_s`, wall time since the first write, capped at what was
+      written); `interrupt_speech.words_heard` keeps that share of the words
+      when the sentence's whole audio had arrived, or her pace (3.2 words a
+      second, median of 73 replies) when it had not. Saved with "[You were cut
+      off here.]", which the 30 word history trim keeps. First test: cut 4.5s
+      into a pull ups answer, saved up to "cleanly on a dead", and "Wait.
+      Sorry. I meant push ups." was answered as a correction; before this she
+      argued "I didn't say anything about push ups." **Fixed with it:** cut
+      during a tool turn's first line, the rest of the turn used to play
+      through a second player, whose watcher read the mic beside the carrier.
+      Once cut, the rest is collected silently and no bridge plays.
    4. Live tests, including other voices and a TV, to decide whether the
       interruption needs a voiceprint check.
 

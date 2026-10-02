@@ -224,3 +224,23 @@ def test_a_short_interruption_keeps_her_listening():
                    "if followup_result == audio.NO_AUDIO:"):
         body = source[source.index(branch):].split("break", 1)[0]
         assert "if interrupted_turn:" in body and "continue" in body, branch
+
+
+# ── step 3: what she said before he cut in ──
+
+from interrupt_speech import HER_WORDS_PER_S, words_heard
+
+TEN = "one two three four five six seven eight nine ten"
+
+
+def test_heard_by_share_of_the_audio_when_its_length_is_known():
+    assert words_heard(TEN, heard_s=2.0, audio_s=4.0) == "one two three four five"
+
+
+def test_heard_by_her_pace_when_the_audio_had_not_all_arrived():
+    assert words_heard(TEN, heard_s=1.0) == " ".join(TEN.split()[:round(HER_WORDS_PER_S)])
+
+
+def test_heard_never_more_than_was_said_nor_less_than_nothing():
+    assert words_heard(TEN, heard_s=60.0) == TEN
+    assert words_heard(TEN, heard_s=0.0, audio_s=4.0) == ""

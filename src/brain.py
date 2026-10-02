@@ -17,6 +17,7 @@ from database import (save_message, delete_message, last_reply_at, get_seed_memo
                       get_shareable_memories, effective_tier)
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
+import interrupt_speech
 from tools import registry, Permission, permits
 from database import log_tool_call
 import alerts
@@ -182,7 +183,39 @@ def _play_with_barge_in(synthesis):
     return interrupted, waited_ms
 
 
-async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set) -> None:
+CUT_OFF_MARK = "[You were cut off here.]"
+
+
+class _Heard:
+    """What of this turn's reply reached the room, for her history.
+
+    On Oct 2 2026 her history held whole replies he had stopped a few words
+    in, so the next turn's Claude believed he had heard all of it, and "no, I
+    said push ups" arrived with no sign of where he cut in. One per turn,
+    shared by both of a tool turn's players."""
+
+    def __init__(self):
+        self.parts = []
+        self.cut = False
+
+    def played(self, sentences):
+        self.parts.append(" ".join(sentences))
+
+    def cut_during(self, sentences, synthesis):
+        text = " ".join(sentences)
+        heard_s = getattr(synthesis, "heard_s", None)
+        self.parts.append(text if heard_s is None else
+                          interrupt_speech.words_heard(text, heard_s,
+                                                       getattr(synthesis, "audio_s", None)))
+        self.cut = True
+
+    def text(self):
+        said = " ".join(p for p in self.parts if p)
+        return f"{said} {CUT_OFF_MARK}".strip()
+
+
+async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set,
+                        heard: _Heard = None) -> None:
     """Speak a reply: the first sentence at once, the rest as one piece.
 
     Two workers. The feeder starts the first sentence the moment Claude writes
@@ -259,6 +292,11 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
             if played > 1 and waited_ms is not None:
                 print(f"  rest of reply ({len(sentences)} sentences) waited "
                       f"{waited_ms:.0f}ms for audio", flush=True)
+            if heard is not None:
+                if interrupted:
+                    heard.cut_during(sentences, synthesis)
+                else:
+                    heard.played(sentences)
             if interrupted:
                 # He said the wake word, or spoke, over her. Drop the rest rather than
                 # finishing the thought he interrupted, which is the entire
@@ -273,7 +311,8 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set)
                              args=(spoken,), daemon=True).start()
 
 
-async def _collect_text(queue: asyncio.Queue, text_parts: list, leaks_seen: set) -> None:
+async def _collect_text(queue: asyncio.Queue, text_parts: list, leaks_seen: set,
+                        heard: _Heard = None) -> None:
     """Stand in for _tts_consumer on a text turn: gather the sentences, play nothing.
 
     Same arguments and the same cue stripping, so everything that reads
@@ -479,13 +518,18 @@ def _trim_history(messages: list) -> list:
         if message["role"] != "assistant":
             trimmed.append(message)
             continue
-        words = message["content"].split()
+        # Where he cut her off survives the trim; it is the part that says
+        # why the next message reads the way it does.
+        content = message["content"]
+        cut = content.endswith(CUT_OFF_MARK)
+        words = (content[:-len(CUT_OFF_MARK)] if cut else content).split()
         if len(words) <= HISTORY_ASSISTANT_WORDS:
             trimmed.append(message)
             continue
         trimmed.append({
             **message,
-            "content": " ".join(words[:HISTORY_ASSISTANT_WORDS]) + "...",
+            "content": " ".join(words[:HISTORY_ASSISTANT_WORDS]) + "..."
+                       + (f" {CUT_OFF_MARK}" if cut else ""),
         })
     return trimmed
 
@@ -953,8 +997,9 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     loop           = asyncio.get_running_loop()
     leaks_seen     = set()  # shared across both TTS consumers and the returned-text strips this turn
 
+    heard = _Heard()
     tts_task = asyncio.create_task(
-        _consumer_for(channel, device)(sentence_queue, spoken_parts, leaks_seen))
+        _consumer_for(channel, device)(sentence_queue, spoken_parts, leaks_seen, heard))
 
     accumulated   = ""
     bridge        = None
@@ -1068,7 +1113,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # was the bridge sentence playing through the speaker.
         tool_future = loop.run_in_executor(None, _run_tools, tool_uses, model, tier)
         tool_start  = time.monotonic()
-        bridge      = await _bridge_if_slow(tool_future, bridge_key)
+        bridge      = await _bridge_if_slow(tool_future, None if heard.cut else bridge_key)
         results     = await tool_future
         timing.note_tool((time.monotonic() - tool_start) * 1000.0)
         await tts_task
@@ -1108,8 +1153,12 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             sentence_queue2 = asyncio.Queue()
             router2         = StreamRouter(sentence_queue2)
             spoken_parts2   = []
+            # Cut off already: the rest is collected, never played. A second
+            # player would start a second watcher reading the mic while the
+            # carrier still holds his interruption, and answer what he stopped.
+            consumer2       = _collect_text if heard.cut else _consumer_for(channel, device)
             tts_task2       = asyncio.create_task(
-                _consumer_for(channel, device)(sentence_queue2, spoken_parts2, leaks_seen)
+                consumer2(sentence_queue2, spoken_parts2, leaks_seen, heard)
             )
 
             # A loop, not a single call. The follow up is free to request
@@ -1273,7 +1322,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     if ignored and not final_text:
         delete_message(user_message_id)
     if final_text:
-        save_message("assistant", final_text, device=device)
+        # What he heard, not what was written, once he cut her off.
+        save_message("assistant", heard.text() if heard.cut else final_text, device=device)
     # After the reply, on its own thread. Only for him: a guest's words are not
     # facts about Lethanial, and speech not meant for Nova is not his to keep.
     if tier == "hokage" and not ignored:

@@ -125,3 +125,24 @@ class Carrier:
         if not self._done.wait(timeout):
             print("  barge in: the carrier did not stop; the mic may be stalled", flush=True)
         return b"".join(self._chunks)
+
+
+# Her pace, words per second of audio: the median over 73 replies in
+# data/spoken on Oct 2 2026 (the middle 80 percent ran 2.7 to 3.9). Used only
+# when a cut sentence's audio had not all arrived, so its length is unknown.
+HER_WORDS_PER_S = 3.2
+
+
+def words_heard(text, heard_s, audio_s=None):
+    """The words of text that played in heard_s seconds, cut at a word.
+
+    By the share of its audio that played when the whole length is known, which
+    follows her pace in that sentence; by her usual pace when it is not. A few
+    words either way: exact timings would mean ElevenLabs' timestamped
+    endpoint, a bigger change for little gain."""
+    words = text.split()
+    if audio_s:
+        count = round(len(words) * heard_s / audio_s)
+    else:
+        count = round(heard_s * HER_WORDS_PER_S)
+    return " ".join(words[:max(0, min(len(words), count))])

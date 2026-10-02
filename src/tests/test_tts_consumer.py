@@ -111,3 +111,66 @@ def test_barge_in_reports_an_interruption_only_when_one_happened(monkeypatch):
     for watcher, expected in ((quiet, False), (hears_the_wake_word, True)):
         monkeypatch.setitem(sys.modules, "audio", types.SimpleNamespace(watch_for_interrupt=watcher))
         assert brain._play_with_barge_in("One.") == (expected, 12.0)
+
+
+# ── what reached the room, for her history (Oct 2 2026) ──
+
+class _Synth:
+    """A synthesis that was cut heard_s into audio_s of audio."""
+
+    def __init__(self, text, heard_s=None, audio_s=None):
+        self.text, self.heard_s, self.audio_s = text, heard_s, audio_s
+
+
+def test_a_cut_reply_keeps_what_played_and_where_it_stopped(monkeypatch):
+    """The first sentence played whole; the rest was cut a quarter of the way in."""
+    synths = {}
+
+    def start(text):
+        synths[text] = _Synth(text, heard_s=1.0 if text != "Step count alone matters little." else None,
+                              audio_s=4.0)
+        return synths[text]
+
+    def play(synthesis):
+        return synthesis.heard_s is not None, 0.0
+
+    monkeypatch.setattr(brain, "start_synthesis", start)
+    monkeypatch.setattr(brain, "_play_with_barge_in", play)
+    monkeypatch.setattr(brain, "join_for_speech", lambda sentences: " ".join(sentences))
+    heard = brain._Heard()
+
+    async def go():
+        queue = asyncio.Queue()
+        for sentence in ["Step count alone matters little.", "You lift four days a week.",
+                         "Recovery matters more than steps."]:
+            queue.put_nowait(sentence)
+        queue.put_nowait(None)
+        await asyncio.wait_for(brain._tts_consumer(queue, [], set(), heard), timeout=5)
+    asyncio.run(go())
+
+    assert heard.cut
+    # The rest is 11 words, a quarter of its audio played: round(2.75) is 3.
+    assert heard.text() == f"Step count alone matters little. You lift four {brain.CUT_OFF_MARK}"
+
+
+def test_a_reply_played_through_is_not_cut(monkeypatch):
+    heard = brain._Heard()
+    heard.played(["One.", "Two."])
+    assert not heard.cut and heard.text().startswith("One. Two.")
+
+
+def test_the_cut_mark_survives_the_history_trim():
+    long_reply = " ".join(["word"] * 60) + " " + brain.CUT_OFF_MARK
+    trimmed = brain._trim_history([{"role": "assistant", "content": long_reply}])
+    assert trimmed[0]["content"].endswith(brain.CUT_OFF_MARK)
+    assert len(trimmed[0]["content"].split()) < 40
+
+
+def test_once_cut_the_rest_of_a_tool_turn_is_never_played():
+    """A second player would start a second watcher reading the mic while the
+    carrier holds his interruption, and answer what he had stopped."""
+    import inspect
+    source = inspect.getsource(brain.ask_nova_async)
+    assert "_collect_text if heard.cut else _consumer_for(channel, device)" in source
+    assert "None if heard.cut else bridge_key" in source
+    assert 'heard.text() if heard.cut else final_text' in source
