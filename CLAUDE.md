@@ -131,7 +131,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1285 passing, 6 skipped, Oct 2 2026)
+│   └── tests/                 # pytest suite (1289 passing, 6 skipped, Oct 2 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -450,8 +450,9 @@ Landed since v0.7.1, unreleased:
   routine that says whether to add a rep or add weight, from the rep ranges
   on his Hevy routines, and flags a stall
 - Automatic progression: `miles-hevy.timer` raises a lift's weight in the Hevy
-  routine once a workout earns it (10 lb squat and deadlift families and
-  machines, 5 lb otherwise), and the session plan says what moved
+  routine once a workout earns it (10 lb squat and deadlift families,
+  machines and dumbbell pairs, 5 lb otherwise; dumbbells stop at the
+  apartment's 50 a hand), and the session plan says what moved
 
 - The ReSpeaker XVF3800 on its 48kHz firmware, resampled to 16kHz at the
   stream; speakers on its own jack, so its echo canceller works

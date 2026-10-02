@@ -1417,7 +1417,15 @@ routine, backed up first. It only raises. Machines and cables now go up 10 lb
 ("or the nearest pin"); he picks the closest and the log keeps what he used.
 He keeps the routine as is at Hevy's end of workout prompt, since "update"
 copies an off day's lighter weights and nothing raises them back. First live
-raise: Lower Strength leg extension 150 to 160 after 15, 15. Hevy replaces a routine whole on update and has no undo, so an edit
+raise: Lower Strength leg extension 150 to 160 after 15, 15.
+
+*Dumbbell cap, Oct 2 2026:* the apartment's dumbbells stop at 50 a hand. He
+logs one dumbbell lifts per hand and pairs as the two added together, so a
+dumbbell lift logged above 50 is a pair, capped at 100 and stepped by 10 (5 a
+hand). At the cap nothing is raised and the target says to slow the lowering
+or add a set. Upper Volume incline went from 55 to 50 that day; split squat
+is already at the cap. A pair logged at 50 or less in total would be misread
+as one hand; none is today. Hevy replaces a routine whole on update and has no undo, so an edit
 must keep the old routine locally first, and an exercise name has to resolve
 to one of 451 templates, so a change is read back before it is sent. He builds
 and edits routines in the app, not by voice. Logging workouts by voice is not
