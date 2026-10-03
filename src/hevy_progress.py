@@ -26,7 +26,7 @@ import os
 import requests
 
 import hevy_tools
-from database import hevy_workouts_seen, record_hevy_progression
+from database import hevy_held_weights, hevy_workouts_seen, record_hevy_progression
 
 _BACKUP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "data", "hevy_backups")
@@ -35,6 +35,11 @@ _BACKUP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 # window the first run would raise weights for sessions from months ago that
 # the current routines were never built from.
 _WINDOW = datetime.timedelta(days=3)
+
+# How close a routine's last change has to be to a workout save to count as
+# the app's stale copy. On Oct 2 2026 the routine changed 0.2 seconds before
+# the workout was saved; an edit he makes on purpose is never that close.
+_SAVE_WINDOW = datetime.timedelta(minutes=2)
 
 _SET_KEYS = ("type", "weight_kg", "reps", "distance_meters", "duration_seconds",
              "custom_metric", "rep_range")
@@ -64,6 +69,34 @@ def raises_for(workout, routine):
             continue
         raises.append((e["title"], jump[0], jump[1], e["exercise_template_id"]))
     return raises
+
+
+def _rewritten_by_a_save(routine, workouts):
+    """True when the routine last changed at the moment a workout from it was saved."""
+    if not routine.get("updated_at"):
+        return False
+    changed = hevy_tools._local(routine["updated_at"])
+    return any(w.get("routine_id") == routine["id"] and w.get("updated_at")
+               and abs(changed - hevy_tools._local(w["updated_at"])) <= _SAVE_WINDOW
+               for w in workouts)
+
+
+def undone_raises(routine, held, workouts):
+    """[(exercise, now_lb, held_lb, template_id)] for raises his phone undid.
+
+    Only when the routine was rewritten by a workout save, so a weight he
+    lowers on purpose in the app is left lowered."""
+    if not held or not _rewritten_by_a_save(routine, workouts):
+        return []
+    undone = []
+    for e in routine.get("exercises", []):
+        held_lb = held.get(e["title"])
+        if held_lb is None:
+            continue
+        now_lb = hevy_tools.pounds(hevy_tools.working_weight(_working(e["sets"])))
+        if now_lb is not None and now_lb < held_lb:
+            undone.append((e["title"], now_lb, held_lb, e["exercise_template_id"]))
+    return undone
 
 
 def raised_routine(routine, raises):
@@ -104,8 +137,9 @@ def _put(routine, body):
 
 
 def run(now=None):
-    """Judge every recent unjudged workout started from a routine, oldest first.
-    Returns [(routine title, exercise, from_lb, to_lb)] for the log."""
+    """Judge every recent unjudged workout started from a routine, oldest first,
+    then restore any raise a workout save undid. Returns
+    [("raised" or "restored", routine title, exercise, from_lb, to_lb)] for the log."""
     now = now or datetime.datetime.now(datetime.timezone.utc)
     seen = hevy_workouts_seen()
     workouts = hevy_tools._get("workouts", page=1, pageSize=hevy_tools._PAGE_SIZE).get("workouts", [])
@@ -128,5 +162,19 @@ def run(now=None):
             _backup(routine)
             _put(routine, raised_routine(routine, raises))
         record_hevy_progression(workout, routine, [r[:3] for r in raises])
-        done += [(routine["title"], *r[:3]) for r in raises]
+        done += [("raised", routine["title"], *r[:3]) for r in raises]
+
+    # Then put back any raise the app's stale copy undid. Read fresh, after
+    # the raises above, and once the restore is written the routine's change
+    # time moves off the save, so this never fires twice for one overwrite.
+    for routine in hevy_tools._all_pages("routines", "routines", hevy_tools._NAME_SEARCH_PAGES):
+        undone = undone_raises(routine, hevy_held_weights(routine["id"]), workouts)
+        if not undone:
+            continue
+        _backup(routine)
+        _put(routine, raised_routine(routine, undone))
+        saved = max((w for w in workouts if w.get("routine_id") == routine["id"]),
+                    key=lambda w: w["updated_at"])
+        record_hevy_progression(saved, routine, [r[:3] for r in undone], kind="restore")
+        done += [("restored", routine["title"], *r[:3]) for r in undone]
     return done

@@ -77,7 +77,7 @@ def _fake_hevy(monkeypatch, workouts, routine):
 
 def test_a_workout_is_judged_once(db, monkeypatch):
     puts = _fake_hevy(monkeypatch, [_workout([5, 6, 7], [15, 15])], _routine())
-    assert hevy_progress.run(NOW) == [("Lower Strength", "Leg Extension (Machine)", 150, 160)]
+    assert hevy_progress.run(NOW) == [("raised", "Lower Strength", "Leg Extension (Machine)", 150, 160)]
     assert hevy_progress.run(NOW) == []
     assert len(puts) == 1
     assert db.hevy_raises_after("2026-10-01T02:22:07+00:00") == {"Leg Extension (Machine)": (150, 160)}
@@ -96,3 +96,54 @@ def test_old_workouts_are_never_judged(db, monkeypatch):
     puts = _fake_hevy(monkeypatch, [old], _routine())
     assert hevy_progress.run(NOW) == []
     assert puts == []
+
+
+# ── putting back a raise his phone undid ──
+
+SAVED = "2026-10-02T23:58:38.787Z"
+
+
+def _overwritten(updated_at, extension_lb=150):
+    routine = _routine()
+    routine["updated_at"] = updated_at
+    routine["exercises"][1]["sets"] = [_set(extension_lb, low=12, high=15) for _ in range(2)]
+    return routine
+
+
+def _saved_workout():
+    """A session that earned nothing, so only the restore is under test."""
+    return {**_workout([5, 6, 7], [12, 12], wid="w2"), "updated_at": SAVED}
+
+
+def test_a_raise_undone_by_a_workout_save_is_found():
+    """Oct 2 2026: the routine changed 0.2 seconds before the workout saved."""
+    routine = _overwritten("2026-10-02T23:58:38.625Z")
+    undone = hevy_progress.undone_raises(routine, {"Leg Extension (Machine)": 160}, [_saved_workout()])
+    assert undone == [("Leg Extension (Machine)", 150, 160, "LE")]
+
+
+def test_a_weight_he_lowered_on_purpose_is_left_alone():
+    """An edit in the app hours from any save is his decision, not a stale copy."""
+    routine = _overwritten("2026-10-03T14:00:00.000Z")
+    assert hevy_progress.undone_raises(routine, {"Leg Extension (Machine)": 160}, [_saved_workout()]) == []
+
+
+def test_a_weight_still_where_miles_set_it_is_not_touched():
+    routine = _overwritten("2026-10-02T23:58:38.625Z", extension_lb=160)
+    assert hevy_progress.undone_raises(routine, {"Leg Extension (Machine)": 160}, [_saved_workout()]) == []
+
+
+def test_run_restores_and_records_it_once(db, monkeypatch):
+    routine = _overwritten("2026-10-02T23:58:38.625Z")
+    db.record_hevy_progression({"id": "w1", "start_time": "2026-10-01T02:22:07+00:00"}, routine,
+                               [("Leg Extension (Machine)", 150, 160)])
+    saved = _saved_workout()
+    puts = _fake_hevy(monkeypatch, [saved], routine)
+    now = datetime.datetime(2026, 10, 3, 0, 10, tzinfo=datetime.timezone.utc)
+    done = hevy_progress.run(now)
+    assert ("restored", "Lower Strength", "Leg Extension (Machine)", 150, 160) in done
+    assert db.hevy_raises_after(saved["start_time"], kind="restore") == {"Leg Extension (Machine)": (150, 160)}
+    assert len(puts) == 1
+
+    routine["updated_at"] = "2026-10-03T00:10:00.000Z"  # the restore moved it off the save
+    assert hevy_progress.run(now) == []

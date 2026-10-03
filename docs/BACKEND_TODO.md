@@ -1425,7 +1425,20 @@ dumbbell lift logged above 50 is a pair, capped at 100 and stepped by 10 (5 a
 hand). At the cap nothing is raised and the target says to slow the lowering
 or add a set. Upper Volume incline went from 55 to 50 that day; split squat
 is already at the cap. A pair logged at 50 or less in total would be misread
-as one hand; none is today. Hevy replaces a routine whole on update and has no undo, so an edit
+as one hand; none is today.
+
+*The phone overwrites the routines, Oct 2 2026.* Saving a workout in his Hevy
+app also saves the app's own copy of the routine, and when that copy is stale
+it undoes every change made from here: Upper Volume went back to incline 55,
+the ab wheel and the negatives at 7:58:38 PM, 0.2 seconds before the workout
+itself saved, and Lower Strength's warm up reps were cleared the same way on
+Sep 30. He refreshes routines before a session and keeps the routine at the
+end. As a guard, `hevy_progress.run` now also restores any raise found below
+the weight it set, but only when the routine last changed within two minutes
+of a workout save from it (migration 32 marks those rows `restore`), so a
+weight he lowers on purpose in the app stays lowered. Only raises are
+guarded: a stale copy can still undo a structural change made from here, so
+check the routine after a session that follows one. Hevy replaces a routine whole on update and has no undo, so an edit
 must keep the old routine locally first, and an exercise name has to resolve
 to one of 451 templates, so a change is read back before it is sent. He builds
 and edits routines in the app, not by voice. Logging workouts by voice is not
