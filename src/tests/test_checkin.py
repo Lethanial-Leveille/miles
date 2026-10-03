@@ -220,3 +220,88 @@ def test_a_source_that_is_down_is_skipped_and_named(db, monkeypatch):
 def test_hevy_down_is_not_a_missed_week(db, monkeypatch):
     _sources(monkeypatch, fail=("hevy",))
     assert all(not p.key.startswith("gym") for p in checkin.run(at(9, 26, 0, 30)))
+
+
+# ── wording and delivery ──
+
+class _FakeClaude:
+    def __init__(self, text=None, error=None):
+        self.text, self.error, self.asked = text, error, []
+        self.messages = self
+
+    def create(self, **kwargs):
+        self.asked.append(kwargs)
+        if self.error:
+            raise self.error
+        block = type("Block", (), {"type": "text", "text": self.text})()
+        return type("Reply", (), {"content": [block]})()
+
+
+def _fresh(monkeypatch, claude):
+    import alerts
+    alerts.clear()
+    monkeypatch.setattr(checkin, "_client", claude)
+    monkeypatch.setattr(checkin, "_started", set())
+    return alerts
+
+
+def test_outside_the_window_nothing_starts(db, monkeypatch):
+    _fresh(monkeypatch, _FakeClaude("unused"))
+    _sources(monkeypatch)
+    assert checkin.start(at(9, 25, 22, 0)) is None
+    assert checkin.start(at(9, 26, 5, 0)) is None
+
+
+def test_her_words_are_queued_once(db, monkeypatch):
+    claude = _FakeClaude("Heads up, the gym week finishes at one.")
+    alerts = _fresh(monkeypatch, claude)
+    _sources(monkeypatch)
+    job = checkin.start(at(9, 26, 0, 30))
+    job.result(timeout=5)
+    checkin.deliver(job)
+    spoken = alerts.take_for_speech()
+    assert [a.text for a in spoken] == ["Heads up, the gym week finishes at one."]
+    assert "out of reach" in claude.asked[0]["messages"][0]["content"]
+    assert checkin.start(at(9, 26, 1, 0)) is None
+
+
+def test_a_slow_check_in_is_queued_when_it_finishes(db, monkeypatch):
+    import threading
+    alerts = _fresh(monkeypatch, _FakeClaude("Late, but here."))
+    gate = threading.Event()
+    _sources(monkeypatch)
+    slow = checkin._workout_days
+    monkeypatch.setattr(checkin, "_workout_days", lambda: (gate.wait(5), slow())[1])
+    job = checkin.start(at(9, 26, 0, 30))
+    checkin.deliver(job)
+    assert alerts.pending_count() == 0
+    gate.set()
+    job.result(timeout=5)
+    # The callback runs on the worker right after the result is set.
+    for _ in range(50):
+        if alerts.pending_count():
+            break
+        threading.Event().wait(0.02)
+    assert [a.text for a in alerts.take_for_speech()] == ["Late, but here."]
+
+
+def test_a_good_night_queues_nothing(db, monkeypatch):
+    alerts = _fresh(monkeypatch, _FakeClaude("unused"))
+    _sources(monkeypatch)
+    checkin.deliver(checkin.start(at(9, 29, 23, 41)))
+    assert alerts.pending_count() == 0
+
+
+def test_claude_down_speaks_the_written_lines(db, monkeypatch):
+    alerts = _fresh(monkeypatch, _FakeClaude(error=ConnectionError("offline")))
+    _sources(monkeypatch)
+    job = checkin.start(at(9, 26, 0, 30))
+    job.result(timeout=5)
+    checkin.deliver(job)
+    assert [a.text for a in alerts.take_for_speech()] == [
+        "The gym week finishes at one. Monday starts over."]
+
+
+def test_the_written_tomorrow_line_says_times_in_words():
+    point = checkin.tomorrow_point(DSA, at(9, 30, 0, 30))
+    assert point.text == "DSA is at ten forty tomorrow, so asleep by two ten for eight hours."
