@@ -9,6 +9,7 @@ import numpy as np
 # audio import triggers mic/wake word hardware init and ALSA silencing
 import alerts
 import audio
+import checkin
 import netcheck
 import phrasebank
 import presence
@@ -396,11 +397,17 @@ try:
             # this conversation and nothing before it.
             conversation_start = latest_message_id()
 
+            # Late at night, his first turn starts the evening check in. It
+            # fetches while she answers, and is said after, so his answer
+            # never waits on it. Never for a guest: it reads his health data.
+            checkin_job = checkin.start() if session_is_him else None
+
             start  = time.time()
             # He said the wake word to start this, by definition.
             result = run_turn(user_text, named=True,
                               tier=None if session_is_him else GUEST_TIER,
                               conversation_start=conversation_start)
+            checkin.deliver(checkin_job)
 
             # Nothing to say and nothing to save. Back to the wake word rather
             # than into the follow up window, which would only collect more

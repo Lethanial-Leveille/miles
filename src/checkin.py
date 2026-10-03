@@ -18,11 +18,18 @@ recovered night produces a new key, so nothing has to be cleared.
 """
 
 import datetime
+import re
+import threading
 from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
 
+import anthropic
+
+import alerts
 import calendar_tools
 import hevy_tools
 import oura_tools
+from config import CHECKIN, CHECKIN_MODEL
 from database import checkin_ran, checkin_said, record_checkin
 from parsing import words_for_number
 
@@ -65,8 +72,18 @@ def _week_start(day):
 
 
 def _clock(dt):
-    """"10:40am". Claude spells it for speech; the fallback text is rare."""
+    """"10:40am", for Claude, which spells it for speech."""
     return dt.strftime("%-I:%M%p").lower()
+
+
+def _clock_words(dt):
+    """"ten forty", for the fallback line, which goes to speech as is."""
+    hour = words_for_number(dt.hour % 12 or 12)
+    if dt.minute == 0:
+        return f"{hour} o'clock"
+    if dt.minute < 10:
+        return f"{hour} oh {words_for_number(dt.minute)}"
+    return f"{hour} {words_for_number(dt.minute)}"
 
 
 def _gap_start(workout_days, day):
@@ -118,9 +135,9 @@ def gym_point(workout_days, day, said=frozenset()):
     if needed == days_left and f"gym_tight:{week}" not in said:
         days_words = words_for_number(days_left)
         return Point(f"gym_tight:{week}",
-                     f"Gym this week: {done_words} of {GYM_TARGET} sessions, so "
-                     f"reaching four means training every one of the "
-                     f"{days_words} days left.",
+                     f"Gym this week: {done_words} of {GYM_TARGET} sessions. He is "
+                     f"behind: reaching four now means training every one of the "
+                     f"{days_words} days left, with no day off.",
                      f"{done_words.capitalize()} gym sessions this week, so it's "
                      f"every day from here to make four.")
 
@@ -155,6 +172,16 @@ def _low(hours):
     return sum(hours) / len(hours) < SLEEP_TARGET_H and short >= 2
 
 
+def _duration_words(total_minutes):
+    hours, minutes = divmod(total_minutes, 60)
+    parts = []
+    if hours:
+        parts.append(f"{words_for_number(hours)} hour{'' if hours == 1 else 's'}")
+    if minutes or not hours:
+        parts.append(f"{words_for_number(minutes)} minute{'' if minutes == 1 else 's'}")
+    return " ".join(parts)
+
+
 def sleep_point(nights, day, said=frozenset()):
     """A trend, never one bad night: the last three nights under eight hours
     asleep, on average and on at least two of them.
@@ -183,13 +210,14 @@ def sleep_point(nights, day, said=frozenset()):
     if key in said:
         return None
 
-    hours, minutes = divmod(round(average * 60), 60)
-    spoken = f"{words_for_number(hours)} hours"
-    if minutes:
-        spoken += f" {words_for_number(minutes)} minutes"
+    spoken = _duration_words(round(average * 60))
+    # The gap is given, because left to work it out Haiku said "two hours nine
+    # minutes short" of a gap that was one hour nine (Oct 2 2026).
+    short = _duration_words(round(SLEEP_TARGET_H * 60) - round(average * 60))
     return Point(key,
                  f"Sleep: {spoken} asleep a night, averaged over the last three "
-                 f"nights, against his eight hour target. A trend, not one bad night.",
+                 f"nights. That is {short} short of his eight hour target. A "
+                 f"trend, not one bad night.",
                  f"You've averaged {spoken} of sleep over the last three nights.")
 
 
@@ -216,8 +244,8 @@ def tomorrow_point(events, now, said=frozenset()):
                  f"Tomorrow: {title} at {_clock(start)}. For eight hours of "
                  f"sleep and half an hour to get up, he needs to be asleep by "
                  f"{_clock(asleep_by)}.",
-                 f"{title} is at {_clock(start)} tomorrow, so asleep by "
-                 f"{_clock(asleep_by)} for eight hours.")
+                 f"{title} is at {_clock_words(start)} tomorrow, so asleep by "
+                 f"{_clock_words(asleep_by)} for eight hours.")
 
 
 def points(now, workout_days, nights, events, said=frozenset()):
@@ -316,3 +344,116 @@ def run(now=None):
     tonight = points(now, workout_days, nights, events, checkin_said())
     record_checkin(night, tonight, skipped)
     return tonight
+
+
+# ── wording and delivery ──
+
+# Nights run late: he was usually asleep between 1 and 4am in September 2026.
+# Before 11:30pm the day is not over; after 4am it is the next one.
+WINDOW_OPENS, WINDOW_CLOSES = datetime.time(23, 30), datetime.time(4)
+
+_PROMPT = (
+    "You are Nova, Lethanial's voice assistant. You just answered him, and now "
+    "add a short evening check in. The facts below were already checked; say "
+    "each one plainly, as it is. Do not soften it into good news, and do not "
+    "comment on it (no \"worth noticing\", no \"keep it up\"). One or two "
+    "spoken sentences, under thirty five words in all. Warm and direct, a "
+    "little dry. Never ask whether he did something. Spell every number and "
+    "time as words, with no hyphens: \"fifty one\", not \"fifty-one\". "
+    "No dashes of any kind. Use his name at most once. Plain text only."
+)
+
+_client = anthropic.Anthropic(timeout=10.0, max_retries=1)
+
+# One worker: a check in is one job a night, and a second can only be a
+# duplicate.
+_pool = ThreadPoolExecutor(max_workers=1)
+_started = set()
+_started_lock = threading.Lock()
+
+
+def in_window(now):
+    return now.time() >= WINDOW_OPENS or now.time() < WINDOW_CLOSES
+
+
+# Past this a reply has wandered from two sentences; the written lines are
+# safer than a ramble.
+_MAX_WORDS = 45
+
+
+def _checked(text):
+    """Her wording, made safe to speak, or None to fall back.
+
+    Dashes are swapped in code because the prompt alone did not hold them on
+    Oct 2 2026. Digits mean a number she was told to spell came out raw, or
+    one she computed herself: in the same samples she said "two hours nine
+    minutes short" of a gap that was one hour nine."""
+    text = re.sub(r"\s*[\u2014\u2013]\s*", ", ", text)
+    text = re.sub(r"(?<=\w)-(?=\w)", " ", text)
+    if re.search(r"\d", text) or len(text.split()) > _MAX_WORDS:
+        return None
+    return text
+
+
+def phrase(found):
+    """The points in her words, or the written lines if Claude is unreachable.
+    The facts were decided in code; this only chooses the sentence."""
+    try:
+        reply = _client.messages.create(
+            model=CHECKIN_MODEL, max_tokens=200, system=_PROMPT,
+            messages=[{"role": "user",
+                       "content": "\n".join(p.summary for p in found)}])
+        text = _checked("".join(b.text for b in reply.content if b.type == "text").strip())
+        if text:
+            return text
+        print("Check in: wording failed the check, using the written lines", flush=True)
+    except Exception as exc:
+        print(f"Check in: wording failed, using the written lines: {exc}", flush=True)
+    return " ".join(p.text for p in found)
+
+
+def _prepare(now):
+    found = run(now)
+    if not found:
+        return None
+    return phrase(found), " ".join(p.summary for p in found)
+
+
+def start(now=None):
+    """Begin tonight's check in in the background, or None if there is none to
+    do. Called only after his voice is verified: these are his health and gym
+    numbers, and a guest's turn must never start one."""
+    now = now or datetime.datetime.now().astimezone()
+    if not CHECKIN or not in_window(now):
+        return None
+    night = day_lived(now)
+    with _started_lock:
+        if night in _started or checkin_ran(night):
+            return None
+        _started.add(night)
+    return _pool.submit(_prepare, now)
+
+
+def _fire(future):
+    try:
+        result = future.result()
+    except Exception as exc:
+        print(f"Check in failed: {exc}", flush=True)
+        return
+    if result is not None:
+        text, summary = result
+        print(f"Check in: {text}", flush=True)
+        alerts.fire("checkin", text, summary)
+
+
+def deliver(future):
+    """Queue the check in after her reply. Ready now, it is queued at once and
+    the loop speaks it before the follow up window. Still fetching, it is
+    queued when it finishes, and the alert queue delivers it at the next safe
+    moment, the way a reminder that fires mid turn is."""
+    if future is None:
+        return
+    if future.done():
+        _fire(future)
+    else:
+        future.add_done_callback(_fire)

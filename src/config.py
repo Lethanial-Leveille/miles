@@ -966,6 +966,12 @@ PROMPT_CACHING = True
 MEMORY_PASS = True
 MEMORY_PASS_MODEL = "claude-haiku-4-5"
 
+# The evening check in; see checkin.py. Haiku words the facts code already
+# chose, so the same week does not sound the same every night. Like the memory
+# pass it runs off his turn's clock, after her reply.
+CHECKIN = True
+CHECKIN_MODEL = "claude-haiku-4-5"
+
 
 # ── Conversation loop ──
 # Hard ceiling on consecutive follow up turns before the loop returns to wake
