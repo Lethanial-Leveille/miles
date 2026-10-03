@@ -734,6 +734,16 @@ def _migration_031_checkin_log(conn):
     conn.execute("CREATE INDEX idx_checkin_log_night ON checkin_log (night)")
 
 
+def _migration_032_hevy_restores(conn):
+    """Whether a hevy_progressions row raised a weight or put one back.
+
+    His phone's Hevy app saves its own stale copy of a routine the moment a
+    workout is saved, and on Oct 2 2026 that undid every change made from here
+    that afternoon. A raise undone that way is restored, and the row says so,
+    so Nova can tell him rather than leave him wondering why it moved."""
+    conn.execute("ALTER TABLE hevy_progressions ADD COLUMN kind TEXT NOT NULL DEFAULT 'raise'")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -766,6 +776,7 @@ MIGRATIONS = [
     (29, _migration_029_presence_energy),
     (30, _migration_030_hevy_progressions),
     (31, _migration_031_checkin_log),
+    (32, _migration_032_hevy_restores),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -1676,28 +1687,41 @@ def hevy_workouts_seen():
     return {row[0] for row in rows}
 
 
-def record_hevy_progression(workout, routine, raises):
-    """raises is [(exercise, from_lb, to_lb)]; empty still marks the workout seen."""
+def record_hevy_progression(workout, routine, raises, kind="raise"):
+    """raises is [(exercise, from_lb, to_lb)]; empty still marks the workout seen.
+    kind is "restore" when a raise the app undid was put back."""
     now = datetime.now().isoformat()
-    rows = [(now, workout["id"], workout["start_time"], routine["id"], routine["title"], *r)
+    rows = [(now, workout["id"], workout["start_time"], routine["id"], routine["title"], *r, kind)
             for r in raises] or [(now, workout["id"], workout["start_time"], routine["id"],
-                                  routine["title"], None, None, None)]
+                                  routine["title"], None, None, None, kind)]
     conn = sqlite3.connect(DB_PATH)
     conn.executemany(
         "INSERT INTO hevy_progressions (processed_at, workout_id, workout_start, routine_id,"
-        " routine_title, exercise, from_lb, to_lb) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        " routine_title, exercise, from_lb, to_lb, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
     conn.commit()
     conn.close()
 
 
-def hevy_raises_after(workout_start):
-    """{exercise: (from_lb, to_lb)} raised because of the session that started then."""
+def hevy_raises_after(workout_start, kind="raise"):
+    """{exercise: (from_lb, to_lb)} raised, or restored, after the session that
+    started then."""
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute(
         "SELECT exercise, from_lb, to_lb FROM hevy_progressions"
-        " WHERE workout_start = ? AND exercise IS NOT NULL", (workout_start,)).fetchall()
+        " WHERE workout_start = ? AND exercise IS NOT NULL AND kind = ?",
+        (workout_start, kind)).fetchall()
     conn.close()
     return {exercise: (from_lb, to_lb) for exercise, from_lb, to_lb in rows}
+
+
+def hevy_held_weights(routine_id):
+    """{exercise: pounds} the latest weight MILES set for each lift in a routine."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT exercise, to_lb FROM hevy_progressions"
+        " WHERE routine_id = ? AND exercise IS NOT NULL ORDER BY id", (routine_id,)).fetchall()
+    conn.close()
+    return dict(rows)
 
 
 def checkin_ran(night):

@@ -430,7 +430,8 @@ def lift_sessions(workouts):
     return by_lift
 
 
-def plan_session(routine, sessions_by_lift, today, tz=None, raised_after=lambda start: {}):
+def plan_session(routine, sessions_by_lift, today, tz=None, raised_after=lambda start: {},
+                 restored_after=lambda start: {}):
     """Each lift in the routine: what he did last time, what to aim for, and
     whether it has stalled. The target reads the routine's rep range, so it
     can say when to add weight.
@@ -458,6 +459,10 @@ def plan_session(routine, sessions_by_lift, today, tz=None, raised_after=lambda 
         raised = raised_after(last["start_time"]).get(title)
         if raised:
             entry["raised_in_routine_after_last_time"] = f"{raised[0]:g} to {raised[1]:g} pounds"
+        restored = restored_after(last["start_time"]).get(title)
+        if restored:
+            entry["restored_after_his_hevy_app_undid_it"] = (
+                f"the app put it back to {restored[0]:g}; MILES restored {restored[1]:g} pounds")
         if len(past) >= 3:
             s0, s1, s2 = (_session_score(p["sets"]) for p in past[:3])
             entry["stalled"] = s0 <= s1 and s1 <= s2
@@ -606,4 +611,5 @@ def get_session_plan(routine):
 
     workouts = _all_pages("workouts", "workouts", _NAME_SEARCH_PAGES)
     return plan_session(routines[matches[0]], lift_sessions(workouts), datetime.date.today(),
-                        raised_after=hevy_raises_after)
+                        raised_after=hevy_raises_after,
+                        restored_after=lambda start: hevy_raises_after(start, kind="restore"))

@@ -390,7 +390,7 @@ STT: Deepgram Nova 3 online, falling back to whisper.cpp (base.en, beam search a
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: SpeechBrain ECAPA (192 dim cosine similarity); an unverified voice is a guest.
-Memory: SQLite WAL mode, schema migrations to version 30.
+Memory: SQLite WAL mode, schema migrations to version 32.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.
@@ -452,7 +452,8 @@ Landed since v0.7.1, unreleased:
 - Automatic progression: `miles-hevy.timer` raises a lift's weight in the Hevy
   routine once a workout earns it (10 lb squat and deadlift families,
   machines and dumbbell pairs, 5 lb otherwise; dumbbells stop at the
-  apartment's 50 a hand), and the session plan says what moved
+  apartment's 50 a hand), and the session plan says what moved. A raise his
+  phone's stale copy undoes at a workout save is put back
 
 - The ReSpeaker XVF3800 on its 48kHz firmware, resampled to 16kHz at the
   stream; speakers on its own jack, so its echo canceller works

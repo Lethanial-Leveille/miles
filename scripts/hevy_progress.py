@@ -17,5 +17,5 @@ import hevy_progress  # noqa: E402
 from database import init_db  # noqa: E402
 
 init_db()
-for routine, exercise, from_lb, to_lb in hevy_progress.run():
-    print(f"{routine}: {exercise} {from_lb:g} to {to_lb:g} pounds", flush=True)
+for kind, routine, exercise, from_lb, to_lb in hevy_progress.run():
+    print(f"{routine}: {exercise} {kind} {from_lb:g} to {to_lb:g} pounds", flush=True)
