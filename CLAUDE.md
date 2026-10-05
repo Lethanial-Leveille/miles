@@ -131,7 +131,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1289 passing, 6 skipped, Oct 2 2026)
+│   └── tests/                 # pytest suite (1340 passing, 6 skipped, Oct 5 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -301,6 +301,11 @@ of the value itself.
   `BARGE_IN_SPEECH_MS = 300` (any speech over her stops her, not only the wake
   word: 30ms frames over the floor that webrtcvad calls speech, that many in a
   row, on `BARGE_IN_CHANNEL`; `interrupt_speech.py`. Anyone's speech counts)
+- `BARGE_IN_ECHO_CHECK = True` (since Oct 5 2026), `BARGE_IN_ECHO_SCORE = 0.8`,
+  `BARGE_IN_ECHO_WINDOW_MS = 1200`, `BARGE_IN_ECHO_LAG_MS = (30, 300)` (a run whose
+  levels follow what she is playing is her own echo and does not stop her; ignored
+  stretches keep their audio in the stop dir as `echo_*`. Why:
+  [BACKEND_TODO.md](docs/BACKEND_TODO.md))
 - `BARGE_IN_STOP_DIR = ~/miles/data/barge_in_stops`, `BARGE_IN_STOP_MAX_FILES = 100`
   (the audio behind every stop, so a false one can be heard)
 

@@ -83,6 +83,8 @@ from config import (
     TEMP_WAV,
     WAKE_MODEL_PATH, VOICEPRINT_PATH, WAKE_THRESHOLD, BARGE_IN_THRESHOLD,
     BARGE_IN_CHANNEL, BARGE_IN_SPEECH, BARGE_IN_SPEECH_FLOOR, BARGE_IN_SPEECH_MS,
+    BARGE_IN_ECHO_CHECK, BARGE_IN_ECHO_SCORE, BARGE_IN_ECHO_WINDOW_MS,
+    BARGE_IN_ECHO_LAG_MS,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, COMMAND_ONSET_S, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL, MIC_NAME_HINT,
     MIC_CAPTURE_CHANNELS, MIC_CHANNEL, MIC_CAPTURE_RATE,
@@ -992,7 +994,7 @@ def claim_interruption():
     return pcm
 
 
-def watch_for_interrupt(stop_event):
+def watch_for_interrupt(stop_event, her=None):
     """Listen for him while Nova is speaking. Returns True if heard.
 
     Runs on its own thread during playback, when the main loop is blocked on
@@ -1009,7 +1011,11 @@ def watch_for_interrupt(stop_event):
 
     A fresh model instance rather than the shared one: the main loop's
     detection state must not be disturbed by frames captured mid sentence. Its
-    own VAD too, since the main loop's is not this thread's to share."""
+    own VAD too, since the main loop's is not this thread's to share.
+
+    her is the interrupt_speech.HerAudio play() fills for this sentence. With
+    it, a run of speech that follows what she is playing is her echo and does
+    not stop her (BARGE_IN_ECHO_CHECK)."""
     try:
         with silence_stderr():
             watcher = Model(wakeword_model_paths=[WAKE_MODEL_PATH])
@@ -1017,11 +1023,29 @@ def watch_for_interrupt(stop_event):
         print(f"  barge in: wake model did not load: {e!r}", flush=True)
         return False
     speech = None
+    # When the mic audio began, on the clock her audio is placed on: set at the
+    # first read, less the read's own length.
+    mic_start = [None]
+    best_echo = [-1.0]
+    window = BARGE_IN_ECHO_WINDOW_MS // 30
+    lag_lo, lag_hi = (ms // 30 for ms in BARGE_IN_ECHO_LAG_MS)
+
+    def is_her_echo(levels):
+        if mic_start[0] is None:
+            return False
+        mine = np.array(levels[-window:])
+        t_end = mic_start[0] + len(levels) * 0.03
+        hers = her.envelope_until(t_end, len(mine) + lag_hi)
+        score = interrupt_speech.echo_score(mine, hers, lag_lo, lag_hi)
+        best_echo[0] = max(best_echo[0], score)
+        return score >= BARGE_IN_ECHO_SCORE
+
     if BARGE_IN_SPEECH:
         vad = webrtcvad.Vad(VAD_MODE)
         speech = interrupt_speech.SpeechOnset(
             BARGE_IN_SPEECH_FLOOR, BARGE_IN_SPEECH_MS,
-            lambda frame: vad.is_speech(frame, RATE))
+            lambda frame: vad.is_speech(frame, RATE),
+            is_echo=is_her_echo if (BARGE_IN_ECHO_CHECK and her is not None) else None)
 
     # Logged per sentence, because a watcher that quietly scores low, or quietly
     # dies on an exception, looks exactly like one that heard nothing. The first
@@ -1038,6 +1062,8 @@ def watch_for_interrupt(stop_event):
         except Exception as e:
             print(f"  barge in: mic read failed: {e!r}", flush=True)
             break
+        if mic_start[0] is None:
+            mic_start[0] = time.monotonic() - CHUNK / RATE
         frames += 1
         kept.append(data)
         frame = np.frombuffer(data, dtype=np.int16)
@@ -1078,14 +1104,26 @@ def watch_for_interrupt(stop_event):
                 else f"wake_{peak:.2f}")
         _save_wake_clip(kept, peak, BARGE_IN_STOP_DIR, BARGE_IN_STOP_MAX_FILES,
                         "barge in stop", stem=stem)
+    elif speech is not None and speech.echo_frames:
+        # Kept beside the stops: if this was him, she talked over him, and
+        # that has to be findable by ear like any other guard that can deafen her.
+        _save_wake_clip(kept, peak, BARGE_IN_STOP_DIR, BARGE_IN_STOP_MAX_FILES,
+                        "barge in echo ignored", stem=f"echo_{best_echo[0]:.2f}")
     level_text = f", loudest {level:.1f} dBFS" if level is not None else ""
     # Where his speech began in the kept WAV, so a stop on a TV or a cough can
     # be found and listened to.
     onset_text = (f", speech from {speech.onset / RATE:.2f}s"
                   if heard == "speech" else "")
+    # Every sentence the check ran on, ignored or not, so a cutoff that keeps
+    # her talking over him shows up as his stop scoring near it.
+    echo_text = ""
+    if speech is not None and best_echo[0] > -1.0:
+        ignored = (f", ignored {speech.echo_frames * 30}ms as her echo"
+                   if speech.echo_frames else "")
+        echo_text = f", echo score {best_echo[0]:.2f}{ignored}"
     print(f"  barge in: {'HEARD ' + heard if heard else 'watched'} "
-          f"{frames * CHUNK / RATE:.1f}s, peak {peak:.2f}{level_text}{onset_text} "
-          f"({os.path.basename(path)})", flush=True)
+          f"{frames * CHUNK / RATE:.1f}s, peak {peak:.2f}{level_text}{onset_text}"
+          f"{echo_text} ({os.path.basename(path)})", flush=True)
     if heard == "speech":
         # Started only once this thread has stopped reading, so the two never
         # read the stream at once. A wake word stop is not carried: what he

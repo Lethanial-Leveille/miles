@@ -181,6 +181,20 @@ BARGE_IN_SPEECH = True
 BARGE_IN_SPEECH_FLOOR = -37.0
 BARGE_IN_SPEECH_MS = 300
 
+# Her own echo is not him. Oct 4 and 5 2026 she stopped on her own first
+# syllables, leaking through the canceller at minus 30 dBFS after hours of
+# quiet; their envelopes followed what she was playing at r 0.94 and 0.97,
+# where his 28 takes over her (wake_eval 20261001T114604, barge_in_eval
+# 20261002T004951) scored 0.69 at most. Compared over the last WINDOW of mic
+# levels, at delays across LAG from when aplay started the device: 90 to 150ms
+# on the eval, padded each way because the live start time is estimated. A
+# wider search let his own speech line up with hers by luck (0.91 over 1.5s).
+# A wrong estimate fails safe: no match, and she stops as she did before.
+BARGE_IN_ECHO_CHECK = True
+BARGE_IN_ECHO_SCORE = 0.8
+BARGE_IN_ECHO_WINDOW_MS = 1200
+BARGE_IN_ECHO_LAG_MS = (30, 300)
+
 # The audio behind every barge in stop, wake or speech, so each one can be heard:
 # a stop on a clap or the TV is invisible in a log line. Named by why it stopped
 # and, for speech, where his speech began in the clip. Up to about 15s each, so
