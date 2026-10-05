@@ -100,12 +100,12 @@ def test_barge_in_reports_an_interruption_only_when_one_happened(monkeypatch):
     """The wrapper used to read its own stop signal back as an interruption,
     so every sentence counted as interrupted once barge in was on."""
     monkeypatch.setattr(brain, "BARGE_IN", True)
-    monkeypatch.setattr(brain, "play", lambda synthesis, interrupt=None: (interrupt.wait(0.2), 12.0)[1])
+    monkeypatch.setattr(brain, "play", lambda synthesis, interrupt=None, her=None: (interrupt.wait(0.2), 12.0)[1])
 
-    def quiet(stop_event):
+    def quiet(stop_event, her=None):
         stop_event.wait(2)
 
-    def hears_the_wake_word(stop_event):
+    def hears_the_wake_word(stop_event, her=None):
         stop_event.set()
 
     for watcher, expected in ((quiet, False), (hears_the_wake_word, True)):

@@ -244,3 +244,138 @@ def test_heard_by_her_pace_when_the_audio_had_not_all_arrived():
 def test_heard_never_more_than_was_said_nor_less_than_nothing():
     assert words_heard(TEN, heard_s=60.0) == TEN
     assert words_heard(TEN, heard_s=0.0, audio_s=4.0) == ""
+
+
+# ── her own echo is not him ──
+
+from interrupt_speech import (APLAY_START_BYTES, ENVELOPE_FLOOR, HerAudio,
+                              echo_score, envelope)
+
+
+def syllables(n, seed):
+    """n frames of a speech like envelope: loud and quiet stretches."""
+    rng = np.random.default_rng(seed)
+    return np.where(rng.random(n) > 0.5, -25.0, -50.0) + rng.normal(0, 2, n)
+
+
+def test_envelope_lines_up_across_rates():
+    """Her 22050Hz audio and the 16kHz mic must give one level per 30ms each."""
+    t16 = np.arange(16000) / 16000
+    t22 = np.arange(22050) / 22050
+    a = (3000 * np.sin(2 * np.pi * 300 * t16)).astype(np.int16)
+    b = (3000 * np.sin(2 * np.pi * 300 * t22)).astype(np.int16)
+    assert len(envelope(a, 16000)) == len(envelope(b, 22050)) == 33
+    assert abs(envelope(a, 16000)[5] - envelope(b, 22050)[5]) < 0.1
+
+
+def test_envelope_clamps_digital_silence():
+    assert envelope(np.zeros(4800, dtype=np.int16), 16000).min() == ENVELOPE_FLOOR
+
+
+def test_her_delayed_copy_scores_high_at_its_delay():
+    hers = syllables(60, 1)
+    mic = hers[60 - 40 - 5:60 - 5] - 15         # 150ms late, quieter
+    assert echo_score(mic, hers, 1, 10) > 0.95
+
+
+def test_a_delay_outside_the_search_is_not_found():
+    """The window is the guard against luck; a match outside it is not hers."""
+    hers = syllables(80, 1)
+    mic = hers[80 - 40 - 30:80 - 30]            # 900ms late
+    assert echo_score(mic, hers[-50:], 1, 10) < 0.5
+
+
+def test_his_own_syllables_score_low():
+    assert echo_score(syllables(40, 2), syllables(50, 1), 1, 10) < 0.5
+
+
+def test_her_silence_never_counts_as_a_match():
+    assert echo_score(syllables(40, 2), np.full(50, ENVELOPE_FLOOR), 1, 10) == -1.0
+
+
+class Clock:
+    def __init__(self):
+        self.t = 100.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_her_clock_starts_when_aplay_buffer_fills_not_at_the_first_write():
+    clock = Clock()
+    her = HerAudio(clock=clock)
+    her.wrote(b"\x00\x00" * 1000)
+    clock.t = 100.5
+    her.wrote(b"\x00\x00" * 8000)
+    assert her.playing_from == 100.5
+
+
+def test_a_short_sentence_starts_when_aplay_input_closes():
+    clock = Clock()
+    her = HerAudio(clock=clock)
+    her.wrote(b"\x00\x00" * 100)
+    clock.t = 101.0
+    her.closed()
+    assert her.playing_from == 101.0
+
+
+def test_her_envelope_is_placed_where_she_played():
+    clock = Clock()
+    her = HerAudio(clock=clock)
+    loud = (8000 * np.sin(2 * np.pi * 300 * np.arange(22050) / 22050)).astype(np.int16)
+    her.wrote(loud.tobytes())                   # 1s, past the buffer: plays from 100.0
+    env = her.envelope_until(100.6, 40)         # 1.2s ending 0.6s into her
+    assert (env[:20] == ENVELOPE_FLOOR).all()   # before she began
+    assert (env[20:] > -20).all()
+
+
+def test_nothing_played_yet_is_all_floor():
+    assert (HerAudio().envelope_until(5.0, 10) == ENVELOPE_FLOOR).all()
+
+
+def test_echo_does_not_stop_her_and_him_after_it_does():
+    """Oct 4 and 5 2026: her first syllables leaked through and stopped her."""
+    calls = []
+
+    def echo_for_the_first_twenty(levels):
+        calls.append(len(levels))
+        return len(levels) <= 20
+
+    onset = SpeechOnset(FLOOR, NEED_MS, always, is_echo=echo_for_the_first_twenty)
+    onset.feed(frames(-30, 20))
+    assert not onset.fired and onset.echo_frames == 11
+    onset.feed(frames(-30, 1))
+    assert onset.fired
+
+
+def test_after_echo_his_onset_is_where_the_firing_frames_began():
+    """Kept from the run's start, the next recording opened on her words: Oct 4
+    the carried "interruption" transcribed as "I didn't catch the..."."""
+    onset = SpeechOnset(FLOOR, NEED_MS, always, is_echo=lambda lv: len(lv) <= 20)
+    onset.feed(frames(-60, 5) + frames(-30, 21))
+    assert onset.onset == (21 - 10) * FRAME     # fired at frame 21; the run began at 5
+
+
+def test_without_an_echo_check_nothing_changes():
+    onset = SpeechOnset(FLOOR, NEED_MS, always)
+    onset.feed(frames(-60, 5) + frames(-30, 12))
+    assert onset.onset == 5 * FRAME and onset.echo_frames == 0
+
+
+def test_the_aplay_buffer_matches_what_tts_opens():
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parent.parent / "tts.py").read_text()
+    assert f"--buffer-size={APLAY_START_BYTES // 2}" in source
+
+
+def test_play_tells_her_audio_every_write_and_the_close():
+    import ast
+    play = ast.unparse(_source_of("tts.py", "play"))
+    assert play.index("aplay.stdin.write(chunk)") < play.index("her.wrote(chunk)")
+    assert play.index("aplay.stdin.close()") < play.index("her.closed()")
+
+
+def test_the_watcher_and_the_player_share_one_her_audio():
+    import ast
+    body = ast.unparse(_source_of("brain.py", "_play_with_barge_in"))
+    assert "args=(interrupt, her)" in body and "her=her" in body

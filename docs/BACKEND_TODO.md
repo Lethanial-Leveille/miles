@@ -703,6 +703,24 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
       her. Body moving or the longer quiet: the test meant to separate them
       (`..._silence`, her clips after 5s to 300s of quiet) was spoiled by people
       talking outside the room. Rerun it with the house quiet.
+
+      **Answered by live use, Oct 5 2026: yes, after hours.** Of three speech
+      stops Oct 2 to 5, two were her own first syllables (20261004T145558,
+      20261005T001408), about 0.85s into the first reply after hours idle,
+      at minus 30 dBFS on channel 1. Their envelopes follow her reply at r 0.94
+      and 0.97; the real interruptions score 0.07 to 0.37. Raising the floor
+      past minus 30 would lose him, so instead **a run that follows what she is
+      playing is ignored** (`BARGE_IN_ECHO_CHECK`, live Oct 5): `play()` fills
+      an `interrupt_speech.HerAudio`, placed on the clock from when aplay's
+      buffer fills, and the watcher scores the last 1.2s of mic levels against
+      hers at 30 to 300ms delay. His 28 takes over her score 0.69 at most and
+      all still stop her through the shipped code; searching 1.5s of delay
+      instead let one reach 0.91, which is why the window is narrow. **Not
+      shown:** that live timing puts her delay inside that window. The archive
+      does not record when aplay started, so the first live echo is the test;
+      every sentence logs `echo score`, and every ignored stretch keeps its
+      audio as `barge_in_stops/echo_*.wav`. A miss fails safe (she stops as
+      before); a false match means she talked over him, so check those by ear.
    2. Keep what he said: the watcher's frames from his onset, with a preroll,
       seed the next recording, which endpoints as a command does. Channel 0
       chops his voice while she plays, so the interrupting stretch comes from

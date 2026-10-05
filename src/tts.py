@@ -375,7 +375,7 @@ def _open_aplay():
     return proc
 
 
-def play(synthesis, interrupt=None):
+def play(synthesis, interrupt=None, her=None):
     """Play a started synthesis to the end.
 
     Returns how long it waited before its first audio reached aplay, in ms, or
@@ -387,7 +387,10 @@ def play(synthesis, interrupt=None):
 
     aplay is opened on the first chunk rather than up front, so a request that
     fails outright never starts the audio device, the same as before synthesis
-    and playback were split."""
+    and playback were split.
+
+    her, an interrupt_speech.HerAudio, is told every write and the close, so
+    the barge in watcher can tell her echo from him."""
     if synthesis is None:
         return None
 
@@ -415,6 +418,8 @@ def play(synthesis, interrupt=None):
                 aplay.stdin.write(chunk)
                 aplay.stdin.flush()
                 written += len(chunk)
+                if her is not None:
+                    her.wrote(chunk)
                 if first_write_at is None:
                     first_write_at = time.monotonic()
                 if waited_ms is None:
@@ -426,6 +431,8 @@ def play(synthesis, interrupt=None):
         finally:
             if aplay is not None:
                 aplay.stdin.close()
+                if her is not None:
+                    her.closed()
                 # Barge in. The watcher thread reads the microphone while aplay
                 # drains; killing aplay is what actually cuts her off, because
                 # the pipe and the ALSA buffer still hold over a second of audio

@@ -171,11 +171,12 @@ def _play_with_barge_in(synthesis):
 
     import audio
     interrupt = threading.Event()
+    her = interrupt_speech.HerAudio()
     watcher = threading.Thread(target=audio.watch_for_interrupt,
-                               args=(interrupt,), daemon=True)
+                               args=(interrupt, her), daemon=True)
     watcher.start()
     try:
-        waited_ms = play(synthesis, interrupt=interrupt)
+        waited_ms = play(synthesis, interrupt=interrupt, her=her)
         interrupted = interrupt.is_set()
     finally:
         interrupt.set()          # release the watcher whether or not it fired
