@@ -973,6 +973,36 @@ to leave the Pi. Look at what Canvas actually sends before deciding.
 
 ## Not blocked, and worth doing anytime
 
+### The transcript eval has no audio left (found Oct 9 2026)
+
+`scripts/label_transcripts.py` is the only ruler for STT accuracy, and it can no
+longer measure anything. Its manifest (`data/stt_eval/manifest.csv`) names 60
+clips, 51 of them hand labelled, all recorded Aug 11 to 13 2026. It stores only
+file names and reads the audio out of `ARCHIVE_DIR`, and the archive keeps the
+newest `ARCHIVE_MAX_FILES` (600). The clips were present for the Deepgram
+measurement on Sep 25 and have since been pruned; on Oct 9 the oldest file in the
+archive was from Aug 18, and no copy exists anywhere under `~`. `score` crashes
+on the first missing file.
+
+The labels survive and are worthless without the audio. Every WER figure in
+[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md) still stands as a record of what was
+measured, but none of them can be rerun, and nothing since has been scored:
+`DEEPGRAM_KEYTERMS` went live Oct 9 2026 unmeasured, with a "deepgram nova-3
+keyterms" row added to the candidate table for when there is audio again.
+
+**The fix is two parts, and both are needed.**
+
+1. `init` copies each sampled clip into `data/stt_eval/clips/` and the manifest
+   points there, the way `speaker_eval` and `wake_eval` already keep their own
+   audio. Nothing the archive prunes can then touch the eval. About 60 clips is
+   roughly 15MB.
+2. A new labelling pass, because the old audio is gone. Sample from the current
+   archive, which is all on the XVF3800 and so is also the first eval of the mic
+   that is actually running; the lost set predates it. Include some clips that
+   say family names, so the keyterms have something to be scored on.
+
+Until then, treat any claim of an STT improvement as unmeasured.
+
 ### Retrain the wake model on his false wakes (asked Oct 1 2026)
 
 **Why:** on Oct 1 2026 at 14:57 `hey_nova.onnx` woke at 0.73 during his phone
