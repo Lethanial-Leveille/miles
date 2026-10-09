@@ -52,7 +52,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "src"))
 
 from config import (ARCHIVE_DIR, WHISPER_CLI, WHISPER_AUDIO_CTX,  # noqa: E402
-                    WHISPER_MODEL, DB_PATH)
+                    WHISPER_MODEL, DB_PATH, DEEPGRAM_KEYTERMS)
 import tts                                                        # noqa: E402
 
 EVAL_DIR = os.path.expanduser("~/miles/data/stt_eval")
@@ -80,7 +80,7 @@ BEAM_5 = ["-bs", "5", "-bo", "5"]
 REMOTE_MS = {}
 
 
-def deepgram_nova3(path):
+def deepgram_nova3(path, keyterms=()):
     """Deepgram Nova 3, prerecorded endpoint, one clip per call.
 
     **`punctuate` and deliberately not `smart_format`.** Smart format rewrites
@@ -102,7 +102,8 @@ def deepgram_nova3(path):
     try:
         r = requests.post(
             "https://api.deepgram.com/v1/listen",
-            params={"model": "nova-3", "punctuate": "true", "language": "en"},
+            params={"model": "nova-3", "punctuate": "true", "language": "en",
+                    "keyterm": list(keyterms)},
             headers={"Authorization": f"Token {key}",
                      "Content-Type": "audio/wav"},
             data=audio, timeout=30)
@@ -113,7 +114,7 @@ def deepgram_nova3(path):
         print(f"    deepgram failed on {os.path.basename(path)}: {exc}",
               flush=True)
         return ""
-    REMOTE_MS.setdefault("deepgram_nova3", []).append(
+    REMOTE_MS.setdefault("deepgram_nova3" + ("_keyterms" if keyterms else ""), []).append(
         (time.monotonic() - started) * 1000)
     return text
 
@@ -203,6 +204,10 @@ CANDIDATES = [
     # transcript, so a network engine is scored on the same ruler as the local
     # ones rather than in a separate harness with its own quirks.
     ("deepgram nova-3",       deepgram_nova3,                       None, None),
+    # What runs live since Oct 9 2026: the same call told to expect his family's
+    # names. Kept beside the plain row so the names can be shown to cost nothing.
+    ("deepgram nova-3 keyterms",
+     lambda path: deepgram_nova3(path, DEEPGRAM_KEYTERMS),               None, None),
 ]
 
 # Non speech, however whisper chose to spell it this time. These normalize to an

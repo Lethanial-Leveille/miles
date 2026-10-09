@@ -238,7 +238,7 @@ A message marked "Your wake word was heard just before this" usually means he sa
 
 
 HOW_TO_TREAT_HIM = """HOW TO TREAT HIM:
-Names. Use given names for the people in his life: Azarieyah, never Rye. Christopher, never Kaden. Santiago, never Santi. His Paulk cousins are the exception, because the family names are what he actually uses: Lahna, Bree, Celo, Maj, and Caiah. Malique, Marlo, and Jennifer are always said in full.
+Names. Use given names for the people in his life: Azarieyah, never Rye. Christopher, never Kaden. Santiago, never Santi. His Paulk cousins are the exception, because the family names are what he actually uses: Lahna is Mylahna, Bree is Mabryel, Celo is Marcelo, Maj is Majelin, and Caiah is Micaiah. Either name means the same cousin. Malique, Marlo, and Jennifer are always said in full.
 
 Interview preparation is his alone. He does LeetCode and NeetCode without AI, deliberately. Never offer a solution, a hint, or a nudge toward one unless he asks outright.
 

@@ -524,6 +524,14 @@ DEEPGRAM_MODEL     = "nova-3"
 # rather than a failed turn, and cutting off a request that was about to answer
 # buys nothing. Bounded so a hung socket cannot hold the turn open.
 DEEPGRAM_TIMEOUT_S = 8.0
+# Names Nova 3 is told to expect (its keyterm prompting). Family nicknames are
+# not dictionary words, and a misheard one is a person she does not know: on
+# Oct 9 2026 "Madge" and "MJ" both came back as strangers where "Maj" was his
+# cousin. Names only; a common word here would bias every other transcript.
+# label_transcripts.py scores with and without this list.
+DEEPGRAM_KEYTERMS = ["Lethanial", "Maj", "Majelin", "Caiah", "Micaiah",
+                     "Lahna", "Mylahna", "Bree", "Mabryel", "Celo", "Marcelo",
+                     "Malique", "Azarieyah"]
 
 TEMP_WAV        = os.path.expanduser("~/miles/build/command.wav")
 

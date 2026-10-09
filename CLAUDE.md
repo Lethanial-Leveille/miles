@@ -261,6 +261,9 @@ of the value itself.
 
 ### Deepgram — why: [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md#deepgram-nova-3-measured-sep-25-2026)
 - `DEEPGRAM_STT = True`, `DEEPGRAM_MODEL = "nova-3"`, `DEEPGRAM_TIMEOUT_S = 8.0`
+- `DEEPGRAM_KEYTERMS` (since Oct 9 2026): his family's names, sent as Nova 3
+  keyterm prompts so "Maj" is not heard as "Madge". Names only. Unscored: every
+  clip in `data/stt_eval` had been pruned from the archive by then
 - `DEEPGRAM_API_KEY` from `.env`. The key is a secret, the model name is not
 - **Whisper is the floor and stays.** Every failure falls back to it, so the
   offline path does not regress. `DEEPGRAM_STT = False` returns to fully local
