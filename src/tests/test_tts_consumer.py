@@ -166,6 +166,32 @@ def test_the_cut_mark_survives_the_history_trim():
     assert len(trimmed[0]["content"].split()) < 40
 
 
+def test_her_closing_question_survives_the_history_trim():
+    """Oct 9 2026: the trim cut "When do they said they'd get back to you?" off
+    a 49 word reply, and she asked it again two turns later."""
+    reply = " ".join(["word"] * 40) + ". When do you expect to hear back?"
+    trimmed = brain._trim_history([{"role": "assistant", "content": reply}])
+    assert trimmed[0]["content"].endswith("... When do you expect to hear back?")
+
+
+def test_a_question_inside_the_head_is_not_said_twice():
+    reply = " ".join(["word"] * 27) + ". When do you expect to hear back?"
+    trimmed = brain._trim_history([{"role": "assistant", "content": reply}])
+    assert trimmed[0]["content"].count("When do") == 1
+
+
+def test_a_closing_statement_is_still_trimmed():
+    reply = " ".join(["word"] * 40) + ". That is all."
+    trimmed = brain._trim_history([{"role": "assistant", "content": reply}])
+    assert trimmed[0]["content"].endswith("...")
+
+
+def test_a_cut_reply_keeps_no_question_he_never_heard():
+    reply = " ".join(["word"] * 40) + ". Did it go well? " + brain.CUT_OFF_MARK
+    trimmed = brain._trim_history([{"role": "assistant", "content": reply}])
+    assert "Did it go well?" not in trimmed[0]["content"]
+
+
 def test_once_cut_the_rest_of_a_tool_turn_is_never_played():
     """A second player would start a second watcher reading the mic while the
     carrier holds his interruption, and answer what he had stopped."""

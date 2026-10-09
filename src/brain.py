@@ -527,12 +527,27 @@ def _trim_history(messages: list) -> list:
         if len(words) <= HISTORY_ASSISTANT_WORDS:
             trimmed.append(message)
             continue
+        # Her question almost always closes the reply, so the head alone cut
+        # it off. On Oct 9 2026 she asked when ReliaQuest would get back to
+        # him, could not see she had, read his "I didn't ask, should I have?"
+        # as being about something else, and asked it again two turns later.
+        # A reply he cut off keeps no question: he never heard it.
+        question = "" if cut else _closing_question(content)
+        # The head stops where the question starts, so no part of it is said twice.
+        head = min(HISTORY_ASSISTANT_WORDS, len(words) - len(question.split()))
         trimmed.append({
             **message,
-            "content": " ".join(words[:HISTORY_ASSISTANT_WORDS]) + "..."
+            "content": " ".join(words[:head]) + "..."
+                       + (f" {question}" if question else "")
                        + (f" {CUT_OFF_MARK}" if cut else ""),
         })
     return trimmed
+
+
+def _closing_question(content: str) -> str:
+    """The last sentence of a reply, if it is a question; otherwise empty."""
+    last = re.split(r"(?<=[.!?])\s+", content.strip())[-1]
+    return last if last.endswith("?") else ""
 
 
 def _resident_ids():
