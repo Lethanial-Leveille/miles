@@ -32,7 +32,7 @@ import wave
 import requests
 
 from config import (DEEPGRAM_STT, DEEPGRAM_API_KEY, DEEPGRAM_MODEL,
-                    DEEPGRAM_TIMEOUT_S, RATE, CHANNELS)
+                    DEEPGRAM_TIMEOUT_S, DEEPGRAM_KEYTERMS, RATE, CHANNELS)
 
 _ENDPOINT = "https://api.deepgram.com/v1/listen"
 
@@ -57,7 +57,7 @@ _warming = False
 # so "1 minute" would be a difference of formatting masquerading as one of
 # hearing. The eval scored it this way, so the live path has to match or the
 # measurement stops describing what runs.
-_PARAMS = {"punctuate": "true", "language": "en"}
+_PARAMS = {"punctuate": "true", "language": "en", "keyterm": DEEPGRAM_KEYTERMS}
 
 
 def available():
