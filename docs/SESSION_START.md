@@ -129,6 +129,7 @@ Do this before closing the tmux session. It is the other half of the preflight.
    | anything measured in `timing_log` | `docs/LATENCY.md` |
    | systemd, tunnel, API, env vars, reminders | `docs/INFRASTRUCTURE.md` |
    | something that broke in production | `docs/INCIDENTS.md`, dated |
+   | a feature, hardware, stack, endpoint or headline number | `README.md`, for its public reader (rule in `CLAUDE.md`) |
 
    **A measurement never moves to a new doc, it gets replaced in the one that
    owns it.** Two copies of a number is how the repo ends up unable to say which

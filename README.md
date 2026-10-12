@@ -2,7 +2,7 @@
 
 **Modular Intelligent Learning and Execution System**
 
-A voice assistant running on a Raspberry Pi 5. Say "Hey Nova" and it listens, checks that the voice belongs to its owner, answers through Claude, and speaks back through ElevenLabs. It reads its owner's Google Calendar and Oura ring, keeps a long term memory, sets timers and reminders, and can create, move or delete calendar events after asking out loud first. A native Swift companion app talks to the same backend from anywhere.
+A voice assistant running on a Raspberry Pi 5. Say "Hey Nova" and it listens, checks that the voice belongs to its owner, answers through Claude, and speaks back through ElevenLabs. It reads its owner's Google Calendar, Oura ring, Hevy workouts and job search tracker, looks up anything current on the web, keeps a long term memory, and sets timers and reminders. It changes the calendar when asked, with a thirty minute undo, and raises the weights in his workout routines when a session earns it. Talk over it and it stops to listen. A native Swift companion app talks to the same backend from anywhere.
 
 It is an exploration of full stack systems engineering: real time audio on embedded Linux, on device speech and speaker recognition, an LLM agent loop with a permission model enforced in code, and an API reachable from the internet.
 
@@ -18,11 +18,13 @@ Companion app repo: [github.com/Lethanial-Leveille/miles-app](https://github.com
 
 ## What It Does
 
-Say "Hey Nova." Nova acknowledges, records until you stop talking, transcribes on the Pi, checks your voice, and answers out loud. Follow ups do not need the wake word.
+Say "Hey Nova." Nova acknowledges, records until you stop talking, transcribes it, checks your voice, and answers out loud. Follow ups do not need the wake word, and you can cut in while she is talking.
 
 * **"How did I sleep?"** reads the Oura ring and says what the night means, not just the numbers.
 * **"What does my week look like?"** reads Google Calendar from now on, and keeps club events apart from real commitments.
-* **"Move LeetCode to 4pm."** Nova asks "Move LeetCode session tomorrow from 10 AM to 4 PM?" and changes nothing until you say yes.
+* **"Move LeetCode to 4pm."** Nova moves it and says so. "Undo that" puts it back for the next thirty minutes.
+* **"What should I hit at the gym today?"** reads the routine and his last sessions in Hevy and says whether to add a rep or add weight on each lift.
+* **"Wait, go back."** said over her stops her mid sentence, and what you said is answered next.
 * **"Set a timer for fifteen minutes."** is recognised and answered on the Pi without calling Claude at all.
 * **"Remind me to push my code at nine pm."**
 
@@ -33,20 +35,21 @@ Say "Hey Nova." Nova acknowledges, records until you stop talking, transcribes o
 ```
 Raspberry Pi 5 (8GB)
 
-  USB mic
+  ReSpeaker XVF3800 mic array (beamforming, echo cancellation on chip)
     → openWakeWord (hey_nova.onnx)
     → webrtcvad endpointing, with speculative transcription during the silence wait
-    → whisper.cpp (base.en, q8, greedy)
-    → Resemblyzer speaker verification
+    → Deepgram Nova 3, falling back to whisper.cpp on the Pi (base.en, q8, beam 5)
+    → SpeechBrain ECAPA speaker verification
     → local intent: timers, the time, cancel, dismiss, answered with no LLM call
     → Claude Haiku 4.5, streaming, prompt cached, native tool use
         → tool registry → permission gate → next turn confirmation for outside writes
     → sentence router → ElevenLabs (Victoria, eleven_v3) → aplay → speaker
+        ← barge in: the wake word, or his speech over her, stops playback
 
   SQLite (WAL): memory, conversation history, reminders, tool calls, per turn timing
   FastAPI + JWT, published through a Cloudflare Tunnel at miles.lethanial.com
 
-External: Anthropic Claude · ElevenLabs · Google Calendar · Oura · OpenWeatherMap
+External: Anthropic Claude (with web search) · Deepgram · ElevenLabs · Google Calendar · Oura · Hevy · Prowl · OpenWeatherMap
 ```
 
 ---
@@ -57,13 +60,14 @@ External: Anthropic Claude · ElevenLabs · Google Calendar · Oura · OpenWeath
 2. **Acknowledge.** A short spoken acknowledgement from a pre rendered phrase bank, or a chime. The phrase bank also lets Nova tell you what failed when the network is down.
 3. **Endpointing.** webrtcvad decides when you have stopped talking, with a short pre roll so a soft first consonant is not cut off.
 4. **Speculative transcription.** Whisper starts during the silence wait, so the transcript is often ready the moment the endpoint fires.
-5. **Speech to text.** whisper.cpp compiled from source with NEON optimizations, base.en quantized to q8, greedy decoding, capped audio context. Entirely on device.
-6. **Speaker verification.** Resemblyzer scores a 256 dimensional voice embedding against the enrolled voiceprint by cosine similarity.
+5. **Speech to text.** Deepgram Nova 3 first, because it hears the room better. whisper.cpp stays on the Pi as the floor: compiled from source with NEON optimizations, base.en quantized to q8, beam search, capped audio context, and used whenever Deepgram fails or is slow.
+6. **Speaker verification.** SpeechBrain ECAPA scores a 192 dimensional voice embedding against the enrolled voiceprint by cosine similarity. A voice that does not match is answered as a guest, with less access.
 7. **Local intent.** Timers, the time, cancelling a reminder and ending the conversation are recognised on the Pi with sentence embeddings and answered without an LLM call.
 8. **LLM.** Claude Haiku 4.5, streaming, with prompt caching on the system prompt and native tool use.
-9. **Tools.** Nineteen registered tools. Every call passes a permission gate in code before it runs, and anything that writes to a system outside the Pi waits for a spoken yes on the next turn.
+9. **Tools.** Thirty four registered tools. Every call passes a permission gate in code before it runs.
 10. **Speech.** Each complete sentence is streamed to ElevenLabs as raw PCM and piped straight into aplay.
-11. **Follow ups.** Nova keeps listening for a short window after answering.
+11. **Barge in.** While she speaks, a second listener watches the mic. "Hey Nova" or any speech over her stops playback mid sentence, and what was said is kept and answered as the next turn. A run of sound that rises and falls with her own voice is her echo and is ignored.
+12. **Follow ups.** Nova keeps listening for a short window after answering.
 
 ---
 
@@ -72,7 +76,7 @@ External: Anthropic Claude · ElevenLabs · Google Calendar · Oura · OpenWeath
 The principle underneath all of it: **deterministic code does the math and enforces the rules; the model does judgment.**
 
 * **The model proposes, code decides.** A tool call is a request. Between the request and the function, the executor checks the speaker's tier against the tool's permission. A refusal goes back to the model as a result, so Nova says no out loud instead of going silent. A rule in a prompt is a suggestion to a probabilistic system; a conditional in the executor is a guarantee.
-* **Confirmation is enforced by turn order.** Creating, moving or deleting an event only stages it. The write runs only when confirmed on the very next turn, within two minutes, and the confirmation takes no event details, so it can only run what was read back.
+* **Undo where possible, confirmation where not.** Calendar changes happen at once and can be undone for thirty minutes. The few that cannot be fully undone, like deleting one occurrence of a recurring event or accepting a job, only stage the change: it runs when confirmed on the very next turn, within two minutes, and the confirmation takes no details, so it can only run what was read back.
 * **Time is resolved in code.** Spoken times like "monday at 3pm" are resolved against the Pi's clock, and free time is computed from merged busy blocks, because that is arithmetic.
 * **Results carry their units.** An early sleep tool returned contributor scores under names like `total_sleep`, and Nova reported a hundred out of a hundred as an hour and forty minutes of sleep. Every field now names what it is.
 
@@ -82,8 +86,9 @@ The principle underneath all of it: **deterministic code does the math and enfor
 
 **Hardware**
 * Raspberry Pi 5 (8GB), headless Raspberry Pi OS Lite, 64 bit
-* ReSpeaker XVF3800 USB 4 mic array (on chip beamforming, noise suppression, AGC), found by name rather than by ALSA card number
-* USB speakers through a 3.5mm adapter
+* ReSpeaker XVF3800 USB 4 mic array (on chip beamforming, noise suppression, AGC, echo cancellation), found by name rather than by ALSA card number
+* Speakers on the array's own 3.5mm jack, so its echo canceller hears her on the same clock
+* LD2410C mmWave presence radar on the GPIO UART
 
 **Languages**
 * Python 3.13 (pipeline, backend, orchestration)
@@ -92,8 +97,8 @@ The principle underneath all of it: **deterministic code does the math and enfor
 **Audio and ML**
 * openWakeWord (custom hey_nova.onnx)
 * webrtcvad (endpointing)
-* whisper.cpp (on device speech to text)
-* Resemblyzer (speaker verification)
+* Deepgram Nova 3, with whisper.cpp as the on device fallback
+* SpeechBrain ECAPA (speaker verification)
 * Sentence embeddings (memory retrieval and local intent)
 * PyAudio for input, aplay and ALSA for output
 
@@ -102,13 +107,16 @@ The principle underneath all of it: **deterministic code does the math and enfor
 * JWT authentication (HS256) with bcrypt password hashing
 * SQLite in WAL mode
 * Cloudflare Tunnel, dashboard managed
-* systemd (voice loop, server, tunnel, and a health check timer)
+* systemd (voice loop, server, tunnel, and timers for health checks, wifi recovery and workout progression)
 
 **APIs**
-* Anthropic Claude Haiku 4.5
+* Anthropic Claude Haiku 4.5, with Anthropic's web search tool
+* Deepgram Nova 3
 * ElevenLabs, Victoria voice on eleven_v3
 * Google Calendar API v3
 * Oura API v2
+* Hevy API v1
+* Prowl (his own job search tracker)
 * OpenWeatherMap
 
 ---
@@ -123,6 +131,8 @@ The principle underneath all of it: **deterministic code does the math and enfor
 
 **A failed turn never kills the process.** The voice loop has its own exception boundary, and a local network check picks what to say, so "I've lost wifi" is never spoken when the real problem is the API.
 
+**Barge in that does not stop for her own voice.** Interrupting on any speech worked until it stopped her on her own first syllables, which leak through the echo canceller after hours of quiet, at a level no threshold could separate from a real voice. Instead, playback records what she sent to the speaker, and a run of sound whose loudness rises and falls with hers at the speaker's delay is ignored. Her echo matched at 0.94 and 0.97; his real interruptions over her scored 0.69 at most, and every one still stops her.
+
 **The stdin.flush() discovery.** Writing audio chunks to aplay without flushing let Python buffer up to 64KB, adding about 1.5 seconds of phantom latency even with streaming on.
 
 ---
@@ -136,12 +146,17 @@ Live at `https://miles.lethanial.com`.
 | `/auth/login` | POST | No |
 | `/auth/refresh` | POST | Yes |
 | `/chat` | POST | Yes |
-| `/memories` | GET | Yes |
-| `/memories/pending` | GET | Yes |
-| `/memories/{memory_id}/approve` | POST | Yes |
-| `/memories/{memory_id}` | DELETE | Yes |
+| `/chat/stream` | POST, server sent events | Yes |
+| `/speak` | POST, returns mp3 | Yes |
+| `/memories` | GET, POST | Yes |
+| `/memories/{memory_id}` | PATCH, DELETE | Yes |
+| `/memories/{memory_id}/history` | GET | Yes |
+| `/memories/pending`, `/memories/{memory_id}/approve` | GET, POST | Yes |
+| `/memories/similar`, `/memories/similar/dismiss`, `/memories/merge/draft`, `/memories/merge` | GET, POST | Yes |
+| `/reminders`, `/reminders/{reminder_id}` | GET, DELETE | Yes |
+| `/calendar/events`, `/calendar/events/{event_id}` | GET, PATCH, DELETE | Yes |
 | `/history` | GET | Yes |
-| `/status` | GET | Yes |
+| `/status`, `/status/details` | GET | Yes |
 | `/ws` | WebSocket | Yes, token checked in the socket |
 | `/docs` | GET | No, FastAPI's generated Swagger UI |
 
@@ -149,14 +164,14 @@ Live at `https://miles.lethanial.com`.
 
 ## Measured Performance
 
-Measured on Sep 13 2026 from the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.md](docs/LATENCY.md).
+From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.md](docs/LATENCY.md).
 
 | Metric | Value |
 |--------|-------|
-| Median perceived latency, last 30 turns | 3.9 seconds, from the end of speech to first audio, including the silence wait that decides you have finished |
-| ElevenLabs eleven_v3 time to first byte | 647ms median over 12 live turns |
-| Registered tools | 19 |
-| Test suite | 604 passing |
+| Median perceived latency, last 30 Claude turns (Oct 2 to 12 2026) | 3.0 seconds, from the end of speech to first audio, including the silence wait that decides you have finished |
+| ElevenLabs eleven_v3 time to first byte | 647ms median over 12 live turns (Sep 2026) |
+| Registered tools | 34 |
+| Test suite | 1348 passing |
 
 ---
 
@@ -172,8 +187,9 @@ Measured on Sep 13 2026 from the per turn `timing_log`. Every stage and its hist
 | v0.6 | Multi turn conversations | Complete |
 | v0.7 | FastAPI backend, JWT, Cloudflare Tunnel, systemd, Nova iOS app | Complete |
 | v0.7.1 | ElevenLabs streaming, sentence router, wake chime | Complete |
-| Unreleased | Native tool use with a permission gate, Google Calendar and Oura, spoken confirmation, local intent, speculative transcription, eleven_v3 voice | Landed |
-| Next | SSH through the tunnel, morning briefings, barge in, Apple ecosystem integrations | Planned |
+| Unreleased | Native tool use with a permission gate, Google Calendar and Oura, calendar undo, local intent, speculative transcription, eleven_v3 voice | Landed |
+| Unreleased | ReSpeaker XVF3800 array, Deepgram with Whisper fallback, ECAPA verification, web search, Hevy workouts and automatic progression, Prowl job search, barge in | Landed |
+| Next | Evening check in, SSH through the tunnel, morning briefings, Apple ecosystem integrations | Planned |
 
 ---
 
@@ -185,7 +201,7 @@ miles/
 │   └── tests/      pytest suite
 ├── scripts/        Operator tools run by hand: pronunciation, phrase bank, labelling, analysis
 ├── docs/           Engineering docs. Start with docs/SESSION_START.md
-├── systemd/        Health check units
+├── systemd/        Every unit and timer, versioned
 └── assets/         Wake chime
 ```
 

@@ -510,6 +510,17 @@ Sessions run in tmux; the commands are under Production Commands above.
 Before ending any session, work the end of session checklist in
 `docs/SESSION_START.md`. That is what keeps this file and the topic docs true.
 
+## Keeping the README True
+
+`README.md` is the public face of the project on GitHub, read by recruiters,
+not by Claude. Update it in the same commit as any change a visitor would
+notice: a feature landing or moving between planned and done, hardware, the
+tech stack, an API endpoint, or a headline number it quotes (latency, test
+count). Internal tuning (a threshold, a floor, a refactor) does not touch it.
+Before any push, check its Project Status table against What Is Completed
+above. It is written for that audience: plain, outcome first, no tuning
+history; the why lives in the topic docs, never in the README.
+
 ## Things to Never Commit
 
 API keys (.env, ~/.bashrc), voiceprint (.npy), enrollment data (.npz), database
