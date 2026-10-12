@@ -110,6 +110,10 @@ confirmed saying it.
 
 # Where he is. Spread across the takes so the set is not one position.
 SPOTS = ["your usual seat", "your other usual spot", "wherever you would naturally be"]
+# --far. His labelled wakes through Oct 12 2026 were mostly from his seat, and a
+# far "hey nova" is both low scoring and quiet: exactly what WAKE_RULE drops and
+# what a retrained model must not lose. These takes are the evidence for both.
+FAR_SPOTS = ["your bed", "the doorway", "across the room, facing away from her"]
 
 
 def _clips(minimum_s=10.0, maximum_s=30.0):
@@ -252,18 +256,18 @@ def _to_pipeline_rate(raw_path, path):
     os.remove(raw_path)
 
 
-def _plan(takes, clap=False, sentence=False):
+def _plan(takes, clap=False, sentence=False, spots=SPOTS):
     """The order he goes through: over her by spot, her alone, then quiet."""
     plan = []
     if clap:
-        return [("clap", spot) for spot in SPOTS for _ in range(takes)]
+        return [("clap", spot) for spot in spots for _ in range(takes)]
     if sentence:
-        return ([("say_over", spot) for spot in SPOTS for _ in range(takes)]
-                + [("say_quiet", spot) for spot in SPOTS for _ in range(max(1, takes // 2))])
-    for spot in SPOTS:
+        return ([("say_over", spot) for spot in spots for _ in range(takes)]
+                + [("say_quiet", spot) for spot in spots for _ in range(max(1, takes // 2))])
+    for spot in spots:
         plan += [("over", spot)] * takes
     plan += [("her", None)] * max(1, takes * 4 // 5)
-    for spot in SPOTS:
+    for spot in spots:
         plan += [("quiet", spot)] * max(1, takes * 2 // 3)
     return plan
 
@@ -277,6 +281,8 @@ def main():
                         help="clap at the cues instead, into data/barge_in_eval")
     parser.add_argument("--sentence", action="store_true",
                         help="read a sentence at each cue, into data/barge_in_eval")
+    parser.add_argument("--far", action="store_true",
+                        help="the far spots (bed, doorway, across the room) instead of his usual ones")
     args = parser.parse_args()
 
     mic_card = tts._resolve_speaker_device(MIC_NAME_HINT, fallback=None)
@@ -291,12 +297,13 @@ def main():
     if not barge_in:
         with open(os.path.join(EVAL_DIR, "README.md"), "w") as f:
             f.write(README)
-    session = os.path.join(root, time.strftime("%Y%m%dT%H%M%S"))
+    session = os.path.join(root, time.strftime("%Y%m%dT%H%M%S") + ("_far" if args.far else ""))
     os.makedirs(session)
 
     clips = _clips()
     random.shuffle(clips)
-    plan = _plan(args.takes, clap=args.clap, sentence=args.sentence)
+    plan = _plan(args.takes, clap=args.clap, sentence=args.sentence,
+                 spots=FAR_SPOTS if args.far else SPOTS)
     print(f"{len(plan)} takes into {session}. Ctrl+C stops; takes already done are kept.")
 
     manifest = os.path.join(session, "manifest.jsonl")
