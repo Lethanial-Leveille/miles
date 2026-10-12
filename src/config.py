@@ -628,6 +628,17 @@ WAKE_MISS_PREROLL_MS = 2500
 WAKE_LEVEL_GATE  = True
 WAKE_LEVEL_FLOOR = -42.0
 
+# A wake that scores low must also be loud. On 106 array wakes he labelled from
+# Oct 1 to 12 2026 (36 his, 70 not; scripts/wake_rule.py), a score under 0.5
+# needing a peak louder than -9 dBFS cut 20 of the 70 and lost none of his.
+# Every looser setting lost some of his: 0.6 at -9 cut 27 and lost one. Ignored
+# wakes land in WAKE_GATED_DIR like the floor's. **His labelled wakes are
+# mostly from his seat**: a far "hey nova" is both low scoring and quiet, which
+# is exactly what this drops, so recheck with far field takes before tightening.
+WAKE_RULE             = True
+WAKE_RULE_SCORE_BELOW = 0.5
+WAKE_RULE_PEAK_ABOVE  = -9.0
+
 # Rejections keep their audio, because a gate that can deafen her must be
 # auditable by ear rather than by a log line. label_wake.py reads this as a
 # third set. A real "hey nova" landing here is the regression signal.

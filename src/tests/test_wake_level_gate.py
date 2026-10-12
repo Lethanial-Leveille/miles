@@ -108,3 +108,40 @@ def test_the_watcher_judges_level_before_it_stops_her():
                                and n.name == "watch_for_interrupt"))
     assert watcher.index("barge_in_too_quiet(") < watcher.index("heard = 'wake'")
     assert "wakegated_" in watcher, "an ignored wake must keep its audio"
+
+
+# ── a low score must also be loud (WAKE_RULE) ──
+
+def test_a_low_quiet_wake_is_dropped(aud):
+    assert aud.low_score_needs_louder(0.45, -20.0, 32, 32) is True
+
+
+def test_a_low_loud_wake_is_kept(aud):
+    """His four low scoring wakes on Oct 2 were all loud: he was at his seat."""
+    assert aud.low_score_needs_louder(0.45, -5.0, 32, 32) is False
+
+
+def test_a_high_score_never_needs_to_be_loud(aud):
+    assert aud.low_score_needs_louder(0.9, -30.0, 32, 32) is False
+
+
+def test_exactly_at_the_peak_is_not_louder(aud):
+    """As wake_rule.py scored it: peak <= PEAK_ABOVE is rejected."""
+    assert aud.low_score_needs_louder(0.45, aud.WAKE_RULE_PEAK_ABOVE, 32, 32) is True
+
+
+def test_exactly_at_the_score_is_not_low(aud):
+    assert aud.low_score_needs_louder(aud.WAKE_RULE_SCORE_BELOW, -30.0, 32, 32) is False
+
+
+def test_the_rule_fails_open_like_the_floor(aud, monkeypatch):
+    assert aud.low_score_needs_louder(0.45, None, 32, 32) is False
+    assert aud.low_score_needs_louder(0.45, -30.0, 5, 32) is False
+    monkeypatch.setattr(aud, "WAKE_RULE", False)
+    assert aud.low_score_needs_louder(0.45, -30.0, 32, 32) is False
+
+
+def test_the_voice_loop_asks_both_reasons_before_waking():
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parent.parent / "voice_main.py").read_text()
+    assert source.index("low_score_needs_louder(") < source.index('print(f"Wake word detected!')
