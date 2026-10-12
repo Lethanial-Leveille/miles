@@ -131,7 +131,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1340 passing, 6 skipped, Oct 5 2026)
+│   └── tests/                 # pytest suite (1348 passing, 6 skipped, Oct 12 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -300,6 +300,10 @@ of the value itself.
   heard there, and an interruption is recorded there. Off
   Sep 30 while her echo crossed two USB clocks; with her on the array's jack the
   model heard him over her 27 of 29. `play()` stops mid sentence)
+- `BARGE_IN_WAKE_FLOOR = -30.0`, `BARGE_IN_WAKE_WINDOW_S = 2.5` (since Oct 12 2026;
+  a wake over her whose last 2.5s on channel 1 never peaks above the floor is
+  ignored, its audio kept as `wakegated_*` in the stop dir. Oct 5 the model fired
+  at 0.43 on near silence; `wake_gate.barge_in_too_quiet`)
 - `BARGE_IN_SPEECH = True` (since Oct 1 2026), `BARGE_IN_SPEECH_FLOOR = -37.0`,
   `BARGE_IN_SPEECH_MS = 300` (any speech over her stops her, not only the wake
   word: 30ms frames over the floor that webrtcvad calls speech, that many in a
