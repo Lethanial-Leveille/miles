@@ -81,3 +81,30 @@ def test_the_two_far_field_wakes_that_set_the_floor_still_wake_her(aud):
 def test_the_quietest_labelled_false_wake_is_still_cut(aud):
     """-52.36 dBFS, the quietest of the 22 labelled false wakes."""
     assert aud.too_quiet(-52.36, 32, 32) is True
+
+
+# ── a wake heard over her ──
+
+def test_the_oct_5_false_barge_in_is_ignored(aud):
+    """0.43 on near silence, 14.9s into a reply; its window peaked at -35.1."""
+    assert aud.barge_in_too_quiet(-35.1) is True
+
+
+def test_his_quietest_hey_nova_over_her_still_stops_her(aud):
+    """Lowest of his 37 over her, wake_eval 20261001T114604: -22.5."""
+    assert aud.barge_in_too_quiet(-22.5) is False
+
+
+def test_a_barge_in_wake_with_no_level_still_stops_her(aud):
+    assert aud.barge_in_too_quiet(None) is False
+
+
+def test_the_watcher_judges_level_before_it_stops_her():
+    import ast
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parent.parent / "audio.py").read_text()
+    watcher = ast.unparse(next(n for n in ast.walk(ast.parse(source))
+                               if isinstance(n, ast.FunctionDef)
+                               and n.name == "watch_for_interrupt"))
+    assert watcher.index("barge_in_too_quiet(") < watcher.index("heard = 'wake'")
+    assert "wakegated_" in watcher, "an ignored wake must keep its audio"

@@ -160,6 +160,17 @@ BARGE_IN_CHANNEL = 1
 #
 BARGE_IN_THRESHOLD = 0.30
 
+# A barge in wake whose last WINDOW of channel 1 never peaks above the floor is
+# not him, and she keeps talking. Oct 5 2026 the model scored 0.43 on near
+# silence (about minus 50 dBFS, nobody talking, her echo cancelled) 14.9s into
+# a reply, and stopped her; that window peaked at minus 35.1. His 37 "hey nova"s
+# over her that fired (wake_eval 20261001T114604, three spots) peaked at minus
+# 22.5 or louder. Not WAKE_LEVEL_FLOOR: at minus 42 it would have let this one
+# through. One false stop and one session of his: retune from barge_in_stops,
+# where every rejection keeps its audio as wakegated_*.
+BARGE_IN_WAKE_FLOOR = -30.0
+BARGE_IN_WAKE_WINDOW_S = 2.5
+
 # Barge in on any speech, not only the wake word: he talks over her and she
 # stops. Its own switch, so the wake word keeps working with this off. Decided by
 # interrupt_speech.py, on BARGE_IN_CHANNEL, beside the wake model.

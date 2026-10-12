@@ -721,6 +721,19 @@ sample). Rolled back to 2.0.6 so Nova worked overnight. Both images are kept in
       every sentence logs `echo score`, and every ignored stretch keeps its
       audio as `barge_in_stops/echo_*.wav`. A miss fails safe (she stops as
       before); a false match means she talked over him, so check those by ear.
+
+      **First week live, Oct 5 to 12 2026:** no speech stops at all, so the
+      echo check never had to act. One false stop, from the wake word instead:
+      0.43 on near silence 14.9s into a reply (channel 1 about minus 50 dBFS,
+      her echo at r 0.10, Whisper heard nothing), and he said "keep going".
+      Its 2.5s window peaked at minus 35.1; his 37 takes over her peaked at
+      minus 22.5 or louder. **A barge in wake now needs that window above
+      minus 30** (`BARGE_IN_WAKE_FLOOR`, live Oct 12), or she keeps talking
+      and the audio is kept as `wakegated_*`. One false stop and one session:
+      check `wakegated_*` by ear after a week. On Oct 12 he heard her stop near
+      "you need to either fall asleep faster", but the log, her archived reply
+      and the watcher's own channel 1 audio all show her playing to the end;
+      unexplained, and a clue to look for if it recurs.
    2. Keep what he said: the watcher's frames from his onset, with a preroll,
       seed the next recording, which endpoints as a command does. Channel 0
       chops his voice while she plays, so the interrupting stretch comes from

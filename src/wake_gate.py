@@ -17,7 +17,7 @@ allowed to be the one that goes untested on an ordinary run.
 
 import numpy as np
 
-from config import WAKE_LEVEL_GATE, WAKE_LEVEL_FLOOR
+from config import WAKE_LEVEL_GATE, WAKE_LEVEL_FLOOR, BARGE_IN_WAKE_FLOOR
 
 
 def window_peak_dbfs(frames):
@@ -55,3 +55,16 @@ def too_quiet(level, window_len, capacity):
     if window_len < capacity:
         return False
     return level < WAKE_LEVEL_FLOOR
+
+
+def barge_in_too_quiet(level):
+    """Whether a wake heard over her should be ignored for arriving too quiet.
+
+    Its own floor, far above WAKE_LEVEL_FLOOR: over her, the model scored 0.43
+    on near silence, and a "hey nova" meant to stop her is said over a speaker,
+    so it is loud. Fails open on no level. A window shorter than the full one
+    is still judged: it is real audio from this sentence, not the empty buffer
+    after a restart that too_quiet guards against."""
+    if level is None:
+        return False
+    return level < BARGE_IN_WAKE_FLOOR

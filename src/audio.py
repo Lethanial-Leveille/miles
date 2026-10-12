@@ -85,6 +85,7 @@ from config import (
     BARGE_IN_CHANNEL, BARGE_IN_SPEECH, BARGE_IN_SPEECH_FLOOR, BARGE_IN_SPEECH_MS,
     BARGE_IN_ECHO_CHECK, BARGE_IN_ECHO_SCORE, BARGE_IN_ECHO_WINDOW_MS,
     BARGE_IN_ECHO_LAG_MS,
+    BARGE_IN_WAKE_FLOOR, BARGE_IN_WAKE_WINDOW_S,
     VAD_MODE, VAD_PREROLL_MS, VAD_ONSET_FRAMES, SILENCE_LIMIT, COMMAND_ONSET_S, MAX_RECORD,
     EXPECTED_MIC_GAIN, MIC_MIXER_CARD, MIC_MIXER_CONTROL, MIC_NAME_HINT,
     MIC_CAPTURE_CHANNELS, MIC_CHANNEL, MIC_CAPTURE_RATE,
@@ -102,6 +103,7 @@ from config import (
 from audio_segments import audio_ctx_for, segment_bounds
 from wake_listener import WakeListener
 import wake_capture
+import wake_gate
 import deepgram_stt
 import speculative_turn
 import mic_channel
@@ -1053,6 +1055,8 @@ def watch_for_interrupt(stop_event, her=None):
     heard = None             # "wake" or "speech", whichever stopped her
     peak, frames = 0.0, 0
     kept = []
+    wake_window = int(BARGE_IN_WAKE_WINDOW_S * RATE / CHUNK)
+    gated = None             # (score, level) of the first wake judged too quiet
     while not stop_event.is_set():
         try:
             # The recognition channel, not the one the rest of the pipeline
@@ -1071,6 +1075,11 @@ def watch_for_interrupt(stop_event, her=None):
             for _, score in watcher.predict(frame).items():
                 peak = max(peak, score)
                 if score > BARGE_IN_THRESHOLD:
+                    level = wake_gate.window_peak_dbfs(kept[-wake_window:])
+                    if wake_gate.barge_in_too_quiet(level):
+                        if gated is None:
+                            gated = (score, level)
+                        continue
                     heard = "wake"
                     stop_event.set()
                     break
@@ -1104,6 +1113,11 @@ def watch_for_interrupt(stop_event, her=None):
                 else f"wake_{peak:.2f}")
         _save_wake_clip(kept, peak, BARGE_IN_STOP_DIR, BARGE_IN_STOP_MAX_FILES,
                         "barge in stop", stem=stem)
+    elif gated is not None:
+        # Kept like any rejection: if this was him, "hey nova" stopped working
+        # over her, and only the audio can say so.
+        _save_wake_clip(kept, gated[0], BARGE_IN_STOP_DIR, BARGE_IN_STOP_MAX_FILES,
+                        "barge in wake too quiet", stem=f"wakegated_{gated[0]:.2f}")
     elif speech is not None and speech.echo_frames:
         # Kept beside the stops: if this was him, she talked over him, and
         # that has to be findable by ear like any other guard that can deafen her.
@@ -1121,6 +1135,9 @@ def watch_for_interrupt(stop_event, her=None):
         ignored = (f", ignored {speech.echo_frames * 30}ms as her echo"
                    if speech.echo_frames else "")
         echo_text = f", echo score {best_echo[0]:.2f}{ignored}"
+    if gated is not None:
+        echo_text += (f", wake {gated[0]:.2f} ignored at {gated[1]:.1f} dBFS"
+                      f" (floor {BARGE_IN_WAKE_FLOOR:.0f})")
     print(f"  barge in: {'HEARD ' + heard if heard else 'watched'} "
           f"{frames * CHUNK / RATE:.1f}s, peak {peak:.2f}{level_text}{onset_text}"
           f"{echo_text} ({os.path.basename(path)})", flush=True)
