@@ -131,7 +131,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1348 passing, 6 skipped, Oct 12 2026)
+│   └── tests/                 # pytest suite (1355 passing, 6 skipped, Oct 12 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -281,6 +281,10 @@ of the value itself.
   peaks above this is dropped before the chime. The score cannot separate a real
   wake from the neighbours and level can; **do not raise the floor without far
   field clips in the sample**)
+- `WAKE_RULE = True`, `WAKE_RULE_SCORE_BELOW = 0.5`, `WAKE_RULE_PEAK_ABOVE = -9.0`
+  (since Oct 12 2026; a wake scoring under 0.5 must also peak louder than minus 9
+  dBFS. On his 106 labelled array wakes it cut 20 of 70 false ones and lost none
+  of his 36, most of them from his seat; `scripts/wake_rule.py` rescores it)
 - `WAKE_GATED_DIR = ~/miles/data/wake_gated`, `WAKE_GATED_MAX_FILES = 300`
   (rejections keep their audio, because a guard that can deafen her has to be
   auditable by ear. `label_wake.py gated` reads it)

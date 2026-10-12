@@ -1046,6 +1046,17 @@ from the audio already kept, so nothing new runs live. **Label a few more days
 of wakes, his other spots included, and run it before the rule acts on
 anything.**
 
+**Live Oct 12 2026, at 0.5 and minus 9** (`WAKE_RULE`). He labelled 82 more:
+106 array wakes since Oct 1, 36 his and 70 not, so two of every three chimes
+were false. Swept with `wake_rule.py`: 0.5 at minus 9 cut 20 of 70 and lost
+none of his; 0.6 at minus 9 cut 27 and lost one; 0.8 at minus 6 cut 48 and
+lost 7. The live function agrees with the script on all 103 clear labels. Still
+not shown: his far wakes, which is what it would drop. Next, in order: far
+field takes with `record_wake_eval.py`, then the retrain below, training on
+features computed on the Pi (`openwakeword.utils.AudioFeatures.embed_clips`,
+22 x 96 per 2.5s clip in 0.1s) so the room's audio never leaves it; then
+rescore this rule against the new model and keep it only if it still pays.
+
 **In order:**
 1. Label the array era hits with `scripts/label_wake.py`, his voice in
    conversation especially. That is the false wake the level gate cannot see,

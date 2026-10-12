@@ -27,7 +27,8 @@ from parsing import is_noise_transcript, split_after_wake_phrase
 from config import (CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS,
                     FOLLOWUP_TIMEOUT, ACK_SPOKEN_CHANCE, RATE,
                     WAKE_MISS_FLOOR, WAKE_MISS_PREROLL_MS,
-                    WAKE_LEVEL_FLOOR, PRESENCE_SENSOR, PRESENCE_PORT,
+                    WAKE_LEVEL_FLOOR, WAKE_RULE_SCORE_BELOW, WAKE_RULE_PEAK_ABOVE,
+                    PRESENCE_SENSOR, PRESENCE_PORT,
                     PRESENCE_BAUD, PRESENCE_SILENT_S, PRESENCE_ENERGY_LOG,
                     PRESENCE_ENERGY_WINDOW_S)
 
@@ -289,10 +290,20 @@ try:
             # 2.5 seconds after a restart. Judging a real wake from a short
             # buffer is how a gate goes deaf for a reason nobody can
             # reconstruct afterwards.
-            if wake_gate.too_quiet(level, len(_wake_window),
-                                   _wake_window.maxlen):
-                print(f"Wake ignored: {score:.2f} at {level_text}, under "
-                      f"{WAKE_LEVEL_FLOOR:.1f} dBFS.", flush=True)
+            #
+            # Second reason, the same consequences: a low score must also be
+            # loud (WAKE_RULE). Two thirds of his labelled array wakes were not
+            # him, and this is what his labels say can go without losing his.
+            reason = None
+            if wake_gate.too_quiet(level, len(_wake_window), _wake_window.maxlen):
+                reason = f"under {WAKE_LEVEL_FLOOR:.1f} dBFS"
+            elif wake_gate.low_score_needs_louder(score, level, len(_wake_window),
+                                                  _wake_window.maxlen):
+                reason = (f"a score under {WAKE_RULE_SCORE_BELOW} needs a peak "
+                          f"over {WAKE_RULE_PEAK_ABOVE:.0f} dBFS")
+            if reason:
+                print(f"Wake ignored: {score:.2f} at {level_text}, {reason}.",
+                      flush=True)
                 # Rate limited on the same grounds as the miss capture: talking
                 # through a wall is continuous, and one conversation should not
                 # evict the directory it is being recorded into.

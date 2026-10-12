@@ -17,7 +17,8 @@ allowed to be the one that goes untested on an ordinary run.
 
 import numpy as np
 
-from config import WAKE_LEVEL_GATE, WAKE_LEVEL_FLOOR, BARGE_IN_WAKE_FLOOR
+from config import (WAKE_LEVEL_GATE, WAKE_LEVEL_FLOOR, BARGE_IN_WAKE_FLOOR,
+                    WAKE_RULE, WAKE_RULE_SCORE_BELOW, WAKE_RULE_PEAK_ABOVE)
 
 
 def window_peak_dbfs(frames):
@@ -68,3 +69,16 @@ def barge_in_too_quiet(level):
     if level is None:
         return False
     return level < BARGE_IN_WAKE_FLOOR
+
+
+def low_score_needs_louder(score, level, window_len, capacity):
+    """Whether a low scoring wake should be dropped for not being loud.
+
+    The same rule scripts/wake_rule.py measured: under WAKE_RULE_SCORE_BELOW,
+    the window's peak must be louder than WAKE_RULE_PEAK_ABOVE, and exactly at
+    it is not louder. Fails open on no level and on a window not yet full, like
+    too_quiet; the script rejected a missing level, but no labelled clip had
+    one, and a guard that can deafen her does not guess."""
+    if not WAKE_RULE or level is None or window_len < capacity:
+        return False
+    return score < WAKE_RULE_SCORE_BELOW and level <= WAKE_RULE_PEAK_ABOVE
