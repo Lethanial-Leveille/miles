@@ -53,8 +53,6 @@ EXPECTED = {
     "get_job_search_summary":  (Permission.READ,           True),
     "list_job_applications":   (Permission.READ,           True),
     "get_job_application":     (Permission.READ,           True),
-    "list_discovered_jobs":    (Permission.READ,           True),
-    "accept_discovered_job":   (Permission.EXTERNAL_WRITE, True),
 }
 
 # READ in kind, private in content, or writes beyond this Pi. None of these
@@ -67,7 +65,7 @@ HOKAGE_ONLY = {
     "list_pending_memories", "review_pending_memory",
     "find_schedule_conflicts", "plan_sessions", "rename_calendar_events",
     "undo_last_change", "get_job_search_summary", "list_job_applications",
-    "get_job_application", "list_discovered_jobs", "accept_discovered_job",
+    "get_job_application",
     "get_recent_workouts", "get_lift_history", "get_routines", "get_session_plan",
 }
 
@@ -100,8 +98,6 @@ ROUND_TRIP_WRITES = {
     "rename_calendar_events",
     # What was undone is read back word for word.
     "undo_last_change",
-    # A proposal of one job; the question it returns is the point.
-    "accept_discovered_job",
 }
 
 

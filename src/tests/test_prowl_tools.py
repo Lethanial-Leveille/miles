@@ -102,7 +102,6 @@ def _summary():
         "stale": [_row(id="a3", deadline=None, days_until_deadline=None,
                        deadline_source=None)],
         "pending_suggestions": [],
-        "discovered_waiting": 120,
     }
 
 
@@ -110,7 +109,6 @@ def test_summary_counts_pass_through_untouched(fake):
     fake({"summary": _summary()})
     out = prowl.get_job_search_summary()
     assert out["active_count"] == 109
-    assert out["discovered_waiting"] == 120
     assert out["counts_by_status_including_closed"] == {"applied": 62, "discovered": 46,
                                                         "rejected": 5}
     assert "counts_by_status" not in out
@@ -157,18 +155,6 @@ def test_an_empty_status_says_so(fake):
     assert "No applications" in prowl.list_job_applications("offer")
 
 
-def test_an_unscored_job_is_unknown_and_a_zero_stays_zero(fake):
-    fake({"discovered": [
-        {"id": "d1", "organization": "A", "role": "R", "posting_url": "u",
-         "source": "simplify", "fit_score": None, "possible_duplicate_of": []},
-        {"id": "d2", "organization": "B", "role": "R", "posting_url": "u",
-         "source": "simplify", "fit_score": 0, "possible_duplicate_of": []},
-    ]})
-    jobs = prowl.list_discovered_jobs()["jobs"]
-    assert [j["fit_score_out_of_100"] for j in jobs] == ["unknown", 0]
-    assert "fit_score" not in _keys(jobs)
-
-
 def test_a_detail_with_no_fit_check_says_never_run(fake):
     detail = _row(requirements_met=None, requirements_partial=None,
                   requirements_total=None, key_requirements=["C"])
@@ -186,68 +172,13 @@ def test_a_detail_with_a_fit_check_keeps_the_counts(fake):
     assert "fit_check" not in out
 
 
-# ── accept ──
+# ── retired ──
 
-def _inbox(*dupes):
-    return {"discovered": [
-        {"id": "d1", "organization": "Anduril", "role": "Embedded Intern",
-         "possible_duplicate_of": list(dupes)},
-        {"id": "d2", "organization": "Stripe", "role": "SWE Intern",
-         "possible_duplicate_of": []},
-    ]}
-
-
-def test_accept_asks_by_name_and_posts_nothing_yet(fake):
-    server = fake(_inbox())
-    pa.begin_turn()
-    out = prowl.accept_discovered_job("d1")
-    assert "File Embedded Intern at Anduril into your pipeline?" in out
-    assert not any(method == "POST" for method, _, _ in server.calls)
-
-
-def test_accept_posts_only_after_yes_on_the_next_turn(fake):
-    server = fake(_inbox())
-    pa.begin_turn()
-    prowl.accept_discovered_job("d1")
-    pa.begin_turn()
-    said = pa.resolve(True)
-    assert server.calls[-1] == ("POST", "discovered/d1/accept", {})
-    assert said.startswith("Filed Embedded Intern at Anduril")
-
-
-def test_no_means_nothing_is_posted(fake):
-    server = fake(_inbox())
-    pa.begin_turn()
-    prowl.accept_discovered_job("d1")
-    pa.begin_turn()
-    pa.resolve(False)
-    assert not any(method == "POST" for method, _, _ in server.calls)
-
-
-def test_a_second_accept_on_one_turn_is_refused(fake):
-    """propose() would merge them under one yes, which is a bulk accept."""
-    server = fake(_inbox())
-    pa.begin_turn()
-    prowl.accept_discovered_job("d1")
-    assert prowl.accept_discovered_job("d2").startswith("Refused")
-    pa.begin_turn()
-    pa.resolve(True)
-    assert [c for c in server.calls if c[0] == "POST"] == [("POST", "discovered/d1/accept", {})]
-
-
-def test_an_unknown_id_fails_before_anything_is_asked(fake):
-    fake(_inbox())
-    pa.begin_turn()
-    with pytest.raises(prowl.ProwlError):
-        prowl.accept_discovered_job("made_up")
-    assert pa.staged_question() is None
-
-
-def test_a_possible_duplicate_is_said_in_the_question(fake):
-    fake(_inbox("a1"))
-    pa.begin_turn()
-    out = prowl.accept_discovered_job("d1")
-    assert "Prowl thinks Embedded Intern at Anduril may already be in your pipeline" in out
+def test_the_retired_discovery_inbox_is_gone():
+    # Prowl retired its discovery inbox (Oct 26 2026) and its MILES endpoints
+    # with it. Neither tool may come back pointing at a route that 404s.
+    assert not hasattr(prowl, "list_discovered_jobs")
+    assert not hasattr(prowl, "accept_discovered_job")
 
 
 # ── failures ──

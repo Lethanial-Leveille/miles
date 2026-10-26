@@ -21,9 +21,9 @@ Either one read as a zero is a confident wrong sentence.
 Every tool is hokage. A job search is private and should not be answerable to
 whoever else is in the room.
 
-Accepting a discovered job is the only write, and it is staged through
-pending_action rather than done at once. It files a row and submits nothing,
-but it is driven by speech, and a misheard company files the wrong job.
+Every tool reads. Accepting a discovered job was the one write until Prowl
+retired its discovery inbox (Oct 26 2026): a stale inbox read aloud is worse
+than none, so its two tools went with it.
 
 Failures raise. None of Prowl's errors are transient, so nothing retries; the
 executor in brain.py turns the exception into an is_error result and Nova says
@@ -35,19 +35,16 @@ import os
 import requests
 
 import config  # noqa: F401  loads .env, which holds PROWL_URL and PROWL_TOKEN
-import pending_action
 from tools import Permission, tool
 
 _TIMEOUT_S = 10
 
-# The applied list alone was 62 rows on Sep 25 2026 and the discovery inbox 120,
-# roughly 60 KB and 47 KB whole, which is too much for one voice turn. Prowl
-# sorts both lists, so the rows kept are its first ones, and the cut is flagged
-# rather than counted: a count belongs to the summary. The cost is that a row
-# past the cut cannot be opened or accepted by voice, which ends when Prowl
-# takes an organization filter and a limit.
+# The applied list alone was 62 rows on Sep 25 2026, roughly 60 KB whole, which
+# is too much for one voice turn. Prowl sorts the list, so the rows kept are its
+# first ones, and the cut is flagged rather than counted: a count belongs to the
+# summary. The cost is that a row past the cut cannot be opened by voice, which
+# ends when Prowl takes an organization filter and a limit.
 _MAX_APPLICATIONS = 15
-_MAX_DISCOVERED = 10
 
 # Prowl's ApplicationStatus, in pipeline order.
 STATUSES = [
@@ -149,16 +146,6 @@ def _application_detail(row):
     return row
 
 
-def _discovered(row):
-    """One job in the discovery inbox."""
-    row = dict(row)
-    row.pop("posting_url", None)
-    # Unscored means the posting could not be read, not that it matched badly.
-    score = row.pop("fit_score", None)
-    row["fit_score_out_of_100"] = "unknown" if score is None else score
-    return row
-
-
 def speakable_summary(summary):
     summary = dict(summary)
     # Beside active_count, which leaves closed rows out, a bare counts_by_status
@@ -179,8 +166,8 @@ def _capped(rows, limit, key):
         "Lethanial's job search from Prowl, his job tracker, in one read: how "
         "many applications are active, deadlines coming up, jobs whose posting "
         "deadline passed before he applied (overdue), applications that have "
-        "gone quiet (stale), status changes waiting for his review, and how many "
-        "jobs are waiting in the discovery inbox. Call this first for any general "
+        "gone quiet (stale), and status changes waiting for his review. Call this "
+        "first for any general "
         "question about his job search, internships or applications, and for any "
         "question of how many. Every count here is exact; repeat it, never add "
         "anything up yourself. Only active_count counts his live applications."
@@ -257,80 +244,3 @@ def list_job_applications(status):
 )
 def get_job_application(application_id):
     return _application_detail(_request("GET", f"applications/{application_id}"))
-
-
-@tool(
-    name="list_discovered_jobs",
-    description=(
-        "New jobs Prowl found overnight that are waiting in its discovery inbox, "
-        "best fit first. Call this when he asks what new jobs or internships "
-        "have turned up, or before accepting one. A fit score of unknown means "
-        "the posting could not be read, not that it is a bad match. A non empty "
-        "possible_duplicate_of means it may already be in his pipeline; say so. "
-        "If more_not_shown is true the list is cut off, so never count the rows."
-    ),
-    input_schema={"type": "object", "properties": {}, "required": []},
-    permission=Permission.READ,
-    returns_to_model=True,
-    min_tier="hokage",
-)
-def list_discovered_jobs():
-    rows = [_discovered(row) for row in _request("GET", "discovered")]
-    if not rows:
-        return "The Prowl discovery inbox is empty."
-    return _capped(rows, _MAX_DISCOVERED, "jobs")
-
-
-def _ask(question):
-    return (f"Nothing has changed yet. Ask Lethanial exactly this, with nothing "
-            f"added before or after: {question} Then end your turn. When he "
-            f"answers, call confirm_pending_action.")
-
-
-def _accept(job):
-    _request("POST", f"discovered/{job['id']}/accept")
-    return (f"Filed {job['role']} at {job['organization']} into the pipeline as "
-            f"discovered. Nothing was sent or submitted.")
-
-
-@tool(
-    name="accept_discovered_job",
-    description=(
-        "Propose filing one job from the Prowl discovery inbox into his pipeline. "
-        "It applies to nothing and sends nothing, and it does not happen yet: "
-        "this returns a question to ask him, and it happens only if he says yes. "
-        "Call this when he asks to add or accept a specific discovered job, with "
-        "its id from list_discovered_jobs. One job per call and one per turn; "
-        "never accept several, or the best one, on his behalf."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "job_id": {"type": "string"},
-        },
-        "required": ["job_id"],
-    },
-    permission=Permission.EXTERNAL_WRITE,
-    returns_to_model=True,
-    min_tier="hokage",
-)
-def accept_discovered_job(job_id):
-    # propose() merges every proposal from one turn under a single yes, so a
-    # second accept here would turn one answer into a bulk accept. Anything
-    # already staged, a calendar change included, means this one waits.
-    if pending_action.staged_question() is not None:
-        return ("Refused: something is already waiting for his answer this turn. "
-                "Accept one job per question. Nothing was done.")
-
-    # Checked before asking, so a misheard or invented id fails now rather than
-    # after he has agreed to something.
-    job = next((j for j in _request("GET", "discovered") if j.get("id") == job_id), None)
-    if job is None:
-        raise ProwlError("No job with that id is in the discovery inbox. List it again")
-
-    name = f"{job['role']} at {job['organization']}"
-    if job.get("possible_duplicate_of"):
-        question = f"Prowl thinks {name} may already be in your pipeline. File it anyway"
-    else:
-        question = f"File {name} into your pipeline"
-    return _ask(pending_action.propose(question, lambda: _accept(job)))
