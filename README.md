@@ -66,7 +66,7 @@ External: Anthropic Claude (with web search) · Deepgram · ElevenLabs · Google
 8. **LLM.** Claude Haiku 4.5, streaming, with prompt caching on the system prompt and native tool use.
 9. **Tools.** Thirty four registered tools. Every call passes a permission gate in code before it runs.
 10. **Speech.** Each complete sentence is streamed to ElevenLabs as raw PCM and piped straight into aplay.
-11. **Barge in.** While she speaks, a second listener watches the mic. "Hey Nova" or any speech over her stops playback mid sentence, and what was said is kept and answered as the next turn. A run of sound that rises and falls with her own voice is her echo and is ignored.
+11. **Barge in.** While she speaks, a second listener watches the mic. "Hey Nova" or any speech over her stops playback mid sentence, and what was said is kept and answered as the next turn. A run of sound that rises and falls with her own voice is her echo and is ignored. If the stop was only a cough or a tap, she picks the sentence back up from the last clause, and a plain "go on" finishes it on request.
 12. **Follow ups.** Nova keeps listening for a short window after answering.
 
 ---
@@ -188,7 +188,7 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 | v0.7 | FastAPI backend, JWT, Cloudflare Tunnel, systemd, Nova iOS app | Complete |
 | v0.7.1 | ElevenLabs streaming, sentence router, wake chime | Complete |
 | Unreleased | Native tool use with a permission gate, Google Calendar and Oura, calendar undo, local intent, speculative transcription, eleven_v3 voice | Landed |
-| Unreleased | ReSpeaker XVF3800 array, Deepgram with Whisper fallback, ECAPA verification, web search, Hevy workouts and automatic progression, Prowl job search, barge in | Landed |
+| Unreleased | ReSpeaker XVF3800 array, Deepgram with Whisper fallback, ECAPA verification, web search, Hevy workouts and automatic progression, Prowl job search, barge in, picking up a reply that was cut off | Landed |
 | Next | Evening check in, SSH through the tunnel, morning briefings, Apple ecosystem integrations | Planned |
 
 ---

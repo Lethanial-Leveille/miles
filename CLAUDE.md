@@ -246,7 +246,7 @@ Then test:
 cd src && python3 -m pytest tests/ -q
 ```
 
-Measured Oct 30 2026 in a clone with no `.env` and an empty home: 1339 pass.
+Measured Oct 30 2026 in a clone with no `.env` and an empty home: 1406 pass.
 Ten tests fail there and pass on the Pi, both for gitignored files, not code:
 the six in `test_speculation.py` load `models/hey_nova.onnx` (on the Pi they
 skip while `miles-voice` holds the mic), and four in `test_local_intent.py`
