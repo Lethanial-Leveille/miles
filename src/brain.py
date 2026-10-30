@@ -278,9 +278,10 @@ def speak_what_was_left(amend_history=False):
     next turn reads one reply he heard, or one he cut again. A caller answering a
     spoken "go on" leaves it off and saves its own two rows with what this returns."""
     message_id = resume.message_id()
-    line = resume.speech()
-    if line is None:
+    planned = resume.plan()
+    if planned is None:
         return ""
+    line = planned.spoken
     sentences = [s for s in re.split(r"(?<=[.!?])\s+", line) if s.strip()]
     heard = _Heard()
 
@@ -293,14 +294,27 @@ def speak_what_was_left(amend_history=False):
 
     print(f"  resuming: {len(line.split())} words", flush=True)
     asyncio.run(speak())
-    _note_what_was_left(heard, sentences, None, in_the_room=True, ignored=False,
-                        message_id=message_id)
-    said = heard.text() if heard.cut else heard.said()
-    if amend_history and message_id and said:
+
+    # History's wording: the written words, as many as he heard past the lead in.
+    heard_words = max(0, len(heard.said().split()) - planned.lead_words)
+    written = " ".join(planned.written.split()[:heard_words])
+    if heard.cut:
+        # Held from the written wording, not the spoken one, so the next resume
+        # counts the same words the row holds. A go on's reply is not saved yet,
+        # so its row is attached by the caller; a stop to nothing amends this one.
+        left = heard.remainder(sentences, None)
+        resume.keep(left, said=written or " ".join(planned.written.split()[:planned.replayed]),
+                    message_id=message_id if amend_history else None)
+        if left:
+            print(f"  barge in: {len(left.split())} words left unsaid, kept for a go on",
+                  flush=True)
+    said = f"{written} {CUT_OFF_MARK}".strip() if heard.cut else written
+    if amend_history and message_id and written:
         # After the speech, and never allowed to end the voice loop: history is
         # worth keeping true, not worth a restart.
         try:
-            extend_message(message_id, said, drop_suffix=CUT_OFF_MARK)
+            extend_message(message_id, said, drop_suffix=CUT_OFF_MARK,
+                           drop_words=planned.replayed)
         except Exception as exc:
             print(f"  could not amend history after resuming: {exc}", flush=True)
     return said
