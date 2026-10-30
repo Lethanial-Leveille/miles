@@ -78,6 +78,7 @@ warnings it cost before Sep 6 2026, is in
 | [docs/INCIDENTS.md](docs/INCIDENTS.md) | Something broke, or you are about to change a guard that has never fired |
 | [docs/APP_HANDOFF_DUPLICATES.md](docs/APP_HANDOFF_DUPLICATES.md) | Building the duplicate memory screens in miles-app |
 | [docs/STUDY.md](docs/STUDY.md) | Touching the iPad tutor: study sessions, the canvas check, its model and API |
+| [docs/TESTING.md](docs/TESTING.md) | **Before building any feature.** Examples first, then a scripted room test he runs and Claude grades. Features go on a branch, never straight to main |
 
 ## Repo Structure
 
@@ -111,7 +112,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── spoken_archive.py      # keeps each spoken reply as heard, with the text sent
 │   ├── phrasebank.py          # Pre rendered Victoria, played from disk, no network
 │   ├── netcheck.py            # Why a network call failed, answered locally
-│   ├── local_intent.py        # Answer timers, dismiss and a bare go on without Claude
+│   ├── local_intent.py        # Answer timers, dismiss, a bare go on and the test paragraph without Claude
 │   ├── stream_router.py       # Delta buffering, sentence flush
 │   ├── tools.py               # Tool registry, @tool decorator, schema generation
 │   ├── memory_tool.py         # remember tool, with supersede and expiry
@@ -133,7 +134,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1423 passing, 6 skipped, Oct 30 2026)
+│   └── tests/                 # pytest suite (1447 passing, 6 skipped, Oct 30 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -144,7 +145,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── INFRASTRUCTURE.md      # Services, tunnel, API, env vars, reminders
 │   ├── INCIDENTS.md           # What broke, dated, with the evidence
 │   ├── APP_HANDOFF_DUPLICATES.md # the app side of duplicate memory review
-│   └── STUDY.md               # the iPad tutor: design, model choice, API
+│   ├── STUDY.md               # the iPad tutor: design, model choice, API
+│   └── TESTING.md             # the ladder every feature climbs, and the scripted room test
 ├── scripts/                      # Operator tools, run by hand from the repo root,
 │                              # or on a timer. Nothing in src/ imports any of these
 │   ├── memory.py              # list/fix/chain/temporary/similar/keep-both on memories
@@ -532,10 +534,11 @@ Landed since v0.7.1, unreleased:
 - Barge in: "hey nova" over her stops her mid sentence; so does any speech of
   his, and what he said is kept and answered as the next turn
 - What a cut reply had left to say is kept for two minutes (`resume.py`), ready
-  for a "go on", with the line that picks it up (backs up to a clause, rotated
-  lead in). A stop followed by noise or too short a recording says it by itself,
-  and a bare "go on" from him says it on request (a guest's does not). Her
-  history is amended so the next turn knows she finished; not yet heard on the Pi
+  for a "go on": she restarts the sentence she was cut in, with "Anyway," or "So,"
+  only after ten seconds. A stop followed by noise or too short a recording says
+  it by itself, and a bare "go on" from him says it on request (a guest's does
+  not). Her history is amended in place so the next turn reads one reply, said
+  once. Heard on the Pi Oct 30 2026 with "Hey Nova, read the test paragraph"
 
 ## What Is Next
 

@@ -1051,10 +1051,20 @@ The rule for what it holds and what lets go of it is in the
 [decision log](SESSION_START.md#what-a-cut-reply-had-left-to-say-is-kept-oct-30-2026-done).
 
 **Also built:** what to say, and saying it after a stop that came to nothing.
-`resume.speech()` backs up to a clause boundary with a rotated lead in, and
-`voice_main` speaks it when the recording after a stop is noise or too short to be
-speech. The rules and why are in the decision log under "Where a resume starts"
-and "A stop that came to nothing resumes by itself".
+`resume.plan()` restarts the sentence she was cut in (past twenty words, its last
+comma whose clause does not open on and, but or so), with a lead in, "Anyway," or
+"So,", only from ten seconds; `voice_main` speaks it when the recording after a
+stop is noise or too short to be speech. **Reworked Oct 30 2026** after the room
+said "Anyway, but most granola is heavy on sugar and oil": the old rules backed
+up a few words to a clause and always led in. The constants carry the why.
+"A stop that came to nothing resumes by itself" in the decision log still holds.
+
+**Heard on the Pi Oct 30 2026**, with the test paragraph ("Hey Nova, read the
+test paragraph"): read whole, a cough resume, a quick go on, a second cut, and
+the long sentence rule all passed, and the amended history row matched the
+paragraph exactly, said once. Not yet heard in the room: the lead in after a real
+gap, and the two minute window; both are covered by the tests.
+`scripts/replay_resume.py` runs the rules over every real cut.
 
 **Also built:** "go on" as a local intent, resuming only when it is all he said and
 only for him, not a guest. Decision log: "Go on is a local intent". And her
