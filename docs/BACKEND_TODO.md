@@ -1050,13 +1050,16 @@ Pi at all, and a "go on" is wanted anyway.
 The rule for what it holds and what lets go of it is in the
 [decision log](SESSION_START.md#what-a-cut-reply-had-left-to-say-is-kept-oct-30-2026-done-nothing-speaks-it-yet).
 
+**Also built, not yet called:** what to say. `resume.speech()` backs up to a
+clause boundary and opens with a short rotated lead in; the rule and why are in
+the decision log under "Where a resume starts".
+
 **Not built, in order:**
 1. **Resume by itself when a stop came to nothing.** When the recording after a
-   stop holds no real speech (Deepgram returns no words), `voice_main` takes the
-   remainder and speaks it, with no Claude call. This is what makes a tap
-   harmless. **Decide first** where it starts: the cut word or the start of that
-   sentence. Also decide what "no real speech" means when Deepgram has failed and
-   whisper is the floor, since whisper fills silence with plausible words
+   stop holds no real speech (Deepgram returns no words), `voice_main` takes
+   `resume.speech()` and speaks it, with no Claude call. This is what makes a tap
+   harmless. **Decide first** what "no real speech" means when Deepgram has failed
+   and whisper is the floor, since whisper fills silence with plausible words
    ([AUDIO_PIPELINE.md](AUDIO_PIPELINE.md)).
 2. **"Go on" as a local intent.** "Go on", "continue", "keep going" matched in
    `local_intent.py`, the remainder spoken with no Claude call. It must decline

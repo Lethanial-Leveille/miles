@@ -221,9 +221,11 @@ class _Heard:
         self.handed += len(sentences)
         self.cut = True
 
+    def said(self):
+        return " ".join(p for p in self.parts if p)
+
     def text(self):
-        said = " ".join(p for p in self.parts if p)
-        return f"{said} {CUT_OFF_MARK}".strip()
+        return f"{self.said()} {CUT_OFF_MARK}".strip()
 
     def remainder(self, written, leaks_seen=None):
         """What she still had to say when he cut in, or "" if he did not.
@@ -250,7 +252,7 @@ def _note_what_was_left(heard, written, leaks_seen, in_the_room, ignored):
         return
     if heard.cut:
         left = heard.remainder(written, leaks_seen)
-        resume.keep(left)
+        resume.keep(left, said=heard.said())
         if left:
             print(f"  barge in: {len(left.split())} words left unsaid, kept for a go on",
                   flush=True)
