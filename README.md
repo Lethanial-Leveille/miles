@@ -66,7 +66,7 @@ External: Anthropic Claude (with web search) · Deepgram · ElevenLabs · Google
 8. **LLM.** Claude Haiku 4.5, streaming, with prompt caching on the system prompt and native tool use.
 9. **Tools.** Thirty four registered tools. Every call passes a permission gate in code before it runs.
 10. **Speech.** Each complete sentence is streamed to ElevenLabs as raw PCM and piped straight into aplay.
-11. **Barge in.** While she speaks, a second listener watches the mic. "Hey Nova" or any speech over her stops playback mid sentence, and what was said is kept and answered as the next turn. A run of sound that rises and falls with her own voice is her echo and is ignored. If the stop was only a cough or a tap, she picks the sentence back up from the last clause, and a plain "go on" finishes it on request.
+11. **Barge in.** While she speaks, a second listener watches the mic. "Hey Nova" or any speech over her stops playback mid sentence, and what was said is kept and answered as the next turn. A run of sound that rises and falls with her own voice is her echo and is ignored. If the stop was only a cough or a tap, she restarts the sentence she was cut off in, and a plain "go on" finishes it on request.
 12. **Follow ups.** Nova keeps listening for a short window after answering.
 
 ---

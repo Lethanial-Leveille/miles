@@ -33,6 +33,7 @@ session real work.
 
 | Date | What happened | Where |
 |---|---|---|
+| Oct 30 2026 | The SD card stalled three times in thirty minutes and a restart took 83 seconds; backed up off the Pi that day | [below](#the-sd-card-started-failing-oct-30-2026) |
 | Sep 28 2026 | Nothing learned since Sep 13 could be found by meaning, and learned memories past twenty would have been unreachable | [below](#memories-could-not-be-found-sep-28-2026) |
 | Sep 26 2026 | The mic stopped delivering and she was deaf for twenty minutes, every service active | [below](#deaf-with-every-service-active-sep-26-2026) |
 | Sep 25 2026 | The SD card stalled mid turn and a reply took 48 seconds | [below](#the-sd-card-stalled-mid-turn-sep-25-2026) |
@@ -56,6 +57,37 @@ session real work.
 | Aug 10 2026 | An empty room drove a runaway conversation loop | [below](#an-empty-room-drove-a-runaway-conversation-loop-aug-10-2026) |
 
 ---
+
+## The SD card started failing (Oct 30 2026)
+
+`sudo systemctl restart miles-voice` at 16:36:13 printed nothing for 81 seconds;
+"Found speaker", normally four seconds in, came at 16:37:34. The kernel log
+between them:
+
+```
+16:36:55  kernel: mmc0: Card stuck being busy! __mmc_poll_for_busy
+16:38:19  kernel: mmc0: Card stuck being busy! __mmc_poll_for_busy
+16:39:00  kernel: mmc0: Card stuck being busy! __mmc_poll_for_busy
+```
+
+Eleven stalls since Sep 28 on this boot, three of them in thirty minutes; the
+[Sep 25 entry](#the-sd-card-stalled-mid-turn-sep-25-2026) counted four in three
+weeks. The same Samsung card, 23% full. `vcgencmd get_throttled` read 0x80000:
+no undervoltage since boot, so power is ruled out for this boot, but the soft
+temperature limit had been hit. About 1 GB a day had been written, almost all of
+it small random writes: SQLite, the journal, and the capture archives creating
+and pruning files. That churn is the work an SD card is worst at.
+
+**What was done.** Everything not in git was copied to his Mac the same day, read
+only from the Pi: the database as a clean `iterdump` (the copy of `miles.db`
+inside the data tarball may be torn, "file changed as we read it"), the secrets,
+tokens, voiceprint and models (55 files, matching the Pi's count), and the rest
+of `data/` (3046 files). The NVMe parts are being ordered. Until the move: no
+reboots and as few restarts as possible.
+
+**The lesson.** The backup was deferred on Sep 25 with the stall count already
+rising. It was taken on the day a restart showed the card could stop answering,
+and nothing was lost only because it still did.
 
 ## She answered his phone call, three times (Oct 1 2026)
 
