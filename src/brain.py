@@ -23,6 +23,7 @@ from database import log_tool_call
 import alerts
 import memory_pass
 import phrasebank
+import resume
 import spoken_archive
 
 # Imported for its side effect: registering the tools. Without it the registry
@@ -198,21 +199,63 @@ class _Heard:
     def __init__(self):
         self.parts = []
         self.cut = False
+        # Sentences given to the speaker, whether they played whole or were cut.
+        # Counted rather than matched by text: the router's record is indexed by
+        # it to find the sentences that never reached the room.
+        self.handed = 0
+        # The unplayed words of the sentence he cut in on.
+        self.tail = ""
 
     def played(self, sentences):
         self.parts.append(" ".join(sentences))
+        self.handed += len(sentences)
 
     def cut_during(self, sentences, synthesis):
         text = " ".join(sentences)
         heard_s = getattr(synthesis, "heard_s", None)
+        audio_s = getattr(synthesis, "audio_s", None)
         self.parts.append(text if heard_s is None else
-                          interrupt_speech.words_heard(text, heard_s,
-                                                       getattr(synthesis, "audio_s", None)))
+                          interrupt_speech.words_heard(text, heard_s, audio_s))
+        self.tail = ("" if heard_s is None else
+                     interrupt_speech.words_unheard(text, heard_s, audio_s))
+        self.handed += len(sentences)
         self.cut = True
 
     def text(self):
         said = " ".join(p for p in self.parts if p)
         return f"{said} {CUT_OFF_MARK}".strip()
+
+    def remainder(self, written, leaks_seen=None):
+        """What she still had to say when he cut in, or "" if he did not.
+
+        The rest of the sentence he cut, then every sentence after it, whether
+        or not it was ever synthesized or even written when he spoke. written
+        is the router's record of the whole reply in order. Cues are stripped
+        here as the consumer strips them, since the record is what Claude wrote
+        and not what was sent to the speaker."""
+        if not self.cut:
+            return ""
+        later = [strip_leading_bracket_cue(s, leaks_seen) for s in written[self.handed:]]
+        return " ".join(p for p in [self.tail, *later] if p.strip()).strip()
+
+
+def _note_what_was_left(heard, written, leaks_seen, in_the_room, ignored):
+    """Hold what he cut her off from, or let go of it once the talk has moved on.
+
+    Only a reply that played in the room can be resumed or can end the chance: a
+    turn typed in the app says nothing about the one he interrupted. An ignored
+    turn is not a reply to it either. It was room talk she stayed out of, and it
+    may well be what cut her."""
+    if not in_the_room:
+        return
+    if heard.cut:
+        left = heard.remainder(written, leaks_seen)
+        resume.keep(left)
+        if left:
+            print(f"  barge in: {len(left.split())} words left unsaid, kept for a go on",
+                  flush=True)
+    elif not ignored:
+        resume.clear()
 
 
 async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set,
@@ -1004,7 +1047,10 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     system_param = request.system
 
     sentence_queue = asyncio.Queue()
-    router         = StreamRouter(sentence_queue)
+    # Every sentence she writes this turn, both rounds of a tool turn in order,
+    # for what a barge in leaves unsaid.
+    written        = []
+    router         = StreamRouter(sentence_queue, record=written)
     spoken_parts   = []
     loop           = asyncio.get_running_loop()
     leaks_seen     = set()  # shared across both TTS consumers and the returned-text strips this turn
@@ -1163,7 +1209,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             ]
 
             sentence_queue2 = asyncio.Queue()
-            router2         = StreamRouter(sentence_queue2)
+            router2         = StreamRouter(sentence_queue2, record=written)
             spoken_parts2   = []
             # Cut off already: the rest is collected, never played. A second
             # player would start a second watcher reading the mic while the
@@ -1336,6 +1382,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     if final_text:
         # What he heard, not what was written, once he cut her off.
         save_message("assistant", heard.text() if heard.cut else final_text, device=device)
+    _note_what_was_left(heard, written, leaks_seen,
+                        _plays_in_the_room(channel, device), ignored)
     # After the reply, on its own thread. Only for him: a guest's words are not
     # facts about Lethanial, and speech not meant for Nova is not his to keep.
     if tier == "hokage" and not ignored:

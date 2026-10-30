@@ -1583,3 +1583,50 @@ labelled days, his other spots included, say it costs him nothing. The real fix
 is retraining the model; see
 [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#on-the-array-oct-2-2026-still-no-threshold).
 
+
+### What a cut reply had left to say is kept (Oct 30 2026) (DONE, nothing speaks it yet)
+
+`resume.py`, `_Heard.remainder`, a record on `StreamRouter`, `words_unheard`.
+Nothing says the remainder yet; that is the next change, and the order below is
+why this one went first. Tests are in `test_resume.py`.
+
+**The record is taken at the router, not the consumer.** The consumer stops
+reading the moment he cuts in and its feeder is cancelled holding whatever it
+had collected, so the sentences after the cut were in nobody's hands, and Claude
+is usually still writing them. The router sees every sentence in order whether
+or not anything reads the queue. **Rejected:** draining the queue after the cut,
+which makes the consumer wait for Claude to finish and adds a hang to a path
+that used to end at once.
+
+**Indexed by count, not by matching text.** `_Heard.handed` counts sentences
+given to the speaker; the remainder is the unheard words of the cut sentence,
+then `record[handed:]`. **Rejected:** subtracting the heard text from the whole
+reply, which breaks on emotion cues and on the ellipses that join the rest of a
+reply for synthesis. The cut point is one function (`_split_heard`), so what
+history says she said and what is held as unsaid can never overlap or leave a gap.
+
+**It is held for 120 seconds and said once.** `take()` clears it, so one "go on"
+cannot repeat the speech. The window matches `CONFIRM_WINDOW_S`: long enough to
+answer the door, short enough that a "go on" later is not read as finishing a
+thought nobody holds.
+
+**What lets go of it.** Another room reply that plays through. **What does not:**
+a typed turn, a turn from the phone, and an ignored turn. The first two do not
+answer the reply he interrupted. The third was room talk she stayed out of, and
+that talk may be what cut her, so clearing on it would throw away exactly the
+remainder an empty recording is about to need.
+
+**Tool turns.** Both routers share one record. A cut during the lead in keeps
+the follow up answer that was collected and never played.
+
+**Open, left for the change that speaks it:** the remainder starts mid sentence
+("count alone matters little"). Resuming from the start of the cut sentence may
+sound more natural than from the cut word; `_Heard.tail` is kept apart from the
+later sentences so either can be chosen. The same question applies to a cut lead
+in: "me check. It is sunny" is a fragment before an answer.
+
+**Not verified on the Pi.** The tests run against fakes. The suite in the cloud
+checkout is 1364 passing, 4 failing and 6 erroring, and all ten are missing
+pieces of that checkout (pyaudio, and the phrase bank WAVs in gitignored `data/`),
+the same ten before this change. The Pi's own count in CLAUDE.md has not been
+re run, so it is left as it was.

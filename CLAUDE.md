@@ -126,6 +126,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
+│   ├── resume.py              # what she had left to say when he cut her off, held for a go on
 │   ├── timing.py              # Per turn latency instrumentation
 │   ├── brain.py               # ask_nova orchestrator
 │   ├── auth.py                # JWT + bcrypt password hashing
@@ -365,6 +366,9 @@ of the value itself.
   [BACKEND_TODO.md](docs/BACKEND_TODO.md))
 - `BARGE_IN_STOP_DIR = ~/miles/data/barge_in_stops`, `BARGE_IN_STOP_MAX_FILES = 100`
   (the audio behind every stop, so a false one can be heard)
+- `RESUME_WINDOW_S = 120` (in `resume.py`, not `config.py`; since Oct 30 2026. How
+  long the unsaid part of a cut reply is held. Nothing speaks it yet. Why:
+  [BACKEND_TODO.md](docs/BACKEND_TODO.md#resuming-a-reply-he-cut-off-partly-built-oct-30-2026))
 
 ### Model and prompt — why: [BRAIN.md](docs/BRAIN.md)
 - `MODEL_A = "claude-haiku-4-5"` — **this is the production model**
@@ -521,6 +525,8 @@ Landed since v0.7.1, unreleased:
   stream; speakers on its own jack, so its echo canceller works
 - Barge in: "hey nova" over her stops her mid sentence; so does any speech of
   his, and what he said is kept and answered as the next turn
+- What a cut reply had left to say is kept for two minutes (`resume.py`), ready
+  for a "go on". Kept only; nothing speaks it yet
 
 ## What Is Next
 
