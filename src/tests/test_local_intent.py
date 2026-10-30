@@ -18,6 +18,17 @@ def unconfident(monkeypatch):
     monkeypatch.setattr(li, "_scores", lambda text: {n: 0.0 for n in li.EXAMPLES})
 
 
+# rendered() only offers variants whose WAV exists, so a test of the filtering
+# rules would otherwise pass or fail on whatever data/phrases happens to hold,
+# and fail outright in a clone that has none. Empty files are enough: the rules
+# read existence, never the audio.
+@pytest.fixture
+def every_dismiss_rendered(tmp_path, monkeypatch):
+    monkeypatch.setattr(phrasebank, "PHRASE_DIR", str(tmp_path))
+    for index in range(len(phrasebank.PHRASES["dismiss"])):
+        open(phrasebank.path_for("dismiss", index), "w").close()
+
+
 @pytest.mark.parametrize("text,amount,unit", [
     ("set a timer for ten minutes", 10, "minutes"),
     ("start a twenty minute timer", 20, "minutes"),
@@ -138,7 +149,7 @@ def test_every_enumerated_timer_has_text():
         assert phrasebank.PHRASES[phrasebank.timer_key(amount, unit)]
 
 
-def test_goodnight_is_night_only():
+def test_goodnight_is_night_only(every_dismiss_rendered):
     """A conversation ends at any hour. "Goodnight" at two in the afternoon is
     worse than no farewell, so it is filtered by clock rather than left to
     chance."""
@@ -148,7 +159,7 @@ def test_goodnight_is_night_only():
     assert 0 not in day
 
 
-def test_daytime_still_has_farewells():
+def test_daytime_still_has_farewells(every_dismiss_rendered):
     assert phrasebank.rendered("dismiss", hour=14)
 
 
@@ -260,7 +271,7 @@ def test_every_enumerated_clock_reading_has_text():
         assert phrasebank.PHRASES[phrasebank.time_key(hour, minute)]
 
 
-def test_never_mind_does_not_get_a_gratitude_reply(confident):
+def test_never_mind_does_not_get_a_gratitude_reply(confident, every_dismiss_rendered):
     """A retraction is not a thank you. "Any time at all" in reply to "never
     mind" reads as not having listened, which is what THANKS_ONLY prevents."""
     match = li.classify("never mind")
@@ -273,7 +284,7 @@ def test_never_mind_does_not_get_a_gratitude_reply(confident):
     assert playable, "a dismissal still needs something to say"
 
 
-def test_thanking_her_unlocks_the_gratitude_replies(confident):
+def test_thanking_her_unlocks_the_gratitude_replies(confident, every_dismiss_rendered):
     match = li.classify("that's all thanks")
     assert match is not None and match.slots.get("thanked") is True
 

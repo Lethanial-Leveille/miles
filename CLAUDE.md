@@ -252,11 +252,11 @@ Then test:
 cd src && python3 -m pytest tests/ -q
 ```
 
-Measured Oct 30 2026 in a clone with no `.env` and an empty home: 1419 pass.
-Ten tests fail there and pass on the Pi, both for gitignored files, not code:
-the six in `test_speculation.py` load `models/hey_nova.onnx` (on the Pi they
-skip while `miles-voice` holds the mic), and four in `test_local_intent.py`
-need the rendered phrase WAVs in `data/phrases`. Anything else failing is real.
+Measured Oct 30 2026 in a clone with no `.env` and an empty home: 1423 pass,
+6 skip, the same as on the Pi. The six are in `test_speculation.py` and import
+`audio.py`, which opens the mic and loads `models/hey_nova.onnx`; they skip
+without the model, and on the Pi while `miles-voice` holds the mic. Any
+failure there is real.
 
 ## Key Config Values
 

@@ -178,10 +178,18 @@ def _mic_is_locked():
         fd.close()
 
 
+def _wake_model_missing():
+    """True in a fresh clone (a cloud session), where models/ is gitignored and
+    empty. audio.py loads the wake model at import, so it cannot be imported."""
+    from config import WAKE_MODEL_PATH
+    return not os.path.exists(WAKE_MODEL_PATH)
+
+
 live = pytest.mark.skipif(
-    _mic_is_locked(),
-    reason="miles-voice holds the mic lock, so audio.py cannot be imported. "
-           "Stop the service to run these.")
+    _mic_is_locked() or _wake_model_missing(),
+    reason="audio.py cannot be imported: miles-voice holds the mic lock (stop "
+           "the service to run these), or models/hey_nova.onnx is absent "
+           "(a cloud clone; these only run on the Pi).")
 
 
 class FakeStream:
