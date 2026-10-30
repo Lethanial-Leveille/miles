@@ -718,3 +718,87 @@ def test_12_a_go_on_reply_cut_again_is_finished_in_its_own_row(monkeypatch, db):
                                f"which are solid, {MARK}"), "the earlier reply is left alone"
     assert _row(db, go_on_row) == (f"{GRANOLA_CUT_SENTENCE} "
                                    "It works as an occasional thing, not a staple.")
+
+
+# ── the test paragraph: his approved examples P1 to P5 ──
+#
+# A fixed reply for the room test, so every run starts from the same words.
+# Rung 4 of docs/TESTING.md needs a known input; Claude's replies vary.
+
+def _test_paragraph(db, user_text="read the test paragraph"):
+    import ast
+    scope = {"speak_what_was_left": brain.speak_what_was_left,
+             "save_message": db.save_message, "resume": resume,
+             "TEST_PARAGRAPH": li.TEST_PARAGRAPH,
+             "TurnResult": lambda text, dismissed: text,
+             "print": lambda *a, **k: None}
+    exec(compile(ast.Module([_voice_main_function("_run_test_paragraph")], []),
+                 "voice_main.py", "exec"), scope)
+    return scope["_run_test_paragraph"](user_text)
+
+
+def test_p1_the_paragraph_is_the_approved_text():
+    assert li.TEST_PARAGRAPH == (
+        "Granola's a mixed bag. It's got oats and nuts, which are solid, but most "
+        "granola is heavy on sugar and oil. It works as an occasional thing, not a "
+        "staple. If you want carbs before a lift, a banana or plain oats do better, "
+        "and they cost less, they keep you full longer, and they don't spike your "
+        "sugar the way most store granola does. For snacking, the calories add up fast.")
+
+
+def test_p1_she_reads_it_through_the_reply_path_first_sentence_alone(monkeypatch, db):
+    sent = _room(monkeypatch)
+    assert _test_paragraph(db) == li.TEST_PARAGRAPH
+    assert sent[0] == "Granola's a mixed bag.", "the first sentence at once, as any reply"
+    assert len(sent) == 2, "and the rest as one piece"
+
+
+@pytest.mark.parametrize("text", ["read the test paragraph", "Read the test paragraph.",
+                                  "read me the test paragraph", "test paragraph"])
+def test_p2_only_the_whole_phrase_matches(text, sure):
+    match = li.classify(text)
+    assert match is not None and match.name == "test_paragraph"
+
+
+@pytest.mark.parametrize("text", ["read the test paragraph about oats",
+                                  "what's the test paragraph", "read a paragraph"])
+def test_p2_anything_more_goes_to_claude(text, sure):
+    match = li.classify(text)
+    assert match is None or match.name != "test_paragraph"
+
+
+def test_p3_a_guest_cannot_trigger_it():
+    import ast
+    scope = {"registry": SimpleNamespace(get=lambda name: 1 / 0),
+             "permits": lambda spec, tier: True}
+    exec(compile(ast.Module([_voice_main_function("_local_allowed")], []),
+                 "voice_main.py", "exec"), scope)
+    paragraph = SimpleNamespace(name="test_paragraph")
+    assert scope["_local_allowed"](paragraph, None) is True
+    assert scope["_local_allowed"](paragraph, "genin") is False
+
+
+def test_p4_both_sides_are_saved_like_any_reply(monkeypatch, db):
+    _room(monkeypatch)
+    _test_paragraph(db)
+    rows = db.get_recent_messages()[-2:]
+    assert [(r["role"], r["content"]) for r in rows] == [
+        ("user", "read the test paragraph"), ("assistant", li.TEST_PARAGRAPH)]
+
+
+def test_p4_cut_off_it_is_held_and_a_go_on_restarts_the_sentence(monkeypatch, db):
+    _room(monkeypatch, cut_at=2)
+    _test_paragraph(db)
+    reply_id = db.latest_message_id()
+    assert _row(db, reply_id).endswith(MARK)
+    assert resume.message_id() == reply_id, "a stop to nothing finishes this row"
+    # The rest is 65 words and a quarter were heard: 16, exactly "It's got oats
+    # and nuts, which are solid, but most granola is heavy on sugar and oil." A
+    # cut between sentences replays nothing (example 4): the next one starts.
+    assert resume.speech().startswith("It works as an occasional thing, not a staple.")
+
+
+def test_p4_run_turn_hands_it_to_its_own_runner():
+    import ast
+    body = ast.unparse(_voice_main_function("run_turn"))
+    assert "_run_test_paragraph(text)" in body

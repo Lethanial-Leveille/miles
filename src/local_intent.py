@@ -104,6 +104,11 @@ EXAMPLES = {
         "continue",
         "keep going",
     ],
+    'test_paragraph': [
+        "read the test paragraph",
+        "read me the test paragraph",
+        "test paragraph",
+    ],
     'weather': [
         "what's the weather",
         "what's it like outside",
@@ -372,12 +377,34 @@ def _gate_go_on(text):
     return {}
 
 
+# A fixed reply for the room test (docs/TESTING.md, rung 4), so every run starts
+# from the same words; Claude's replies vary. His granola reply from Oct 30
+# 2026, with a 33 word sentence in place of one of its own, so the long sentence
+# rule can be heard too. The room script times its steps by these words, so
+# changing a word here means changing the script.
+TEST_PARAGRAPH = (
+    "Granola's a mixed bag. It's got oats and nuts, which are solid, but most "
+    "granola is heavy on sugar and oil. It works as an occasional thing, not a "
+    "staple. If you want carbs before a lift, a banana or plain oats do better, "
+    "and they cost less, they keep you full longer, and they don't spike your "
+    "sugar the way most store granola does. For snacking, the calories add up fast.")
+
+# Whole utterance only, like go on, so it can never fire inside a real request.
+_TEST_PARAGRAPH_PHRASES = {"read the test paragraph", "read me the test paragraph",
+                           "test paragraph"}
+
+
+def _gate_test_paragraph(text):
+    return {} if text in _TEST_PARAGRAPH_PHRASES else None
+
+
 GATES = {
     'set_timer': _gate_set_timer,
     'time_of_day': _gate_time_of_day,
     'cancel_reminder': _gate_cancel_reminder,
     'dismiss': _gate_dismiss,
     'go_on': _gate_go_on,
+    'test_paragraph': _gate_test_paragraph,
     'weather': _gate_weather,
 }
 
@@ -548,6 +575,7 @@ def execute(match):
 
     # go_on is matched here and spoken by voice_main (_run_go_on), not executed
     # here: finishing a reply has to go through the reply consumer so he can cut
-    # in on it, and a fixed sentence to hand back cannot do that.
+    # in on it, and a fixed sentence to hand back cannot do that. test_paragraph
+    # is the same, for the same reason (_run_test_paragraph).
 
     raise ValueError(f"no handler for intent {match.name!r}")
