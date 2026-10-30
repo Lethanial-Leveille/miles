@@ -1039,6 +1039,66 @@ keyterms" row added to the candidate table for when there is audio again.
 
 Until then, treat any claim of an STT improvement as unmeasured.
 
+### Resuming a reply he cut off (partly built, Oct 30 2026)
+
+**Why:** anything that makes a sound stops her, and a dropped object or a tap
+costs him the rest of an answer. Raising the sensitivity floor can only be tuned
+on the Pi, against `data/barge_in_stops`. Making a false stop harmless needs no
+Pi at all, and a "go on" is wanted anyway.
+
+**Built:** the unsaid part of a cut reply is kept for two minutes in `resume.py`.
+The rule for what it holds and what lets go of it is in the
+[decision log](SESSION_START.md#what-a-cut-reply-had-left-to-say-is-kept-oct-30-2026-done-nothing-speaks-it-yet).
+
+**Not built, in order:**
+1. **Resume by itself when a stop came to nothing.** When the recording after a
+   stop holds no real speech (Deepgram returns no words), `voice_main` takes the
+   remainder and speaks it, with no Claude call. This is what makes a tap
+   harmless. **Decide first** where it starts: the cut word or the start of that
+   sentence. Also decide what "no real speech" means when Deepgram has failed and
+   whisper is the floor, since whisper fills silence with plausible words
+   ([AUDIO_PIPELINE.md](AUDIO_PIPELINE.md)).
+2. **"Go on" as a local intent.** "Go on", "continue", "keep going" matched in
+   `local_intent.py`, the remainder spoken with no Claude call. It must decline
+   when nothing is held, so the words fall through to Claude. **Decide:** when he
+   spoke over her, does "go on" resume or does she answer him? Suggested: resume
+   only when "go on" is all he said; anything more is a new turn she answers.
+3. **Tune the barge in floor from labelled stops.** Needs the Pi: listen to
+   `data/barge_in_stops`, label the false ones, replay them through
+   `SpeechOnset`. Do it after 1, so the number being tuned is a cost of a short
+   pause and no longer a lost answer.
+
+### Wakes while he is away (planned, Oct 30 2026)
+
+**Not a plain "ignore wakes when I am out."** He wants guests to be able to use
+her without him there, so a veto on his phone's location alone would make her
+deaf to them. Chosen with him: the phone says whether he is home, the radar says
+whether anyone is.
+
+| Him (phone) | Room (radar) | A wake |
+|---|---|---|
+| Home | any | Normal |
+| Away | Someone seen recently | Normal, answered as a guest |
+| Away | Nobody seen for about 30 minutes | Ignored |
+
+- **Long window.** The radar is good at saying someone is there and bad at saying
+  nobody is; it has gone about 10 minutes without seeing him sit still (see
+  [Presence detection](#presence-detection)). A guest sitting quietly must not be
+  ignored.
+- **Fail open.** A silent radar, a stale geofence, or any missing signal wakes
+  her, as `wake_gate.py` already does. A dropped real wake is invisible; a false
+  one costs a chime.
+- **A manual "guests are over"** that turns the veto off for a set time.
+- Guests already get the guest tier, so nothing private is newly exposed.
+
+**Depends on, in order:** a presence fusion function that turns timestamped
+events (radar, wake, SSH idle, phone on Tailscale, geofence) into `away`,
+`home_idle` or `in_room` with a confidence and expiry each; then a geofence
+endpoint in `server.py` for an iOS Shortcuts automation to post to. **Test the
+automation for a few days on the phone before relying on it**: how reliably iOS
+fires a location automation in the background is not established. This does not
+help with false wakes while he is home, which is the retraining below.
+
 ### Retrain the wake model on his false wakes (asked Oct 1 2026)
 
 **Why:** on Oct 1 2026 at 14:57 `hey_nova.onnx` woke at 0.73 during his phone

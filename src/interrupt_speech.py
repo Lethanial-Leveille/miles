@@ -261,6 +261,19 @@ class Carrier:
 HER_WORDS_PER_S = 3.2
 
 
+def _split_heard(text, heard_s, audio_s=None):
+    """text as words, and how many of them played in heard_s seconds.
+
+    One place for the cut point, so what she is recorded as having said and
+    what she is recorded as having left can never overlap or leave a gap."""
+    words = text.split()
+    if audio_s:
+        count = round(len(words) * heard_s / audio_s)
+    else:
+        count = round(heard_s * HER_WORDS_PER_S)
+    return words, max(0, min(len(words), count))
+
+
 def words_heard(text, heard_s, audio_s=None):
     """The words of text that played in heard_s seconds, cut at a word.
 
@@ -268,9 +281,12 @@ def words_heard(text, heard_s, audio_s=None):
     follows her pace in that sentence; by her usual pace when it is not. A few
     words either way: exact timings would mean ElevenLabs' timestamped
     endpoint, a bigger change for little gain."""
-    words = text.split()
-    if audio_s:
-        count = round(len(words) * heard_s / audio_s)
-    else:
-        count = round(heard_s * HER_WORDS_PER_S)
-    return " ".join(words[:max(0, min(len(words), count))])
+    words, count = _split_heard(text, heard_s, audio_s)
+    return " ".join(words[:count])
+
+
+def words_unheard(text, heard_s, audio_s=None):
+    """The words of text that had not played yet: the other side of the same cut
+    words_heard makes, so the two always join back into text."""
+    words, count = _split_heard(text, heard_s, audio_s)
+    return " ".join(words[count:])

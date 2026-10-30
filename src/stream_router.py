@@ -25,9 +25,13 @@ class StreamRouter:
     TTS consumer, which is where it always ran.
     """
 
-    def __init__(self, sentence_queue: asyncio.Queue):
+    def __init__(self, sentence_queue: asyncio.Queue, record: list = None):
         self._buf            = ""
         self._sentence_queue = sentence_queue
+        # Every sentence in the order it was written, kept beside the queue. The
+        # consumer stops reading when he cuts her off, and the sentences it had
+        # not reached would be gone; this is what lets her pick them up again.
+        self._record         = record
         # Counted rather than inferred from queue size: the TTS consumer runs
         # on the same event loop and can drain the queue between feeds, so
         # qsize() is not a reliable "has anything been emitted yet" signal.
@@ -45,9 +49,14 @@ class StreamRouter:
             end      = match.end()
             sentence = self._buf[:end].strip()
             if sentence:
-                await self._sentence_queue.put(sentence)
-                self.sentences_emitted += 1
+                await self._emit(sentence)
             self._buf = self._buf[end:]
+
+    async def _emit(self, sentence: str) -> None:
+        if self._record is not None:
+            self._record.append(sentence)
+        await self._sentence_queue.put(sentence)
+        self.sentences_emitted += 1
 
     async def finalize(self) -> None:
         """Flush whatever is left after the stream ends, then send the sentinel.
@@ -56,7 +65,6 @@ class StreamRouter:
         cut off by max_tokens, would otherwise never be spoken at all."""
         remaining = self._buf.strip()
         if remaining:
-            await self._sentence_queue.put(remaining)
-            self.sentences_emitted += 1
+            await self._emit(remaining)
         self._buf = ""
         await self._sentence_queue.put(None)
