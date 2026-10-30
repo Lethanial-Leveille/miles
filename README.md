@@ -171,7 +171,7 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 | Median perceived latency, last 30 Claude turns (Oct 2 to 12 2026) | 3.0 seconds, from the end of speech to first audio, including the silence wait that decides you have finished |
 | ElevenLabs eleven_v3 time to first byte | 647ms median over 12 live turns (Sep 2026) |
 | Registered tools | 34 |
-| Test suite | 1348 passing |
+| Test suite | 1447 passing |
 
 ---
 
