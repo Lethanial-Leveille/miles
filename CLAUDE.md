@@ -220,8 +220,9 @@ it cannot run Nova. Anything that changes the Pi happens on the Pi, with
 `scripts/deploy.sh`.
 
 The environment's setup script, pasted into its settings on claude.ai, installs
-everything before the session starts. This is the versioned copy; when a torch
-pin changes in `requirements.txt`, change it here and there too:
+everything before the session starts. This is the versioned copy; when a pin
+changes in `requirements.txt`, change it here and there too. Fixed Oct 30 2026:
+the earlier script died on webrtcvad and installed nothing:
 
 ```bash
 #!/bin/bash
@@ -234,10 +235,14 @@ SUDO=""; [ "$(id -u)" -eq 0 ] || SUDO="sudo"
 $SUDO apt-get update -qq && $SUDO apt-get install -y -qq portaudio19-dev
 # allow pip on a distro managed Python; a pip too old to know it ignores it
 export PIP_BREAK_SYSTEM_PACKAGES=1
-# torch's CPU build first: the default x86 wheel pulls gigabytes of CUDA
-python3 -m pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
-# everything else; the torch pins are already met, so pip skips them
-python3 -m pip install -r requirements-dev.txt
+# Debian's patched setuptools cannot build webrtcvad or typing (install_layout
+# error), so put upstream's beside it first. wheel is Debian owned too
+python3 -m pip install --ignore-installed setuptools wheel
+# One pass. --ignore-installed because Debian owns some packages (httplib2) and
+# pip cannot uninstall them. The CPU index is searched as well, and its 2.11.0+cpu
+# torch outranks the default 2.11.0 CUDA wheel, which pulls gigabytes of nvidia
+python3 -m pip install --ignore-installed \
+  --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-dev.txt
 ```
 
 Then test:
