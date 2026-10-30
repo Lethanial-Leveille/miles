@@ -112,3 +112,54 @@ def test_a_short_first_sentence_flushes_immediately():
         assert await queue.get() == "Right away."
 
     asyncio.run(check())
+
+
+# ── the record: what she wrote, for the part he never heard (Oct 30 2026) ──
+
+def test_the_record_holds_every_sentence_in_order_whatever_the_chunking():
+    for chunk in (1, 7, 50):
+        record = []
+
+        async def go():
+            router = StreamRouter(asyncio.Queue(), record=record)
+            text = "Right away. The weather is clear. And no umbrella needed"
+            for i in range(0, len(text), chunk):
+                await router.feed(text[i:i + chunk])
+            await router.finalize()
+        asyncio.run(go())
+        assert record == ["Right away.", "The weather is clear.",
+                          "And no umbrella needed"]
+
+
+def test_the_record_survives_the_queue_being_abandoned():
+    """The point of it: the consumer stops reading when he cuts her off, and
+    sentences written after that were still on the record."""
+    record = []
+
+    async def go():
+        queue = asyncio.Queue()
+        router = StreamRouter(queue, record=record)
+        await router.feed("One. Two.")
+        await queue.get()                  # the consumer reads one, then is cut
+        await router.feed(" Three. Four.")
+        await router.finalize()
+    asyncio.run(go())
+    assert record == ["One.", "Two.", "Three.", "Four."]
+
+
+def test_two_routers_can_share_one_record():
+    """A tool turn has a router for the lead in and another for the follow up."""
+    record = []
+
+    async def go():
+        for text in ("Let me check.", "It is sunny."):
+            router = StreamRouter(asyncio.Queue(), record=record)
+            await router.feed(text)
+            await router.finalize()
+    asyncio.run(go())
+    assert record == ["Let me check.", "It is sunny."]
+
+
+def test_no_record_changes_nothing():
+    spoken, router = run("One. Two.")
+    assert spoken == ["One.", "Two."] and router.sentences_emitted == 2

@@ -198,21 +198,44 @@ class _Heard:
     def __init__(self):
         self.parts = []
         self.cut = False
+        # Sentences given to the speaker, whether they played whole or were cut.
+        # Counted rather than matched by text: the router's record is indexed by
+        # it to find the sentences that never reached the room.
+        self.handed = 0
+        # The unplayed words of the sentence he cut in on.
+        self.tail = ""
 
     def played(self, sentences):
         self.parts.append(" ".join(sentences))
+        self.handed += len(sentences)
 
     def cut_during(self, sentences, synthesis):
         text = " ".join(sentences)
         heard_s = getattr(synthesis, "heard_s", None)
+        audio_s = getattr(synthesis, "audio_s", None)
         self.parts.append(text if heard_s is None else
-                          interrupt_speech.words_heard(text, heard_s,
-                                                       getattr(synthesis, "audio_s", None)))
+                          interrupt_speech.words_heard(text, heard_s, audio_s))
+        self.tail = ("" if heard_s is None else
+                     interrupt_speech.words_unheard(text, heard_s, audio_s))
+        self.handed += len(sentences)
         self.cut = True
 
     def text(self):
         said = " ".join(p for p in self.parts if p)
         return f"{said} {CUT_OFF_MARK}".strip()
+
+    def remainder(self, written, leaks_seen=None):
+        """What she still had to say when he cut in, or "" if he did not.
+
+        The rest of the sentence he cut, then every sentence after it, whether
+        or not it was ever synthesized or even written when he spoke. written
+        is the router's record of the whole reply in order. Cues are stripped
+        here as the consumer strips them, since the record is what Claude wrote
+        and not what was sent to the speaker."""
+        if not self.cut:
+            return ""
+        later = [strip_leading_bracket_cue(s, leaks_seen) for s in written[self.handed:]]
+        return " ".join(p for p in [self.tail, *later] if p.strip()).strip()
 
 
 async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set,
