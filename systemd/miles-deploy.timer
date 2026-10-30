@@ -1,0 +1,18 @@
+[Unit]
+Description=Deploy origin/main every 2 minutes, when it is new and its tests pass
+
+[Timer]
+# Five minutes after boot, not immediately: miles-voice spends its first
+# seconds loading models, and a deploy racing that would restart it mid load.
+OnBootSec=5min
+# Counted from when the last run finished, not started, so a run that spends
+# its time on the tests never has the next one queued right behind it.
+OnUnitInactiveSec=2min
+AccuracySec=15s
+RandomizedDelaySec=15
+
+# No Persistent. It only applies to calendar timers; the monotonic ones above
+# are recomputed from boot anyway.
+
+[Install]
+WantedBy=timers.target

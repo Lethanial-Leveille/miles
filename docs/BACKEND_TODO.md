@@ -1175,6 +1175,32 @@ turn is the self report this repo keeps measuring as unreliable. A review script
 `scripts/gaps.py`, lists them newest first and marks each done or ignored.
 Nothing here touches the reply path; it runs after the turn like the memory pass.
 
+### Roll back a deploy that will not start (asked Oct 30 2026)
+
+`scripts/auto_deploy.sh` tests a commit in a worktree before it touches the
+repo, so a failing suite never restarts anything. What it cannot catch is a
+commit that passes every test and still will not start: a missing package, a
+hardware path, an import only the live service reaches. Today that leaves
+production down. The commit is written to `data/deploy_failed_commit` so the
+timer does not restart it every two minutes, and it stays down until he
+pushes a fix or deploys an older commit by hand.
+
+The rollback: when `deploy.sh` reports a service not active, move main back to
+the commit in `data/deployed_commit` (the last one that started) with
+`git reset --hard`, restart, and check again. The tree is already known clean
+by then, so the reset destroys nothing. The failed marker stays, so the next
+run does not pull the bad commit straight back; a newer push fast forwards
+from the old commit as usual.
+
+Two things to settle before building it:
+- **The database does not roll back.** Migrations in `database.py` run forward
+  at startup. If the bad commit added a schema version, the old code meets a
+  newer schema. Added columns are probably harmless to old code; check what
+  `init_db` does with a version it does not know before trusting this.
+- **A rollback that also fails must stop.** One attempt, then leave it down and
+  say so loudly, or it becomes the restart loop the failed marker exists to
+  prevent.
+
 ### Deepgram as the online path (BUILT Sep 25 2026)
 
 Live in `src/deepgram_stt.py`; the mechanism is in

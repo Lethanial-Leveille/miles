@@ -1,0 +1,29 @@
+[Unit]
+Description=M.I.L.E.S. auto deploy: run origin/main once its tests pass
+# The first thing the script does is fetch from GitHub, so there is no point
+# starting before the network is up; a run that early only logs a failed fetch.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# As him, not root. git refuses a repo owned by another user, and a root run
+# would leave root owned files in the repo. The sudo systemctl calls in
+# deploy.sh work because his sudo needs no password; do not add
+# NoNewPrivileges here, it would quietly break them.
+User=theycallmelee
+WorkingDirectory=/home/theycallmelee/miles
+ExecStart=/home/theycallmelee/miles/scripts/auto_deploy.sh
+
+# A oneshot has no start timeout by default, and the timer never starts a unit
+# that is still running. One fetch hung on the network would stop every deploy
+# after it, silently. Tests and a restart take well under a minute.
+TimeoutStartSec=10min
+
+# No EnvironmentFile. The suite passes without .env, so the keys stay out of a
+# process that runs whatever was last pushed.
+
+# No Restart. An exit of 1 is a failed test run or a service that would not
+# start, both already recorded in data/deploy_failed_commit; retrying would be
+# the restart loop that file exists to prevent. The timer decides when to look
+# again.

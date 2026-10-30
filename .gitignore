@@ -75,3 +75,8 @@ hf_cache/
 # A bundle is the entire repository including every commit, so one sitting in
 # the working tree republishes anything a history rewrite was meant to remove.
 *.bundle
+
+# Claude Code keeps each session's worktree here, a whole second checkout. Left
+# visible it is an untracked file, and auto_deploy.sh skips every deploy while
+# the tree looks dirty.
+.claude/worktrees/
