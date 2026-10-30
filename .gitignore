@@ -8,6 +8,8 @@
 credentials.json
 data/token.json
 data/oura_token.json
+# Apple's push key (AuthKey_XXXX.p8). Downloadable once, and it signs as the app.
+*.p8
 
 # ── Personal data ──
 # data/ holds the database, the seed corpus, and the recording archive. The

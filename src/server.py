@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from datetime import datetime, timedelta
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from jose import JWTError
 
 from auth import verify_password, create_token, decode_token
@@ -23,12 +23,14 @@ from database import (
     save_memory, supersede_memory, get_memory_chain, memory_status, memory_content,
     open_reminders, cancel_reminder_by_id,
     dismiss_memory_pair, dismissed_memory_pairs, merge_memories,
+    save_push_device, remove_push_device,
 )
 from config import MEMORY_SIMILAR_LIST
 from system_state import get_system_state
 import embeddings
 import memory_merge
 import calendar_tools
+import push
 import tts
 
 app = FastAPI(title="M.I.L.E.S. API", version="0.7")
@@ -81,6 +83,17 @@ class MemoryMerge(BaseModel):
     keep_id: int
     drop_id: int
     content: str
+
+# An APNs device token is hex, 32 bytes today. Apple says its length may change,
+# so the bound is loose; what matters is that nothing else reaches a URL path.
+class PushToken(BaseModel):
+    token: str = Field(pattern=r"^[0-9a-fA-F]{32,200}$")
+
+class PushRegistration(PushToken):
+    # Which APNs host this token belongs to: a build run from Xcode is sandbox,
+    # one installed from TestFlight or the App Store is production.
+    environment: Literal["sandbox", "production"]
+    device_name: Optional[str] = Field(default=None, max_length=100)
 
 class EventChange(BaseModel):
     title: Optional[str] = None
@@ -393,6 +406,39 @@ def cancel_reminder(reminder_id: int, user: str = Depends(get_current_user)):
     if not cancel_reminder_by_id(reminder_id):
         raise HTTPException(status_code=404, detail="No outstanding reminder with that id")
     return {"cancelled": True}
+
+
+# ── Push notifications ──
+
+@app.post("/push/register")
+def register_push(body: PushRegistration, user: str = Depends(get_current_user)):
+    # Called on every launch, so this is an upsert and a repeat is not an error.
+    save_push_device(body.token.lower(), body.environment, body.device_name)
+    return {"registered": True}
+
+
+@app.post("/push/unregister")
+def unregister_push(body: PushToken, user: str = Depends(get_current_user)):
+    # Signing out should stop Nova's messages reaching that handset. Answering
+    # the same whether or not the token was known keeps this safe to retry.
+    remove_push_device(body.token.lower())
+    return {"unregistered": True}
+
+
+@app.post("/push/test")
+def test_push(user: str = Depends(get_current_user)):
+    """Send a notification now, so the whole chain can be checked without
+    waiting for a reminder: the key, the team, the bundle id, and whether the
+    phone registered against the right APNs host."""
+    gaps = push.missing()
+    if gaps:
+        raise HTTPException(status_code=503,
+                            detail="Push is not set up on the Pi yet: " + ", ".join(gaps))
+    sent = push.notify("Nova", "This is a test notification.", kind="test")
+    if sent == 0:
+        raise HTTPException(status_code=502,
+                            detail="Apple did not accept it. Check journalctl -u miles-server.")
+    return {"sent": sent}
 
 
 def _calendar_call(fn, *args, **kwargs):

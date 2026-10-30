@@ -3,11 +3,12 @@ import threading
 import requests
 import sqlite3
 from datetime import datetime, timedelta
-from config import DEFAULT_LOCATION, WEATHER_API_KEY, DB_PATH
+from config import DEFAULT_LOCATION, WEATHER_API_KEY, DB_PATH, PUSH_KINDS
 from tools import Permission, tool
 from parsing import words_for_number
 from database import due_reminders, complete_reminder
 import alerts
+import push
 
 
 def _plural(amount, unit):
@@ -324,6 +325,23 @@ def set_reminder(content, due_time=None):
     return f"Reminder saved: {content}" + (f" (due: {due_time})" if due_time else "")
 
 
+def _push_reminder(reminder_id, kind, content):
+    """Also send a reminder or timer to his phone.
+
+    After alerts.fire, so the room is never kept waiting on Apple, and onto its
+    own thread for the same reason. The text is the plain content: the room
+    version is written for speech, with a [calmly] cue and his name, and neither
+    belongs on a lock screen."""
+    if kind not in PUSH_KINDS:
+        return
+    if kind == "timer":
+        title, body = "Timer", f"Your {content} is up"
+    else:
+        title, body = "Reminder", content
+    push.notify_async(title, body, kind=kind, data={"reminder_id": reminder_id},
+                      collapse_id=f"reminder-{reminder_id}")
+
+
 def poll_reminders(now=None):
     """One pass over the table. Returns how many fired.
 
@@ -356,6 +374,7 @@ def poll_reminders(now=None):
             text, summary = _timer_alert(content, late_seconds > REMINDER_LATE_S)
             print(f"\n*** TIMER DONE: {content} ***", flush=True)
             alerts.fire(kind="timer", text=text, summary=summary)
+            _push_reminder(reminder_id, "timer", content)
             fired += 1
             continue
 
@@ -369,6 +388,7 @@ def poll_reminders(now=None):
 
         print(f"\n*** REMINDER: {content} ***", flush=True)
         alerts.fire(kind="reminder", text=text, summary=summary)
+        _push_reminder(reminder_id, "reminder", content)
         fired += 1
 
     return fired
