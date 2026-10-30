@@ -68,9 +68,19 @@ def test_clear_lets_go_of_it():
     assert resume.take(now=1.0) is None
 
 
-# ── where a resume starts ──
+# ── where a resume starts: his approved examples, Oct 30 2026 ──
+#
+# Each test is one example he approved before the code was written, numbered as
+# in that list. They assert the exact sentence, because the tests these replaced
+# asserted the mechanism and passed on "Anyway, but most granola is heavy".
 
 SAID = "The high today is seventy, with a light breeze and"
+
+GRANOLA_SAID = ("Granola's a mixed bag. It's got oats and nuts, which are solid, "
+                "but most granola is heavy on")
+GRANOLA_LEFT = "sugar and oil. It works as an occasional thing, not a staple."
+GRANOLA_CUT_SENTENCE = ("It's got oats and nuts, which are solid, but most granola "
+                        "is heavy on sugar and oil.")
 
 
 def _resume(said, left="the rest.", gap=0.0):
@@ -78,51 +88,102 @@ def _resume(said, left="the rest.", gap=0.0):
     return resume.speech(now=gap)
 
 
-def test_it_backs_up_to_the_nearest_clause_word_and_leads_in():
-    # Four words back covers "a light breeze and"; "and" is the nearest boundary.
-    assert _resume(SAID, "seventy and sunny.") == "Anyway, and seventy and sunny."
+def test_1_a_quick_go_on_restarts_the_cut_sentence_with_no_lead_in():
+    assert _resume(GRANOLA_SAID, GRANOLA_LEFT, gap=3.0) == \
+        GRANOLA_CUT_SENTENCE + " It works as an occasional thing, not a staple."
 
 
-def test_it_backs_up_to_the_word_after_a_comma():
-    assert _resume("The high today is seventy, with a light") == \
-        "Anyway, with a light the rest."
+def test_2_after_a_real_gap_she_leads_in_first():
+    assert _resume(GRANOLA_SAID, GRANOLA_LEFT, gap=40.0) == \
+        "Anyway, it's got oats and nuts, which are solid, but most granola " \
+        "is heavy on sugar and oil. It works as an occasional thing, not a staple."
 
 
-def test_a_cut_right_after_a_comma_needs_no_backing_up():
-    assert _resume("The high today is seventy,") == "Anyway, the rest."
+def test_3_a_stop_to_nothing_resumes_the_same_way_as_a_quick_go_on():
+    assert _resume(GRANOLA_SAID, GRANOLA_LEFT, gap=2.0) == \
+        GRANOLA_CUT_SENTENCE + " It works as an occasional thing, not a staple."
 
 
-def test_a_cut_after_a_full_stop_starts_the_next_sentence_clean():
-    assert _resume("It is sunny. Bring sunglasses.") == "Anyway, the rest."
+def test_4_a_cut_between_sentences_replays_nothing():
+    said = GRANOLA_CUT_SENTENCE.join(["Granola's a mixed bag. ", ""])
+    assert _resume(said, "It works as an occasional thing, not a staple.", gap=3.0) == \
+        "It works as an occasional thing, not a staple."
 
 
-def test_with_no_boundary_in_range_it_backs_up_the_whole_window():
-    assert _resume("one two three four five six", gap=0.0) == \
-        "Anyway, three four five six the rest."
+def test_5_a_cut_in_the_first_sentence_restarts_the_reply():
+    assert _resume("Granola's a mixed", "bag. It's got oats and nuts.", gap=3.0) == \
+        "Granola's a mixed bag. It's got oats and nuts."
 
 
-def test_a_longer_gap_backs_up_further():
-    said = "Step count alone matters little for gaining muscle on a lift"
-    near = _resume(said, gap=5.0)
-    far = _resume(said, gap=45.0)
-    assert len(far.split()) - len(near.split()) == 4
+def test_6_a_cut_before_her_first_word_says_the_whole_reply():
+    assert _resume("", left="Granola's a mixed bag.", gap=40.0) == "Granola's a mixed bag."
 
 
-def test_it_never_backs_up_past_what_it_kept():
-    said = "a b c d e f g h i j k l m n o p"
-    out = _resume(said, left="END", gap=100.0)
-    assert out == "Anyway, " + " ".join(said.split()[-resume.SAID_KEPT_WORDS:]) + " END"
+def test_7_a_second_cut_restarts_the_newer_sentence():
+    said = GRANOLA_CUT_SENTENCE + " It works as an"
+    assert _resume(said, "occasional thing, not a staple.", gap=3.0) == \
+        "It works as an occasional thing, not a staple."
 
 
-def test_the_lead_in_rotates_and_never_doubles_the_first_word():
-    leads = [_resume("one two three four five six").split()[0] for _ in range(3)]
-    assert len(set(leads)) == 3, "three resumes in a row should not open the same way"
-    resume._lead_next = 1       # the next lead is "So,"
-    assert _resume("The high is seventy, so") == "As I was saying, so the rest."
+def test_8_two_resumes_after_gaps_never_open_the_same_way():
+    first = _resume(GRANOLA_SAID, GRANOLA_LEFT, gap=40.0)
+    second = _resume(GRANOLA_SAID, GRANOLA_LEFT, gap=40.0)
+    assert first.startswith("Anyway, ") and second.startswith("So, ")
 
 
-def test_nothing_said_before_the_cut_means_no_lead_in():
-    assert _resume("", left="Step count matters.") == "Step count matters."
+def test_11_a_very_long_sentence_backs_up_to_its_last_comma():
+    said = ("Your readiness is seventy one, which is lower than your weekly average "
+            "of seventy eight, mostly because your resting heart rate was up and "
+            "you slept about")
+    assert _resume(said, "six hours.", gap=3.0) == \
+        "mostly because your resting heart rate was up and you slept about six hours."
+
+
+# Examples 9 (too late) and 10 (a guest) are unchanged behavior, covered by
+# test_it_goes_stale_after_the_window_and_stays_gone and
+# test_a_guest_cannot_make_her_finish_what_may_be_his.
+
+# ── the rules behind the examples, at their edges ──
+
+def test_the_lead_in_starts_at_ten_seconds_exactly():
+    assert not _resume(GRANOLA_SAID, GRANOLA_LEFT, gap=9.9).startswith("Anyway")
+    assert _resume(GRANOLA_SAID, GRANOLA_LEFT, gap=10.0).startswith("Anyway, ")
+
+
+def test_twenty_words_of_a_sentence_still_restarts_it_whole():
+    said = "one two three four five six seven eight nine ten, " \
+           "eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
+    assert _resume(said, "end.", gap=3.0) == said + " end."
+
+
+def test_a_long_sentence_never_backs_up_to_a_clause_that_opens_on_but():
+    said = ("Oats are fine for most people, especially before a lift, but the sugar "
+            "in most store granola adds up quickly over a")
+    assert _resume(said, "week.", gap=3.0) == \
+        "especially before a lift, but the sugar in most store granola adds up " \
+        "quickly over a week."
+
+
+def test_a_long_sentence_with_no_usable_comma_restarts_whole():
+    said = ("Oats are fine for most people but the sugar in most store granola adds "
+            "up quickly over a long")
+    assert _resume(said, "week.", gap=3.0) == said + " week."
+
+
+def test_a_lead_in_never_doubles_the_word_it_introduces():
+    assert _resume("So the high is", "seventy.", gap=40.0) == "Anyway, so the high is seventy."
+
+
+def test_a_lead_in_keeps_i_capitalized():
+    assert _resume("I think the", "gym opens at six.", gap=40.0) == \
+        "Anyway, I think the gym opens at six."
+
+
+def test_a_resume_of_a_resume_does_not_stack_lead_ins():
+    # She led in, got cut inside that same first sentence, and was asked again.
+    said = "Anyway, it's got oats and nuts, which are"
+    assert _resume(said, "solid.", gap=40.0) == \
+        "So, it's got oats and nuts, which are solid."
 
 
 def test_it_is_said_once_and_goes_stale_like_take():
@@ -259,8 +320,9 @@ def test_a_cut_during_the_lead_in_keeps_the_answer_he_never_heard(turn):
 def test_a_cut_reply_keeps_the_word_she_did_say(turn):
     turn(_FakeStream(THREE), cut_first=True)
     out = resume.speech()
-    # "Step" was heard and is the start of the reply, so it is replayed.
-    assert out == ("Anyway, Step count alone matters little. You lift four days a week. "
+    # "Step" was heard and is the start of the reply, so the sentence restarts;
+    # resumed at once, so no lead in.
+    assert out == ("Step count alone matters little. You lift four days a week. "
                    "Recovery matters more.")
 
 
@@ -293,8 +355,8 @@ def test_nothing_held_means_she_says_nothing(speaker):
 def test_she_finishes_the_reply_from_a_clause_and_says_it_once(speaker):
     resume.keep("seventy and sunny. Bring sunglasses.", said=SAID)
     sent, spoke = speaker()
-    assert spoke == "Anyway, and seventy and sunny. Bring sunglasses.", "what she said"
-    assert sent[0] == "Anyway, and seventy and sunny."
+    assert spoke == "The high today is seventy, with a light breeze and seventy and sunny. Bring sunglasses.", "what she said"
+    assert sent[0] == "The high today is seventy, with a light breeze and seventy and sunny."
     assert "Bring sunglasses." in " ".join(sent)
     assert resume.take() is None, "a second stop to nothing must not repeat it"
     assert speaker()[1] == ""
@@ -309,9 +371,10 @@ def test_the_first_sentence_goes_out_on_its_own(speaker):
 def test_if_he_cuts_in_again_what_is_still_unsaid_is_held_again(speaker):
     resume.keep("It is sunny today. Bring sunglasses.", said=SAID)
     speaker(cut_at=1)
-    # "Anyway, and It is sunny today." is six words; a quarter of its audio played,
-    # which is "Anyway, and". She backs up to the comma, rotating to the next lead in.
-    assert resume.speech() == "So, and It is sunny today. Bring sunglasses."
+    # The resumed first sentence is sixteen words; a quarter of its audio played,
+    # "The high today is". The newer cut restarts that same sentence again.
+    assert resume.speech() == ("The high today is seventy, with a light breeze and "
+                               "It is sunny today. Bring sunglasses.")
 
 
 def test_a_resume_that_plays_through_leaves_nothing_held(speaker):
@@ -495,8 +558,8 @@ def amended(monkeypatch):
 def test_finishing_after_a_stop_to_nothing_extends_the_cut_row(speaker, amended):
     resume.keep("seventy and sunny.", said=SAID, message_id=5)
     _, said = speaker(amend_history=True)
-    assert amended == [(5, "Anyway, and seventy and sunny.", brain.CUT_OFF_MARK)]
-    assert said == "Anyway, and seventy and sunny."
+    assert amended == [(5, "The high today is seventy, with a light breeze and seventy and sunny.", brain.CUT_OFF_MARK)]
+    assert said == "The high today is seventy, with a light breeze and seventy and sunny."
 
 
 def test_cut_again_the_row_ends_in_the_mark_and_stays_amendable(speaker, amended):
