@@ -12,7 +12,7 @@ import httpx
 import timing
 from tts import join_for_speech, play, speak, start_synthesis
 from prompts import build_enhanced_prompt, TEXT_TURN_NOTE
-from database import (save_message, delete_message, last_reply_at, get_seed_memories, get_episodic_memories,
+from database import (save_message, delete_message, extend_message, last_reply_at, get_seed_memories, get_episodic_memories,
                       get_recent_messages, get_messages_after, search_memories, memory_manifest,
                       get_shareable_memories, effective_tier)
 from parsing import extract_memories, strip_leading_bracket_cue
@@ -241,7 +241,8 @@ class _Heard:
         return " ".join(p for p in [self.tail, *later] if p.strip()).strip()
 
 
-def _note_what_was_left(heard, written, leaks_seen, in_the_room, ignored):
+def _note_what_was_left(heard, written, leaks_seen, in_the_room, ignored,
+                        message_id=None):
     """Hold what he cut her off from, or let go of it once the talk has moved on.
 
     Only a reply that played in the room can be resumed or can end the chance: a
@@ -252,7 +253,7 @@ def _note_what_was_left(heard, written, leaks_seen, in_the_room, ignored):
         return
     if heard.cut:
         left = heard.remainder(written, leaks_seen)
-        resume.keep(left, said=heard.said())
+        resume.keep(left, said=heard.said(), message_id=message_id)
         if left:
             print(f"  barge in: {len(left.split())} words left unsaid, kept for a go on",
                   flush=True)
@@ -260,7 +261,7 @@ def _note_what_was_left(heard, written, leaks_seen, in_the_room, ignored):
         resume.clear()
 
 
-def speak_what_was_left():
+def speak_what_was_left(amend_history=False):
     """Finish the reply he cut off, if one is held. What she said of it, or ""
     when nothing was held or nothing played.
 
@@ -272,9 +273,11 @@ def speak_what_was_left():
     and he can cut in again, in which case what is still unsaid is held afresh
     from what this attempt got through. No Claude call: these are her own words.
 
-    Her history is not touched here. A caller that answers a spoken "go on" saves
-    what this returns; a stop that came to nothing has no turn to attach it to, so
-    the next turn still sees her cut off at the first stop."""
+    amend_history is for a stop that came to nothing, which has no turn of his to
+    hang the continuation on: the cut reply's own row is extended instead, so the
+    next turn reads one reply he heard, or one he cut again. A caller answering a
+    spoken "go on" leaves it off and saves its own two rows with what this returns."""
+    message_id = resume.message_id()
     line = resume.speech()
     if line is None:
         return ""
@@ -290,8 +293,17 @@ def speak_what_was_left():
 
     print(f"  resuming: {len(line.split())} words", flush=True)
     asyncio.run(speak())
-    _note_what_was_left(heard, sentences, None, in_the_room=True, ignored=False)
-    return heard.text() if heard.cut else heard.said()
+    _note_what_was_left(heard, sentences, None, in_the_room=True, ignored=False,
+                        message_id=message_id)
+    said = heard.text() if heard.cut else heard.said()
+    if amend_history and message_id and said:
+        # After the speech, and never allowed to end the voice loop: history is
+        # worth keeping true, not worth a restart.
+        try:
+            extend_message(message_id, said, drop_suffix=CUT_OFF_MARK)
+        except Exception as exc:
+            print(f"  could not amend history after resuming: {exc}", flush=True)
+    return said
 
 
 async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set,
@@ -1415,11 +1427,14 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 
     if ignored and not final_text:
         delete_message(user_message_id)
+    reply_id = None
     if final_text:
         # What he heard, not what was written, once he cut her off.
-        save_message("assistant", heard.text() if heard.cut else final_text, device=device)
+        reply_id = save_message("assistant", heard.text() if heard.cut else final_text,
+                                device=device)
     _note_what_was_left(heard, written, leaks_seen,
-                        _plays_in_the_room(channel, device), ignored)
+                        _plays_in_the_room(channel, device), ignored,
+                        message_id=reply_id)
     # After the reply, on its own thread. Only for him: a guest's words are not
     # facts about Lethanial, and speech not meant for Nova is not his to keep.
     if tier == "hokage" and not ignored:

@@ -29,15 +29,18 @@ LEADS = ("Anyway,", "So,", "As I was saying,")
 _CLAUSE_WORDS = {"and", "but", "so"}
 
 _lock = threading.Lock()
-_left = None    # (text, last words she said, when kept)
+_left = None    # (text, last words she said, when kept, id of the saved reply)
 _lead_next = 0
 
 
-def keep(text, said="", now=None):
+def keep(text, said="", message_id=None, now=None):
     """Hold what she had left, replacing anything held before.
 
     said is what she did say of this reply, kept to its last few words so a
     resume can back up to a clause instead of starting on the cut word.
+
+    message_id is the history row saved for the cut reply, so finishing it can
+    amend that row instead of leaving it saying she was cut off.
 
     Nothing left clears it rather than keeping an empty string, so take() never
     has to tell a blank remainder from no remainder."""
@@ -45,7 +48,7 @@ def keep(text, said="", now=None):
     now = time.monotonic() if now is None else now
     words = said.split()
     with _lock:
-        _left = ((text.strip(), words[-SAID_KEPT_WORDS:], now)
+        _left = ((text.strip(), words[-SAID_KEPT_WORDS:], now, message_id)
                  if text and text.strip() else None)
 
 
@@ -112,7 +115,7 @@ def speech(now=None):
         held, _left = _left, None
         if held is None or now - held[2] > RESUME_WINDOW_S:
             return None
-        text, said, kept_at = held
+        text, said, kept_at, _ = held
         if not said:
             # Cut before her first word: nothing was said to pick back up.
             return text
@@ -130,6 +133,17 @@ def held(now=None):
     now = time.monotonic() if now is None else now
     with _lock:
         return _left is not None and now - _left[2] <= RESUME_WINDOW_S
+
+
+def message_id(now=None):
+    """The history row of the held reply, without taking it, or None.
+
+    Read before speech() because speech() lets go of everything, the id with it."""
+    now = time.monotonic() if now is None else now
+    with _lock:
+        if _left is None or now - _left[2] > RESUME_WINDOW_S:
+            return None
+        return _left[3]
 
 
 def clear():

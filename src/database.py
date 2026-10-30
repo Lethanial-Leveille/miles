@@ -1667,6 +1667,26 @@ def delete_message(message_id):
     conn.close()
 
 
+def extend_message(message_id, text, drop_suffix=""):
+    """Add to a saved message after the fact, in place.
+
+    For a reply she was cut off in and then finished: the row said what he heard
+    and ended in the cut off mark, and left alone it tells the next turn he never
+    heard the rest. drop_suffix is that mark, taken off first so the row reads as
+    one reply. A missing id does nothing."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT content FROM conversation_history WHERE id = ?",
+                       (message_id,)).fetchone()
+    if row is not None:
+        content = row[0]
+        if drop_suffix and content.endswith(drop_suffix):
+            content = content[:-len(drop_suffix)].rstrip()
+        conn.execute("UPDATE conversation_history SET content = ? WHERE id = ?",
+                     (f"{content} {text}".strip(), message_id))
+        conn.commit()
+    conn.close()
+
+
 def get_recent_messages(limit=20):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()

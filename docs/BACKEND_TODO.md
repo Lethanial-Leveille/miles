@@ -1057,13 +1057,12 @@ speech. The rules and why are in the decision log under "Where a resume starts"
 and "A stop that came to nothing resumes by itself".
 
 **Also built:** "go on" as a local intent, resuming only when it is all he said and
-only for him, not a guest. Decision log: "Go on is a local intent".
+only for him, not a guest. Decision log: "Go on is a local intent". And her
+history after a resume: the cut reply's row is extended so the next turn knows she
+finished. Decision log: "Her history after a resume".
 
 **Not built, in order:**
-1. **Her history after the automatic resume.** It still ends at the cut off mark,
-   so the next turn does not know she finished. A spoken "go on" already saves
-   what she got through.
-2. **Tune the barge in floor from labelled stops.** Needs the Pi: listen to
+1. **Tune the barge in floor from labelled stops.** Needs the Pi: listen to
    `data/barge_in_stops`, label the false ones, replay them through
    `SpeechOnset`. Do it after the resume is heard working on the Pi, so the
    number being tuned is a cost of a short pause and no longer a lost answer.

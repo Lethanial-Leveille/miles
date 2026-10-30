@@ -205,7 +205,7 @@ def resume_after_empty_stop():
     Returns the interruption that cut the resumed speech, or None. It is claimed
     here, as after any reply, because he may cut in on this too and the next
     recording must start from what he said."""
-    if not speak_what_was_left():
+    if not speak_what_was_left(amend_history=True):
         return None
     interruption = audio.claim_interruption()
     if interruption is None:

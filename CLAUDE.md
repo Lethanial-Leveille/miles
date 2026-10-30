@@ -251,7 +251,7 @@ Then test:
 cd src && python3 -m pytest tests/ -q
 ```
 
-Measured Oct 30 2026 in a clone with no `.env` and an empty home: 1406 pass.
+Measured Oct 30 2026 in a clone with no `.env` and an empty home: 1419 pass.
 Ten tests fail there and pass on the Pi, both for gitignored files, not code:
 the six in `test_speculation.py` load `models/hey_nova.onnx` (on the Pi they
 skip while `miles-voice` holds the mic), and four in `test_local_intent.py`
@@ -533,8 +533,8 @@ Landed since v0.7.1, unreleased:
 - What a cut reply had left to say is kept for two minutes (`resume.py`), ready
   for a "go on", with the line that picks it up (backs up to a clause, rotated
   lead in). A stop followed by noise or too short a recording says it by itself,
-  and a bare "go on" from him says it on request (a guest's does not); not yet
-  heard on the Pi
+  and a bare "go on" from him says it on request (a guest's does not). Her
+  history is amended so the next turn knows she finished; not yet heard on the Pi
 
 ## What Is Next
 
