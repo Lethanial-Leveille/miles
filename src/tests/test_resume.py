@@ -262,3 +262,77 @@ def test_a_cut_reply_keeps_the_word_she_did_say(turn):
     # "Step" was heard and is the start of the reply, so it is replayed.
     assert out == ("Anyway, Step count alone matters little. You lift four days a week. "
                    "Recovery matters more.")
+
+
+# ── speaking it after a stop that came to nothing ──
+
+@pytest.fixture
+def speaker(monkeypatch):
+    """Speaks what she is given on fakes. cut_at is the 1 based number of the
+    request to interrupt, a quarter of the way in, or None to let all play."""
+    def run(cut_at=None):
+        sent = []
+
+        def play(synthesis):
+            sent.append(synthesis.text)
+            return cut_at == len(sent), 0.0
+
+        monkeypatch.setattr(brain, "start_synthesis",
+                            lambda text, *a, **k: SimpleNamespace(
+                                text=text, heard_s=1.0, audio_s=4.0))
+        monkeypatch.setattr(brain, "_play_with_barge_in", play)
+        return sent, brain.speak_what_was_left()
+    return run
+
+
+def test_nothing_held_means_she_says_nothing(speaker):
+    sent, spoke = speaker()
+    assert spoke is False and sent == []
+
+
+def test_she_finishes_the_reply_from_a_clause_and_says_it_once(speaker):
+    resume.keep("seventy and sunny. Bring sunglasses.", said=SAID)
+    sent, spoke = speaker()
+    assert spoke is True
+    assert sent[0] == "Anyway, and seventy and sunny."
+    assert "Bring sunglasses." in " ".join(sent)
+    assert resume.take() is None, "a second stop to nothing must not repeat it"
+    assert speaker()[1] is False
+
+
+def test_the_first_sentence_goes_out_on_its_own(speaker):
+    resume.keep("It is sunny. Bring sunglasses. Enjoy.", said="Today,")
+    sent, _ = speaker()
+    assert len(sent) == 2, "the first sentence at once, the rest as one piece"
+
+
+def test_if_he_cuts_in_again_what_is_still_unsaid_is_held_again(speaker):
+    resume.keep("It is sunny today. Bring sunglasses.", said=SAID)
+    speaker(cut_at=1)
+    # "Anyway, and It is sunny today." is six words; a quarter of its audio played,
+    # which is "Anyway, and". She backs up to the comma, rotating to the next lead in.
+    assert resume.speech() == "So, and It is sunny today. Bring sunglasses."
+
+
+def test_a_resume_that_plays_through_leaves_nothing_held(speaker):
+    resume.keep("It is sunny.", said=SAID)
+    speaker()
+    assert resume.take() is None
+
+
+def test_both_empty_stops_try_to_resume_before_listening_again():
+    """The recording after a stop was noise, or too short to be speech."""
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parent.parent / "voice_main.py").read_text()
+    for branch in ("if is_noise_transcript(followup_text):",
+                   "if followup_result == audio.NO_AUDIO:"):
+        body = source[source.index(branch):].split("break", 1)[0]
+        interrupted = body[body.index("if interrupted_turn:"):]
+        assert interrupted.index("resume_after_empty_stop()") < interrupted.index("continue"), branch
+
+
+def test_a_stop_to_nothing_never_calls_claude():
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parent.parent / "voice_main.py").read_text()
+    helper = source[source.index("def resume_after_empty_stop"):source.index("def run_turn")]
+    assert "ask_nova" not in helper and "run_turn" not in helper

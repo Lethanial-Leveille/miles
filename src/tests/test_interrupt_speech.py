@@ -202,8 +202,9 @@ def test_the_voice_loop_claims_his_interruption_instead_of_flushing_it():
     "Are you?" was all that reached Claude."""
     import pathlib
     source = (pathlib.Path(__file__).resolve().parent.parent / "voice_main.py").read_text()
-    assert source.count("interruption = audio.claim_interruption()\n") == 2, (
-        "both replies, the first and every follow up, can be interrupted")
+    assert source.count("interruption = audio.claim_interruption()\n") == 3, (
+        "both replies, the first and every follow up, can be interrupted, and so "
+        "can the resumed one (resume_after_empty_stop)")
     assert "seed=interruption" in source
     assert "learn=not interrupted_turn" in source
 
