@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -23,7 +23,7 @@ from database import (
     save_memory, supersede_memory, get_memory_chain, memory_status, memory_content,
     open_reminders, cancel_reminder_by_id,
     dismiss_memory_pair, dismissed_memory_pairs, merge_memories,
-    save_push_device, remove_push_device,
+    save_push_device, remove_push_device, save_health_sync,
 )
 from config import MEMORY_SIMILAR_LIST
 from system_state import get_system_state
@@ -94,6 +94,27 @@ class PushRegistration(PushToken):
     # one installed from TestFlight or the App Store is production.
     environment: Literal["sandbox", "production"]
     device_name: Optional[str] = Field(default=None, max_length=100)
+
+# What the Nova app reads from HealthKit and sends when it opens. Every number is
+# bounded, because these are quoted back to him by voice: one corrupt row
+# ("weight 18300") would be read out as fact.
+class HealthDay(BaseModel):
+    day: date
+    steps: Optional[int] = Field(default=None, ge=0, le=200_000)
+    active_kcal: Optional[float] = Field(default=None, ge=0, le=20_000)
+    weight_lb: Optional[float] = Field(default=None, gt=0, le=1_000)
+
+class HealthWorkout(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    kind: str = Field(min_length=1, max_length=40)
+    started_at: datetime
+    minutes: float = Field(ge=0, le=1_440)
+    distance_mi: Optional[float] = Field(default=None, ge=0, le=500)
+    kcal: Optional[float] = Field(default=None, ge=0, le=20_000)
+
+class HealthSync(BaseModel):
+    days: list[HealthDay] = Field(default_factory=list, max_length=60)
+    workouts: list[HealthWorkout] = Field(default_factory=list, max_length=100)
 
 class EventChange(BaseModel):
     title: Optional[str] = None
@@ -439,6 +460,26 @@ def test_push(user: str = Depends(get_current_user)):
         raise HTTPException(status_code=502,
                             detail="Apple did not accept it. Check journalctl -u miles-server.")
     return {"sent": sent}
+
+
+# ── Health ──
+
+@app.post("/health/sync")
+def sync_health(body: HealthSync, user: str = Depends(get_current_user)):
+    """The app's copy of its Health data. Each day replaces the stored day whole,
+    so a reading deleted in Health disappears here on the next sync."""
+    days = [{"day": d.day.isoformat(), "steps": d.steps,
+             "active_kcal": d.active_kcal, "weight_lb": d.weight_lb}
+            for d in body.days]
+    workouts = []
+    for w in body.workouts:
+        # The Pi reads times as its own local time everywhere else. The app sends
+        # an instant, so convert it, or a 7 AM run would be stored as noon.
+        started = w.started_at.astimezone().replace(tzinfo=None) if w.started_at.tzinfo else w.started_at
+        workouts.append({"id": w.id, "kind": w.kind, "started_at": started.isoformat(),
+                         "minutes": w.minutes, "distance_mi": w.distance_mi, "kcal": w.kcal})
+    save_health_sync(days, workouts)
+    return {"days": len(days), "workouts": len(workouts)}
 
 
 def _calendar_call(fn, *args, **kwargs):

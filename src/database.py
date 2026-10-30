@@ -770,6 +770,43 @@ def _migration_033_push_devices(conn):
     """)
 
 
+def _migration_034_health(conn):
+    """What the phone's Health app reports, sent by the Nova app when it opens.
+
+    The Pi cannot read HealthKit; the data lives on the phone and only the app
+    may ask for it. So these tables hold copies, and synced_at says how old a
+    copy is, which Nova has to be able to say because "steps today" is only as
+    fresh as the last time he opened the app.
+
+    health_days is one row per calendar day and each sync replaces the row
+    whole. The app recomputes the last two weeks every time, so a reading he
+    deletes in Health disappears here too instead of lingering.
+
+    health_workouts is keyed by HealthKit's own workout id, so the same run
+    arriving in two syncs is one row."""
+    conn.execute("""
+        CREATE TABLE health_days (
+            day TEXT PRIMARY KEY,
+            steps INTEGER,
+            active_kcal REAL,
+            weight_lb REAL,
+            synced_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE health_workouts (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            minutes REAL NOT NULL,
+            distance_mi REAL,
+            kcal REAL,
+            synced_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX idx_health_workouts_started ON health_workouts (started_at)")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -804,6 +841,7 @@ MIGRATIONS = [
     (31, _migration_031_checkin_log),
     (32, _migration_032_hevy_restores),
     (33, _migration_033_push_devices),
+    (34, _migration_034_health),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -2154,5 +2192,66 @@ def remove_push_device(token):
         cursor = conn.execute("DELETE FROM push_devices WHERE token = ?", (token,))
         conn.commit()
         return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ── Health, as the phone reported it ──
+
+def save_health_sync(days, workouts):
+    """Store one sync from the app: dicts for days (day, steps, active_kcal,
+    weight_lb) and workouts (id, kind, started_at, minutes, distance_mi, kcal).
+
+    One transaction, so a sync that fails halfway leaves the last whole one in
+    place and not a week with some days new and some old."""
+    now = datetime.now().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO health_days (day, steps, active_kcal, weight_lb, synced_at) "
+            "VALUES (:day, :steps, :active_kcal, :weight_lb, :synced_at)",
+            [{**d, "synced_at": now} for d in days])
+        conn.executemany(
+            "INSERT OR REPLACE INTO health_workouts "
+            "(id, kind, started_at, minutes, distance_mi, kcal, synced_at) "
+            "VALUES (:id, :kind, :started_at, :minutes, :distance_mi, :kcal, :synced_at)",
+            [{**w, "synced_at": now} for w in workouts])
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def health_days_since(day):
+    """Rows from this ISO date on, oldest first, as dicts."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT day, steps, active_kcal, weight_lb FROM health_days "
+            "WHERE day >= ? ORDER BY day", (day,))]
+    finally:
+        conn.close()
+
+
+def health_workouts_since(started_iso):
+    """Workouts from this local time on, newest first, as dicts."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, kind, started_at, minutes, distance_mi, kcal FROM health_workouts "
+            "WHERE started_at >= ? ORDER BY started_at DESC", (started_iso,))]
+    finally:
+        conn.close()
+
+
+def last_health_sync():
+    """When the app last sent anything, as an ISO string, or None if never."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(
+            "SELECT MAX(t) FROM (SELECT MAX(synced_at) AS t FROM health_days "
+            "UNION ALL SELECT MAX(synced_at) FROM health_workouts)").fetchone()
+        return row[0]
     finally:
         conn.close()
