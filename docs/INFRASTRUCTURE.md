@@ -55,6 +55,16 @@ Timer driven, not long running:
 - `miles-hevy.timer` runs scripts/hevy_progress.py every fifteen minutes: a
   workout from a routine that earned a jump raises that lift's weight in the
   routine (src/hevy_progress.py). Needs HEVY_API_KEY from .env
+- `miles-deploy.timer` runs scripts/auto_deploy.sh every two minutes, counted
+  from the end of the last run (**in the repo, not installed yet**, Oct 30
+  2026). When origin/main is not the commit in `data/deployed_commit`, it tests
+  that commit in a temporary worktree and runs scripts/deploy.sh only if the
+  suite passes. It skips a dirty tree, a branch other than main, unpushed local
+  commits, and a turn that ended under two minutes ago. A commit that failed is
+  kept in `data/deploy_failed_commit` and never retried; there is no rollback
+  yet ([BACKEND_TODO.md](BACKEND_TODO.md)). Runs as him, not root, so git
+  accepts the repo; deploy.sh's sudo needs no password. Silent when there is
+  nothing new. `scripts/auto_deploy.sh --dry-run` decides without restarting
 
 `miles-wifi` checks whether wlan0 has a carrier and a global scope IPv4
 address, and runs `nmcli connection up Alsander` when either is missing. It

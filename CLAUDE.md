@@ -133,7 +133,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1343 passing, 6 skipped, Oct 30 2026)
+│   └── tests/                 # pytest suite (1423 passing, 6 skipped, Oct 30 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -165,6 +165,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── radar.py               # read and tune the presence radar over its UART
 │   ├── wifi_watchdog.sh       # brings wlan0 back, on a timer, when it drops
 │   ├── deploy.sh              # pull main, restart voice and server (tunnel on request), show logs
+│   ├── auto_deploy.sh         # deploy.sh from miles-deploy.timer, once the new commit's tests pass
 │   ├── google_auth.py         # one time Google OAuth, writes data/token.json
 │   ├── oura_auth.py           # one time Oura OAuth, writes data/oura_token.json
 │   ├── list_calendars.py      # every calendar the Google token sees, and if selected

@@ -15,6 +15,9 @@ SERVICES=(miles-voice miles-server)
 # Seconds to wait after the restart, so a service that crashes on startup has time to show it.
 SETTLE_SECONDS=3
 
+# The commit the services are running, read by auto_deploy.sh. In data/ because build/ is wiped on reboot.
+DEPLOYED_FILE="$REPO_DIR/data/deployed_commit"
+
 # Only one optional argument is understood; anything else is a typo worth stopping on.
 if [[ $# -gt 1 ]]; then
     # Say what went wrong on stderr, where errors belong.
@@ -119,6 +122,12 @@ echo
 if [[ ${#FAILED[@]} -eq 0 ]]; then
     # One line that answers the question at a glance.
     echo "All services active: ${SERVICES[*]} at ${NEW_COMMIT:0:7}"
+    # Write to a temporary file first, so a power cut mid write never leaves half a hash behind.
+    echo "$NEW_COMMIT" > "$DEPLOYED_FILE.tmp"
+    # A rename is all or nothing, so a reader sees the old commit or the new one, never a mix.
+    mv "$DEPLOYED_FILE.tmp" "$DEPLOYED_FILE"
+    # Say where the record went, so it is clear what auto_deploy.sh will compare against.
+    echo "Recorded ${NEW_COMMIT:0:7} in $DEPLOYED_FILE"
 else
     # Name the ones that did not start, so you know whose logs to read above.
     echo "NOT active: ${FAILED[*]}" >&2
