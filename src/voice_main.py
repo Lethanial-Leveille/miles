@@ -23,6 +23,7 @@ from tools import registry, permits
 from database import latest_message_id
 import wake_gate
 from brain import ask_nova, speak_what_was_left, TurnResult
+from local_intent import TEST_PARAGRAPH
 from database import init_db, log_wake_near_miss, save_message
 from parsing import is_noise_transcript, split_after_wake_phrase
 from config import (CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS,
@@ -176,6 +177,9 @@ def _local_allowed(match, tier):
         # may be his: she was reading his calendar when he was cut off, and a
         # guest saying "go on" must not make her finish it.
         return tier is None
+    if match.name == "test_paragraph":
+        # His test tool, and it writes to his history; a guest gets Claude.
+        return tier is None
     if tier is None:
         return True
     try:
@@ -198,6 +202,20 @@ def _run_go_on(user_text):
     save_message("user", user_text)
     # Cut again, what is still unsaid belongs to this reply, so a later stop to
     # nothing finishes this row and not the one before it.
+    resume.attach(save_message("assistant", said))
+    return TurnResult(text=said, dismissed=False)
+
+
+def _run_test_paragraph(user_text):
+    """Read the fixed test paragraph as if it were a reply (docs/TESTING.md).
+
+    Held as a remainder with nothing said and then finished, so it goes through
+    the same consumer as a reply: the first sentence at once, barge in live, and
+    what he cuts off held for a go on. Saved like _run_go_on, for the same reason."""
+    resume.keep(TEST_PARAGRAPH)
+    said = speak_what_was_left()
+    print("(local intent: test_paragraph)", flush=True)
+    save_message("user", user_text)
     resume.attach(save_message("assistant", said))
     return TurnResult(text=said, dismissed=False)
 
@@ -242,6 +260,8 @@ def run_turn(text, named=False, tier=None, conversation_start=None, followup=Fal
         # the hole this function was written to close.
         match = local_intent.classify(text)
         if match is not None and _local_allowed(match, tier):
+            if match.name == "test_paragraph":
+                return _run_test_paragraph(text)
             if match.name != "go_on":
                 return _run_local(match, text)
             result = _run_go_on(text)

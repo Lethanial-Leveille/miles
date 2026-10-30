@@ -1175,6 +1175,21 @@ turn is the self report this repo keeps measuring as unreliable. A review script
 `scripts/gaps.py`, lists them newest first and marks each done or ignored.
 Nothing here touches the reply path; it runs after the turn like the memory pass.
 
+### Whether a confusion reply should be held for a go on (found Oct 30 2026)
+
+`scripts/replay_resume.py` over every real cut: of 14 replies he cut off, 10
+were her confusion replies to a false wake or room talk ("I didn't catch that
+clearly. Could you say it again?", "I'm catching fragments…", "I'm listening.").
+Four were answers. Cutting one of those off most likely means "not you", but
+the remainder is held all the same, and a cough or silence after the stop makes
+her come back with "I didn't catch that clearly. Could you say it again?"
+
+Not decided, and not part of the resume wording work: whether she should hold
+those at all, and how to tell one apart without matching her wording, which
+Claude varies. Start from examples, per [TESTING.md](TESTING.md). Rejecting
+false wakes earlier ([Wake word misses](#wake-word-misses-aug-12-2026)) makes it
+rarer either way.
+
 ### Roll back a deploy that will not start (asked Oct 30 2026)
 
 `scripts/auto_deploy.sh` tests a commit in a worktree before it touches the
