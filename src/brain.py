@@ -460,6 +460,7 @@ _STAGE_WORDS = {
     "delete_calendar_event":   "Deleting the event",
     "dismiss":                 None,
     "find_schedule_conflicts": "Looking for conflicts",
+    "get_health_summary":      "Checking your Health data",
     "get_job_application":     "Opening that application",
     "get_job_search_summary":  "Checking your job search",
     "get_lift_history":        "Looking at that lift",

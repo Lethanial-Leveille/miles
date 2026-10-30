@@ -8,6 +8,7 @@ figure is dragged down by a day that has barely started.
 
 import os
 import tempfile
+import time
 from datetime import datetime
 
 import database
@@ -140,10 +141,20 @@ def test_a_workout_sent_twice_is_one_row(client, db):
     assert len(database.health_workouts_since("2026-10-01T00:00:00")) == 1
 
 
-def test_an_instant_is_stored_as_the_pis_local_time(client, db, monkeypatch):
+@pytest.fixture
+def new_york_time(monkeypatch):
+    """The process clock in New York for one test. Changing TZ is not enough:
+    the C library reads it only at tzset(), so the real zone has to be read
+    back in afterwards or every later test runs in New York time. The session
+    planner's tests found that out."""
     monkeypatch.setenv("TZ", "America/New_York")
-    import time
     time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_an_instant_is_stored_as_the_pis_local_time(client, db, new_york_time):
     # 11:10 UTC on Oct 28 is 7:10 AM in New York (EDT).
     run = {"id": "abc", "kind": "running", "started_at": "2026-10-28T11:10:00Z", "minutes": 30}
     client.post("/health/sync", json={"workouts": [run]})

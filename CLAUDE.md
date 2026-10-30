@@ -124,6 +124,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── hevy_tools.py          # Hevy workouts, lift history, routines, session targets; read only
 │   ├── hevy_progress.py       # raises a routine's weight when a workout earned it, on a timer
 │   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
+│   ├── health_tools.py        # get_health_summary: the phone's Health data as the app last sent it
+│   ├── push.py                # Reminders and timers to his phone through Apple's push service
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
 │   ├── resume.py              # what she had left to say when he cut her off, held for a go on, and where to start it
@@ -133,7 +135,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1343 passing, 6 skipped, Oct 30 2026)
+│   └── tests/                 # pytest suite (1343 passing, 6 skipped on the Pi, Oct 30 2026; 44 tests added since by push and Health, not yet run there)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -424,9 +426,18 @@ of the value itself.
 - `PERMISSION_TIERS` (in `tools.py`): READ `genin`, CONTROL `genin`, WRITE
   `chunin`, EXTERNAL_WRITE `hokage`. A tool's `min_tier` can only raise its floor.
 - Raised by `min_tier`: `remember` to `jonin`; `lower_access`, every calendar
-  tool, every Oura tool, every Hevy tool, every Prowl tool, `list_pending_memories` and
+  tool, every Oura tool, every Hevy tool, `get_health_summary`, every Prowl tool, `list_pending_memories` and
   `review_pending_memory` to `hokage`.
 - `CONFIRM_WINDOW_S = 120` (in `pending_action.py`, not `config.py`)
+
+### Push notifications — why: [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md#push-notifications-oct-30-2026)
+- `PUSH_NOTIFICATIONS = True`, but nothing is sent until `APNS_TEAM_ID`,
+  `APNS_KEY_ID` and `APNS_KEY_PATH` are in `.env`. `APNS_BUNDLE_ID` defaults to
+  `com.Lethanial.Nova`. The `.p8` key is a secret (`*.p8` is gitignored)
+- `PUSH_KINDS = ("reminder", "timer")`
+- `PUSH_TTL_S = {"reminder": 6 hours, "timer": 5 minutes}`, `PUSH_DEFAULT_TTL_S = 3600`
+  (how long Apple holds a push for a phone that is off; a late timer is noise)
+- `APNS_TIMEOUT_S = 10.0`
 
 ### Presence radar — why: [BACKEND_TODO.md](docs/BACKEND_TODO.md#presence-detection)
 - `PRESENCE_SENSOR = True`, `PRESENCE_PORT = "/dev/ttyAMA0"`, `PRESENCE_BAUD = 256000`
@@ -461,7 +472,9 @@ STT: Deepgram Nova 3 online, falling back to whisper.cpp (base.en, beam search a
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: SpeechBrain ECAPA (192 dim cosine similarity); an unverified voice is a guest.
-Memory: SQLite WAL mode, schema migrations to version 32.
+Memory: SQLite WAL mode, schema migrations to version 34.
+Push: Apple's push service (APNs) over HTTP/2, `httpx` with `h2`, ES256 provider token signed by python-jose.
+Phone health: Apple Health (HealthKit), copied to the Pi by the Nova app when it opens.
 Weather: OpenWeatherMap.
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.
@@ -536,13 +549,25 @@ Landed since v0.7.1, unreleased:
   and a bare "go on" from him says it on request (a guest's does not). Her
   history is amended so the next turn knows she finished; not yet heard on the Pi
 
+- Push notifications: a due reminder or timer is also sent to his phone through
+  Apple's push service, on its own thread after the room alert. `POST /push/test`
+  checks the whole chain. Written from a cloud session and tested against a
+  fake Apple; not yet run against the real one
+- Phone health: the Nova app copies two weeks of Apple Health (steps, active
+  calories, weight, workouts) to the Pi when it opens, and `get_health_summary`
+  answers from the copy and says how old it is. Same caveat as push
+
 ## What Is Next
 
 - SSH via Cloudflare Tunnel: ssh.lethanial.com + Cloudflare Access policy
 - An evening check in that notices instead of asking: gym pace, sleep, NeetCode
   commits, Bible time; plan in [BACKEND_TODO.md](docs/BACKEND_TODO.md#accountability-she-notices-she-does-not-ask-planned-oct-2-2026)
-- v0.8+: Morning briefings (Fall 2026), Mac control, HealthKit, EventKit,
-  MusicKit, WeatherKit migration, parallel processing
+- v0.8+: Morning briefings (Fall 2026), Mac control, EventKit, MusicKit,
+  WeatherKit migration, parallel processing
+- Follow ups to push and Health, with reasons, in
+  [BACKEND_TODO.md](docs/BACKEND_TODO.md#apple-developer-program-follow-ups-oct-30-2026):
+  Snooze and Done on a notification, Health sync in the background, a Lock Screen
+  timer
 
 ## Coding Preferences
 

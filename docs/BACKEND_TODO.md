@@ -2130,3 +2130,51 @@ and `?limit=` on `/integrations/miles/applications` and `/discovered`. Then
 "the Anduril one" is resolved by Prowl rather than by Haiku scanning a cut
 list, and the Pi caps become Prowl's `limit`. Not done yet because the caps are
 enough to ship and it touches the job tracker repo, not this one.
+
+## Apple Developer Program follow ups (Oct 30 2026)
+
+Push and Health landed the same day the paid program did. What was left out, and
+why, in the order it is worth doing.
+
+### Snooze and Done on a reminder notification
+
+A push carries `reminder_id`, so the app can offer actions. Snooze needs a new
+route (`POST /reminders/{id}/snooze`: look up the delivered row, write a new one
+for now plus ten minutes) and a notification category in the app. **Not built
+because** the action runs with the phone locked and the app in the background,
+and it needs a login. The access token lasts an hour and the only way back in is
+Face ID. See the next entry, which is the same problem.
+
+### Health sync in the background
+
+HealthKit can wake the app when new data arrives (background delivery). **Not
+built because** the wake cannot authenticate: the app's token expires after an
+hour and renewing without the app open needs the password, which sits behind Face
+ID. The fix is a second credential, a long lived JWT scoped to health writes
+only, issued at login and kept in the Keychain readable after first unlock.
+`get_current_user` would have to reject any token carrying a scope, or a leaked
+health token would work on every route. The same credential would let Snooze work
+from a locked phone. Until then Health is as fresh as the last time the app was
+opened, and the tool says so.
+
+### Environment is a compile time guess
+
+The app reports `sandbox` for a Debug build and `production` otherwise. A Release
+build run straight from Xcode is signed for sandbox but says production, and its
+token is refused as `BadDeviceToken`. The robust fix is reading `aps-environment`
+out of the embedded provisioning profile. Not done because Debug from Xcode and
+Release from TestFlight are the only two ways he builds today.
+
+### Not tried on a phone
+
+Both features were written in a cloud session with no Xcode and no Apple
+credentials. The Python is tested against a fake Apple; the Swift has never been
+compiled. The first run on the phone is the real test of both.
+
+### Other things the program unlocks, unbuilt
+
+A Lock Screen timer (Live Activity), an Action Button or Siri shortcut that opens
+Talk Mode, widgets, and WeatherKit in place of OpenWeatherMap. Ranked by
+value: the shortcut is cheap and the most used, the Live Activity needs the push
+plumbing that now exists, and WeatherKit only matters if OpenWeatherMap annoys
+him.

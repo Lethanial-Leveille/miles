@@ -237,6 +237,9 @@ POST /memories/merge/draft, POST /memories/merge
 
 Reminders and timers: GET /reminders, DELETE /reminders/{id}
 
+Push: POST /push/register, POST /push/unregister, POST /push/test
+Health: POST /health/sync
+
 Calendar: GET /calendar/events?days=, PATCH and DELETE /calendar/events/{id}
 WebSocket: /ws
 
@@ -322,6 +325,9 @@ only interactive shells see it; no service does.
 - ELEVENLABS_API_KEY
 - FISH_API_KEY (retained for rollback only)
 - OURA_CLIENT_ID, OURA_CLIENT_SECRET
+- APNS_TEAM_ID, APNS_KEY_ID, APNS_KEY_PATH (Apple push; see
+  [Push notifications](#push-notifications-oct-30-2026). Push is off until all
+  three are set. `APNS_BUNDLE_ID` defaults to `com.Lethanial.Nova`)
 - HEVY_API_KEY (from Hevy's developer settings; needs Hevy Pro. A static key,
   no OAuth and nothing to refresh)
 - PROWL_URL, PROWL_TOKEN (the job tracker's MILES surface. The token must match
@@ -418,6 +424,69 @@ Making them durable is a separate decision, not an oversight.
 
 `REMINDER_POLL_S` and `REMINDER_LATE_S` are defined in `src/actions.py`, not
 in `config.py`.
+
+## Push notifications (Oct 30 2026)
+
+Reminders and timers used to be heard only in the room. The reminder poller now
+also sends each one to his phone through Apple's push service (APNs), after the
+room alert is queued and on its own thread, so Apple being slow cannot make a
+timer late. `PUSH_KINDS` in `config.py` says which kinds go; the module is
+`src/push.py`.
+
+**One time setup, by hand:**
+
+1. developer.apple.com, Certificates, IDs and Profiles, Keys, add one with Apple
+   Push Notifications service ticked. Download `AuthKey_XXXXXXXXXX.p8`. Apple
+   allows that download once. The ten characters in the name are the key id.
+2. The team id is under Membership details. Do not copy it from the Xcode project:
+   that is whichever team the app was last signed with.
+3. Put the `.p8` somewhere gitignored, for example `~/miles/data/`, mode 600, and
+   add `APNS_TEAM_ID`, `APNS_KEY_ID` and `APNS_KEY_PATH` to `.env`.
+4. `pip install --user -r requirements.txt` for `h2` (HTTP/2, the only transport
+   APNs accepts) and `cryptography` (what signs the token), then restart both
+   `miles-server` and `miles-voice`. The poller lives in voice; the register and
+   test routes live in the server.
+5. In the app, Settings, Send Test Notification.
+
+**Sandbox against production.** A build run from Xcode is signed for Apple's
+sandbox host and a TestFlight or App Store build for production, and a device
+token only works against the host that issued it. The app reports which one it
+is when it registers and the Pi sends each token to its own host. A phone with
+both builds installed is two rows.
+
+**When a push does not arrive**, start with `POST /push/test`. A `503` lists the
+settings still missing. A `502` means Apple refused, and the reason is in
+`journalctl -u miles-server`:
+
+| Reason | Meaning |
+|---|---|
+| `BadDeviceToken` | The token is for the other host, or another app. The phone registers again on its next launch |
+| `Unregistered` (410) | The app was deleted. The row is deactivated |
+| `InvalidProviderToken` or `ExpiredProviderToken` | Wrong team id or key id, or the key was not made with APNs ticked |
+| `DeviceTokenNotForTopic` | `APNS_BUNDLE_ID` is not the app's bundle identifier |
+
+`sqlite3 data/miles.db "select environment, active, last_failure from push_devices"`
+shows what the Pi holds, including why a token was switched off. Apple says a
+push was accepted, never that it was shown; a phone with notifications turned off
+in iOS Settings accepts it and says nothing.
+
+The provider token (a signed JWT) is cached 45 minutes. Apple rejects one older
+than an hour and also one minted more often than every 20 minutes, so signing a
+new one per push would be refused within a few reminders.
+
+## Health from the phone (Oct 30 2026)
+
+The Pi cannot read HealthKit. The Nova app reads two weeks of steps, active
+calories, body weight and workouts when it opens, and posts them to
+`POST /health/sync`. `get_health_summary` reads that copy and says how old it
+is: a step count at four in the afternoon from a sync at nine is a wrong answer
+if it is read as live. Each day sent replaces the stored day whole, so a reading
+deleted in Health disappears here too. Every number is bounded at the endpoint
+because they are read back aloud.
+
+Oura also reports steps and active calories. The tool's fields say `iphone` so
+the two are not read as one. What only the phone has is body weight over time and
+the workouts Apple records, like a run with its distance.
 
 ## Related
 
