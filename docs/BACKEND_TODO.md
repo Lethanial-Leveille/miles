@@ -972,6 +972,29 @@ never one bad night). Classes are on Zoom, so travel time and maps are dropped.
    how much he would use it, so **name a weekly use before building**, and test
    whether Claude reads his handwriting well enough by photographing a page of
    notes first.
+   **Named Oct 20 2026:** Linear Algebra, then DSA, then Computer Organization,
+   later his other CpE classes and his own projects. Modelled on Solvely (photo
+   or drawing in, steps out, follow ups on any step), but **hint first by
+   default**: the next step, with the full solution one tap away. His call, made
+   because he is building this to learn.
+   **Teach mode, the main use (same day):** he hands it the material for a test
+   or lesson (study guide, slides as PDF, or just the topics), it teaches one
+   concept at a time, then gives practice problems he solves on the canvas, and
+   it checks his working hint first and brings back what he missed. So the
+   canvas is mostly where he answers, and what Claude must read is his working
+   mid solve. He keeps no paper notes, so the handwriting test is a screenshot
+   of homework worked in Notes or Freeform with the Pencil, the same input the
+   canvas will produce.
+   **Handwriting test, Oct 20 2026: passes on current models only.** One dense,
+   cut off Freeform scratch page of linear algebra, transcribed to LaTeX, graded
+   by hand against the page. Haiku 4.5 and Sonnet 4.5 garbled every dense matrix
+   and guessed without marking it, so neither can check work. Sonnet 5.5 read
+   nearly all of it with two misreads (one, minus 1 as minus 5, changes an
+   answer). Opus 5.5 had none found and marked unsure entries `[?]` instead of
+   guessing. About 4,650 input tokens and 25 seconds per page with thinking on.
+   Haiku 5.5, run after, misread five, so reading his working needs Opus 5.5.
+   **Designed Oct 20 2026:** [STUDY.md](STUDY.md) holds the design and the
+   order of work.
 5. **Assignments, through Notion, next semester.** Canvas would not cooperate;
    Notion's API is solid, but moving his coursework there is the slow part.
 
@@ -1046,7 +1069,10 @@ from the audio already kept, so nothing new runs live. **Label a few more days
 of wakes, his other spots included, and run it before the rule acts on
 anything.**
 
-**Live Oct 12 2026, at 0.5 and minus 9** (`WAKE_RULE`). He labelled 82 more:
+**Built Oct 12 2026, at 0.5 and minus 9** (`WAKE_RULE`), **live only from the
+Oct 26 17:32 restart**: the commit landed nine minutes after the Oct 12 restart,
+and the journal has no "Wake ignored" by the rule until Oct 27, though 17 wakes
+in between met it. He labelled 82 more:
 106 array wakes since Oct 1, 36 his and 70 not, so two of every three chimes
 were false. Swept with `wake_rule.py`: 0.5 at minus 9 cut 20 of 70 and lost
 none of his; 0.6 at minus 9 cut 27 and lost one; 0.8 at minus 6 cut 48 and

@@ -77,6 +77,7 @@ warnings it cost before Sep 6 2026, is in
 | [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) | Touching systemd, the tunnel, the API, env vars, or reminders |
 | [docs/INCIDENTS.md](docs/INCIDENTS.md) | Something broke, or you are about to change a guard that has never fired |
 | [docs/APP_HANDOFF_DUPLICATES.md](docs/APP_HANDOFF_DUPLICATES.md) | Building the duplicate memory screens in miles-app |
+| [docs/STUDY.md](docs/STUDY.md) | Touching the iPad tutor: study sessions, the canvas check, its model and API |
 
 ## Repo Structure
 
@@ -141,7 +142,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── LATENCY.md             # The turn budget and every timing measurement
 │   ├── INFRASTRUCTURE.md      # Services, tunnel, API, env vars, reminders
 │   ├── INCIDENTS.md           # What broke, dated, with the evidence
-│   └── APP_HANDOFF_DUPLICATES.md # the app side of duplicate memory review
+│   ├── APP_HANDOFF_DUPLICATES.md # the app side of duplicate memory review
+│   └── STUDY.md               # the iPad tutor: design, model choice, API
 ├── scripts/                      # Operator tools, run by hand from the repo root,
 │                              # or on a timer. Nothing in src/ imports any of these
 │   ├── memory.py              # list/fix/chain/temporary/similar/keep-both on memories
@@ -283,7 +285,7 @@ of the value itself.
   wake from the neighbours and level can; **do not raise the floor without far
   field clips in the sample**)
 - `WAKE_RULE = True`, `WAKE_RULE_SCORE_BELOW = 0.5`, `WAKE_RULE_PEAK_ABOVE = -9.0`
-  (since Oct 12 2026; a wake scoring under 0.5 must also peak louder than minus 9
+  (built Oct 12 2026, live from the Oct 26 restart; a wake scoring under 0.5 must also peak louder than minus 9
   dBFS. On his 106 labelled array wakes it cut 20 of 70 false ones and lost none
   of his 36, most of them from his seat; `scripts/wake_rule.py` rescores it)
 - `WAKE_GATED_DIR = ~/miles/data/wake_gated`, `WAKE_GATED_MAX_FILES = 300`
