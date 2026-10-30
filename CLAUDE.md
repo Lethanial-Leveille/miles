@@ -161,6 +161,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── hevy_progress.py       # runs src/hevy_progress.py, from miles-hevy.timer
 │   ├── radar.py               # read and tune the presence radar over its UART
 │   ├── wifi_watchdog.sh       # brings wlan0 back, on a timer, when it drops
+│   ├── deploy.sh              # pull main, restart voice and server (tunnel on request), show logs
 │   ├── google_auth.py         # one time Google OAuth, writes data/token.json
 │   ├── oura_auth.py           # one time Oura OAuth, writes data/oura_token.json
 │   ├── list_calendars.py      # every calendar the Google token sees, and if selected
