@@ -1,0 +1,6 @@
+# Everything the Pi runs, plus what the test suite needs on top.
+# This is what a cloud session installs; the Pi itself only needs requirements.txt.
+-r requirements.txt
+
+# Version from pip freeze on the Pi, Oct 30 2026
+pytest==9.1.1

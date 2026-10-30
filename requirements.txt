@@ -1,0 +1,54 @@
+# What the three services and the scripts import, pinned to what runs on the Pi.
+# Versions from pip freeze on the Pi, Oct 30 2026 (Python 3.13.5). Installed
+# with pip install --user, so it is system Python plus ~/.local, not a venv.
+# Not the whole freeze: that also holds torch's CUDA wheels, useless on a Pi,
+# and packages from retired versions (fish-audio-sdk, piper-tts, edge-tts).
+# The test suite's extras are in requirements-dev.txt.
+#
+# Not installable from here, and needed anyway:
+#   whisper.cpp, built from source into whisper.cpp/
+#   cloudflared, from Cloudflare's apt repo
+#   portaudio19-dev, from apt, which PyAudio compiles against
+
+# Brain and voice output
+anthropic==0.92.0
+elevenlabs==2.44.0
+httpx==0.28.1
+requests==2.34.2
+
+# Audio in: mic, wake word, VAD, speaker verification
+PyAudio==0.2.14
+numpy==2.4.4
+scipy==1.17.1
+openwakeword==0.4.0
+# openwakeword runs hey_nova.onnx on it; never imported directly
+onnxruntime==1.24.4
+webrtcvad==2.0.10
+speechbrain==1.1.0
+torch==2.11.0
+# speechbrain loads audio through it, and it breaks unless it matches torch exactly
+torchaudio==2.11.0
+# the old encoder, kept so the voiceprint rollback still loads
+Resemblyzer==0.1.4
+sentence-transformers==5.7.0
+
+# Server and auth
+fastapi==0.136.1
+uvicorn==0.46.0
+pydantic==2.12.5
+python-jose==3.5.0
+passlib==1.7.4
+# from apt on this Pi (python3-bcrypt); pip installs its own copy elsewhere
+bcrypt==4.2.0
+python-dotenv==1.2.2
+
+# Calendar, Oura, and spoken times
+google-api-python-client==2.200.0
+google-auth==2.58.0
+google-auth-oauthlib==1.4.1
+httplib2==0.32.0
+requests-oauthlib==2.0.0
+dateparser==1.4.3
+
+# Presence radar; from apt on this Pi (python3-serial)
+pyserial==3.5
