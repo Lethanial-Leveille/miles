@@ -134,7 +134,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1447 passing, 6 skipped, Oct 30 2026)
+│   └── tests/                 # pytest suite (1455 passing, 6 skipped, Oct 30 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -160,6 +160,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── label_speakers.py      # label who is speaking in the eval clips, by ear
 │   ├── label_wake.py          # label wake hits and misses by ear, worst first
 │   ├── wake_rule.py           # what a score and level wake rule would have cost, from his labels
+│   ├── wake_bench.py          # any wake engine against the eval takes, his labels and room audio
 │   ├── label_spoken.py        # listen to Nova's replies on the laptop, mark what sounded off
 │   ├── replay_ignore.py       # his past turns through the live prompt: does she stay silent on room talk
 │   ├── healthcheck.py         # what broke, on a timer, not by trying to use it
