@@ -159,6 +159,70 @@ def test_a_reply_played_through_is_not_cut(monkeypatch):
     assert not heard.cut and heard.text().startswith("One. Two.")
 
 
+# ── what she had left to say (Oct 30 2026) ──
+
+def test_nothing_is_left_when_the_reply_played_through():
+    heard = brain._Heard()
+    heard.played(["One.", "Two."])
+    assert heard.remainder(["One.", "Two."]) == ""
+
+
+def test_the_rest_of_the_cut_sentence_comes_first_then_what_never_played():
+    heard = brain._Heard()
+    heard.played(["Step count alone matters little."])
+    heard.cut_during(["You lift four days a week.", "Recovery matters more than steps."],
+                     _Synth("x", heard_s=1.0, audio_s=4.0))
+    # Eleven words, a quarter played: three heard, eight left.
+    assert heard.remainder(["Step count alone matters little.", "You lift four days a week.",
+                            "Recovery matters more than steps.", "So sleep first."]) == (
+        "days a week. Recovery matters more than steps. So sleep first.")
+
+
+def test_a_cut_with_no_known_position_leaves_the_sentences_after_it():
+    """Without heard_s the cut piece counts as heard, as history already does."""
+    heard = brain._Heard()
+    heard.cut_during(["One."], _Synth("x"))
+    assert heard.remainder(["One.", "Two.", "Three."]) == "Two. Three."
+
+
+def test_the_remainder_carries_no_emotion_cue():
+    heard = brain._Heard()
+    heard.cut_during(["One."], _Synth("x"))
+    assert heard.remainder(["One.", "[calmly] Two."]) == "Two."
+
+
+def test_the_remainder_is_empty_when_he_cut_her_at_the_last_word():
+    heard = brain._Heard()
+    heard.cut_during(["One two."], _Synth("x", heard_s=60.0))
+    assert heard.remainder(["One two."]) == ""
+
+
+def test_what_is_written_after_the_cut_is_still_left(monkeypatch):
+    """The consumer is done the moment he cuts in, but Claude is not: the
+    sentences it writes afterwards go on the router's record and nowhere else."""
+    from stream_router import StreamRouter
+
+    monkeypatch.setattr(brain, "start_synthesis",
+                        lambda text: _Synth(text, heard_s=1.0, audio_s=4.0))
+    monkeypatch.setattr(brain, "_play_with_barge_in", lambda synthesis: (True, 0.0))
+    monkeypatch.setattr(brain, "join_for_speech", lambda sentences: " ".join(sentences))
+    heard, written = brain._Heard(), []
+
+    async def go():
+        queue = asyncio.Queue()
+        router = StreamRouter(queue, record=written)
+        consumer = asyncio.create_task(brain._tts_consumer(queue, [], set(), heard))
+        await router.feed("Step count alone matters little. ")
+        await asyncio.wait_for(consumer, timeout=5)      # cut during the first sentence
+        await router.feed("You lift four days a week. Recovery matters more.")
+        await router.finalize()
+    asyncio.run(go())
+
+    assert heard.text() == f"Step {brain.CUT_OFF_MARK}"
+    assert heard.remainder(written) == ("count alone matters little. "
+                                        "You lift four days a week. Recovery matters more.")
+
+
 def test_the_cut_mark_survives_the_history_trim():
     long_reply = " ".join(["word"] * 60) + " " + brain.CUT_OFF_MARK
     trimmed = brain._trim_history([{"role": "assistant", "content": long_reply}])
