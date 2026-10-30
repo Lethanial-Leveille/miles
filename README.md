@@ -189,6 +189,7 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 | v0.7.1 | ElevenLabs streaming, sentence router, wake chime | Complete |
 | Unreleased | Native tool use with a permission gate, Google Calendar and Oura, calendar undo, local intent, speculative transcription, eleven_v3 voice | Landed |
 | Unreleased | ReSpeaker XVF3800 array, Deepgram with Whisper fallback, ECAPA verification, web search, Hevy workouts and automatic progression, Prowl job search, barge in, picking up a reply that was cut off | Landed |
+| Unreleased | Push notifications for reminders and timers through Apple's push service, and Apple Health data copied from the phone so Nova can answer about weight and runs | Landed, untested on a real phone |
 | Next | Evening check in, SSH through the tunnel, morning briefings, Apple ecosystem integrations | Planned |
 
 ---
