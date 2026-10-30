@@ -11,6 +11,15 @@ the room, and the app has no reply of this kind to finish.
 
 import threading
 import time
+from collections import namedtuple
+
+# A resume has two wordings. spoken is what he hears, lead in included. written
+# is what history keeps: the same words with no lead in and her own capitals,
+# because history is what she told him and the lead in is only a spoken cue.
+# lead_words is how many words of spoken the lead in took, and replayed is how
+# many words at the end of the cut reply's row this restarts, so finishing it
+# can replace that partial sentence instead of repeating it.
+Plan = namedtuple("Plan", "spoken written lead_words replayed")
 
 # Long enough to answer someone at the door and come back to it, short enough
 # that a "go on" minutes later is not read as finishing a thought nobody holds.
@@ -124,7 +133,13 @@ def _after_lead(word):
 
 
 def speech(now=None):
-    """What to say to pick the reply back up, once, or None as take() would.
+    """What to say to pick the reply back up, once, or None as take() would."""
+    planned = plan(now)
+    return planned.spoken if planned else None
+
+
+def plan(now=None):
+    """How to pick the reply back up, once, as a Plan, or None as take() would.
 
     Restarts the sentence she was cut in, so he hears the thought start and not a
     fragment, and opens with a lead in only after a real gap. It chooses where to
@@ -138,21 +153,34 @@ def speech(now=None):
             return None
         text, sentence, kept_at, _ = held
         if sentence is None:
-            return text
+            return Plan(text, text, 0, 0)
         replay = sentence[_pick_up_at(sentence):]
         words = [*replay, *text.split()]
         if now - kept_at < LEAD_IN_AFTER_S:
-            return " ".join(words)
+            return Plan(" ".join(words), " ".join(words), 0, len(replay))
         # A sentence that opened on a lead in, cut again: that lead is dropped,
         # never stacked, and the new one must differ from it.
         avoid = set()
         if replay and replay[0] in LEADS:
             avoid.add(_bare(words.pop(0)))
         avoid.add(_bare(words[0]))
+        written = " ".join(words)
         lead = _next_lead(avoid)
         if not lead:
-            return " ".join(words)
-        return " ".join([lead, _after_lead(words[0]), *words[1:]])
+            return Plan(written, written, 0, len(replay))
+        spoken = " ".join([lead, _after_lead(words[0]), *words[1:]])
+        return Plan(spoken, written, len(lead.split()), len(replay))
+
+
+def attach(message_id):
+    """Point what is held at a different history row, if anything is held.
+
+    For a go on: the remainder of a cut resume is held before the go on saves its
+    reply, so it starts out pointing at the reply before that one."""
+    global _left
+    with _lock:
+        if _left is not None:
+            _left = (*_left[:3], message_id)
 
 
 def held(now=None):

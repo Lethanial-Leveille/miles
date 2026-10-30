@@ -489,6 +489,7 @@ def test_go_on_saves_both_sides_and_falls_back_when_nothing_played():
     said = ["Anyway, the rest."]
     scope = {"speak_what_was_left": lambda: said[0],
              "save_message": lambda role, text: saved.append((role, text)),
+             "resume": resume,
              "TurnResult": lambda text, dismissed: (text, dismissed),
              "print": lambda *a, **k: None}
     exec(compile(ast.Module([fn], []), "voice_main.py", "exec"), scope)
@@ -550,15 +551,17 @@ def test_a_stale_or_empty_hold_has_no_row():
 def amended(monkeypatch):
     calls = []
     monkeypatch.setattr(brain, "extend_message",
-                        lambda message_id, text, drop_suffix="": calls.append(
-                            (message_id, text, drop_suffix)))
+                        lambda message_id, text, drop_suffix="", drop_words=0: calls.append(
+                            (message_id, text, drop_suffix, drop_words)))
     return calls
 
 
 def test_finishing_after_a_stop_to_nothing_extends_the_cut_row(speaker, amended):
     resume.keep("seventy and sunny.", said=SAID, message_id=5)
     _, said = speaker(amend_history=True)
-    assert amended == [(5, "The high today is seventy, with a light breeze and seventy and sunny.", brain.CUT_OFF_MARK)]
+    # Ten words of SAID were restarted, so ten come off the row before the append.
+    assert amended == [(5, "The high today is seventy, with a light breeze and seventy and sunny.",
+                        brain.CUT_OFF_MARK, 10)]
     assert said == "The high today is seventy, with a light breeze and seventy and sunny."
 
 
@@ -611,3 +614,107 @@ def test_a_spoken_go_on_does_not_amend_because_it_saves_its_own_rows(speaker, am
     resume.keep("seventy and sunny.", said=SAID, message_id=5)
     speaker()
     assert amended == []
+
+
+# ── what history says afterwards: his approved examples 12 and 13 ──
+#
+# These read the final row, not the call that wrote it. The tests above that
+# checked the call passed while the row read "The high today is The high today
+# is seventy and sunny", and while a go on's cut reply was finished in the row
+# of the reply before it.
+
+MARK = brain.CUT_OFF_MARK
+GRANOLA_HEAD = "Granola's a mixed bag."
+GRANOLA_DONE = (f"{GRANOLA_HEAD} {GRANOLA_CUT_SENTENCE} "
+                "It works as an occasional thing, not a staple.")
+
+
+def _row(db, row_id):
+    import sqlite3
+    conn = sqlite3.connect(db.DB_PATH)
+    content = conn.execute("SELECT content FROM conversation_history WHERE id = ?",
+                           (row_id,)).fetchone()[0]
+    conn.close()
+    return content
+
+
+def _room(monkeypatch, cut_at=None):
+    """Fake synthesis and playback; cut_at interrupts that numbered request a
+    quarter of the way in. Returns what was sent to the voice."""
+    sent = []
+
+    def play(synthesis):
+        sent.append(synthesis.text)
+        return cut_at == len(sent), 0.0
+
+    monkeypatch.setattr(brain, "start_synthesis",
+                        lambda text, *a, **k: SimpleNamespace(text=text, heard_s=1.0,
+                                                              audio_s=4.0))
+    monkeypatch.setattr(brain, "_play_with_barge_in", play)
+    return sent
+
+
+def _go_on(db):
+    import ast
+    scope = {"speak_what_was_left": brain.speak_what_was_left,
+             "save_message": db.save_message, "resume": resume,
+             "TurnResult": lambda text, dismissed: text,
+             "print": lambda *a, **k: None}
+    exec(compile(ast.Module([_voice_main_function("_run_go_on")], []),
+                 "voice_main.py", "exec"), scope)
+    return scope["_run_go_on"]("Go on.")
+
+
+def _granola_cut(db, said=GRANOLA_SAID, kept_at=None):
+    row = db.save_message("assistant", f"{said} {MARK}")
+    resume.keep(GRANOLA_LEFT, said=said, message_id=row,
+                **({} if kept_at is None else {"now": kept_at}))
+    return row
+
+
+def test_13_finishing_replaces_the_partial_sentence_instead_of_repeating_it(
+        monkeypatch, db):
+    row = _granola_cut(db)
+    _room(monkeypatch)
+    brain.speak_what_was_left(amend_history=True)
+    assert _row(db, row) == GRANOLA_DONE
+
+
+def test_13_the_lead_in_is_spoken_but_never_written(monkeypatch, db):
+    import time
+    row = _granola_cut(db, kept_at=time.monotonic() - 40)
+    sent = _room(monkeypatch)
+    said = brain.speak_what_was_left(amend_history=True)
+    assert sent[0].startswith("Anyway, it's got oats"), "he hears the lead in"
+    assert _row(db, row) == GRANOLA_DONE, "history keeps only what she told him"
+    assert not said.startswith("Anyway")
+
+
+def test_13_cut_again_and_finished_the_row_still_reads_once(monkeypatch, db):
+    row = _granola_cut(db)
+    _room(monkeypatch, cut_at=1)
+    brain.speak_what_was_left(amend_history=True)
+    # A quarter of a sixteen word sentence: "It's got oats and".
+    assert _row(db, row) == f"{GRANOLA_HEAD} It's got oats and {MARK}"
+    _room(monkeypatch)
+    brain.speak_what_was_left(amend_history=True)
+    assert _row(db, row) == GRANOLA_DONE
+
+
+def test_12_a_go_on_reply_cut_again_is_finished_in_its_own_row(monkeypatch, db):
+    first = _granola_cut(db, said="Granola's a mixed bag. It's got oats and nuts, "
+                                  "which are solid,")
+    resume.keep("but most granola is heavy on sugar and oil. It works as an "
+                "occasional thing, not a staple.",
+                said="Granola's a mixed bag. It's got oats and nuts, which are solid,",
+                message_id=first)
+    _room(monkeypatch, cut_at=1)
+    _go_on(db)
+    go_on_row = first + 2       # his "Go on." and then her reply to it
+    assert _row(db, go_on_row) == f"It's got oats and {MARK}"
+    _room(monkeypatch)
+    brain.speak_what_was_left(amend_history=True)   # a cough, and she finishes
+    assert _row(db, first) == ("Granola's a mixed bag. It's got oats and nuts, "
+                               f"which are solid, {MARK}"), "the earlier reply is left alone"
+    assert _row(db, go_on_row) == (f"{GRANOLA_CUT_SENTENCE} "
+                                   "It works as an occasional thing, not a staple.")

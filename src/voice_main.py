@@ -13,6 +13,7 @@ import checkin
 import netcheck
 import phrasebank
 import presence
+import resume
 import timing
 import tts
 import actions
@@ -195,7 +196,9 @@ def _run_go_on(user_text):
         return None
     print("(local intent: go_on)", flush=True)
     save_message("user", user_text)
-    save_message("assistant", said)
+    # Cut again, what is still unsaid belongs to this reply, so a later stop to
+    # nothing finishes this row and not the one before it.
+    resume.attach(save_message("assistant", said))
     return TurnResult(text=said, dismissed=False)
 
 
