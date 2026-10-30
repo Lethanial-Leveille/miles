@@ -1163,6 +1163,37 @@ rescore this rule against the new model and keep it only if it still pays.
    wakes for him as often and falsely less; barge in reads the same model on
    channel 1, so check that column too.
 
+**Oct 27 to 30 2026: two cheaper fixes measured and set aside, and a bench to
+choose an engine with.** He reported her waking unasked. Oct 12 to 26 she woke
+76 times, nearly all room talk (his roommates by name); 39 recorded 30 seconds
+to an empty transcript, and the rest she mostly answered instead of calling
+ignore. Measured offline, nothing live:
+
+- **openWakeWord's custom verifier** (`openwakeword.custom_verifier_model`, a
+  logistic regression on the model's features at its peak frame, trained on his
+  154 labelled hits). Five fold cross validation, array era, verifier under 0.3:
+  cut 57 of 68 false wakes, lost 1 of his 37; kept all 31 woken `wake_eval`
+  quiet cues. **Set aside: it is speaker specific, and he wants guests to wake
+  her.** Every positive it learns from is his voice.
+- **Whisper on the 2.5s wake window**, chime only if it hears the name. 0 of 90
+  false wakes contain "nova", but base.en hears his phrase as "in over" or
+  "ain't over" and only 21 of 64 as "nova"; accepting "over" too kept 53 of 64
+  and let 2 false through, so it would lose one wake in six, and it costs about
+  1.1s before the chime. **Parked.** Deepgram with "Nova" as a keyterm is the
+  untested version; it sends the archived clips online, so ask first.
+
+`scripts/wake_bench.py` scores any engine on the same audio: `wake_eval` quiet
+takes (catches, and false wakes between cues), labelled hits (biased: every
+clip already fired the current model), and room audio under `data/room_audio`
+as false wakes per hour. Baseline, Oct 30: the live model caught 31 of 33 cued
+wakes with or without the gates, 0 false in 4.4 minutes; on hits the gates cut
+34 of 90 false and lost 2 of 64 his, both Seiren era. **Next:** a Porcupine
+"hey nova" from Picovoice's console through `--porcupine` (speaker independent,
+so guests still work); if it does not clearly win, the retrain above. Room
+audio is the only set that can show what a new engine falsely wakes on, and it
+holds his roommates' voices, so keeping it is his call. It needs capturing from
+inside `miles-voice`, which holds the mic.
+
 ### A log of her own gaps, for him to review (asked Sep 30 2026)
 
 He wants her to see what she could be better at. She cannot change her code and
