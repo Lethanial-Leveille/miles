@@ -228,7 +228,7 @@ def test_a_short_interruption_keeps_her_listening():
 
 # ── step 3: what she said before he cut in ──
 
-from interrupt_speech import HER_WORDS_PER_S, words_heard
+from interrupt_speech import HER_WORDS_PER_S, words_heard, words_unheard
 
 TEN = "one two three four five six seven eight nine ten"
 
@@ -244,6 +244,24 @@ def test_heard_by_her_pace_when_the_audio_had_not_all_arrived():
 def test_heard_never_more_than_was_said_nor_less_than_nothing():
     assert words_heard(TEN, heard_s=60.0) == TEN
     assert words_heard(TEN, heard_s=0.0, audio_s=4.0) == ""
+
+
+def test_unheard_is_what_is_left_after_the_cut():
+    assert words_unheard(TEN, heard_s=2.0, audio_s=4.0) == "six seven eight nine ten"
+    assert words_unheard(TEN, heard_s=1.0) == " ".join(TEN.split()[round(HER_WORDS_PER_S):])
+
+
+def test_unheard_is_everything_before_she_began_and_nothing_after_she_finished():
+    assert words_unheard(TEN, heard_s=0.0, audio_s=4.0) == TEN
+    assert words_unheard(TEN, heard_s=60.0) == ""
+
+
+def test_heard_and_unheard_always_rejoin_into_what_was_written():
+    """The reason they share one cut point: nothing said twice, nothing lost."""
+    for heard_s in (0.0, 0.4, 1.0, 2.5, 3.9, 4.0, 9.0):
+        for audio_s in (None, 4.0):
+            joined = f"{words_heard(TEN, heard_s, audio_s)} {words_unheard(TEN, heard_s, audio_s)}"
+            assert joined.split() == TEN.split()
 
 
 # ── her own echo is not him ──
