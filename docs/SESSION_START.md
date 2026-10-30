@@ -1619,11 +1619,46 @@ remainder an empty recording is about to need.
 **Tool turns.** Both routers share one record. A cut during the lead in keeps
 the follow up answer that was collected and never played.
 
-**Open, left for the change that speaks it:** the remainder starts mid sentence
-("count alone matters little"). Resuming from the start of the cut sentence may
-sound more natural than from the cut word; `_Heard.tail` is kept apart from the
-later sentences so either can be chosen. The same question applies to a cut lead
-in: "me check. It is sunny" is a fragment before an answer.
+**Where it starts was open, and is decided below** ("Where a resume starts").
+A cut lead in is the same case: "me check. It is sunny" is a fragment before an
+answer, and the rewind covers it.
+
+### Where a resume starts (Oct 30 2026) (DONE, nothing calls it yet)
+
+`resume.speech()`, `resume.keep(text, said=...)`, `_Heard.said()`.
+
+**Not the cut word, and not the sentence start.** The cut word is a fragment
+("count alone matters little"). The sentence start can mean repeating twenty
+words he already heard. The rule sits between: back up to a clause boundary
+within a few words of the cut, so he hears the thought begin and nothing more.
+
+**A boundary is** the word after a comma, a full stop, `?`, `!`, `;` or `:`, or
+the words "and", "but" and "so", or the end of what she said when she was cut
+just after one of those marks. **The window grows with the gap since the cut:**
+4 words up to 10 seconds, 6 up to 30, 8 up to 60, 10 beyond (`REWIND_BY_GAP_S`).
+A longer silence means he has lost more of the thought. With no boundary in
+range it backs up the whole window. **No reordering and no model call:** the
+words are hers, in order, and only the starting point is chosen.
+
+**What is kept to make that possible.** `keep()` stores her last
+`SAID_KEPT_WORDS` (10) words, the most a resume can ever back up. Nothing earlier
+is needed, so nothing earlier is held. **Rejected:** keeping a flag for whether
+those words are all of her reply, to treat its first word as a sentence start. The
+fallback lands on the same word either way, so the flag decided nothing.
+
+**The lead in rotates** through "Anyway,", "So,", "As I was saying," so two
+resumes in a row do not open alike, and skips one that would double the first
+word it introduces (no "So, so"). With nothing said before the cut there is no
+lead in: she has nothing to pick back up.
+
+**The gap is measured from when the remainder was kept**, which is when her turn
+ended, seconds after the cut. That is close enough for a window measured in tens
+of seconds.
+
+**Not verified by ear.** Nobody has heard it. The tests check which words come
+back, not whether the phrasing sounds natural through the voice. The rotation
+state and the window steps are first guesses, and the place to tune them is a
+real cut on the Pi.
 
 **Not verified on the Pi.** The tests run against fakes. The suite in the cloud
 checkout is 1364 passing, 4 failing and 6 erroring, and all ten are missing

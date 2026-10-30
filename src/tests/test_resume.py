@@ -15,6 +15,7 @@ from tools import registry
 @pytest.fixture(autouse=True)
 def nothing_held():
     resume.clear()
+    resume._lead_next = 0
     yield
     resume.clear()
 
@@ -65,6 +66,71 @@ def test_clear_lets_go_of_it():
     resume.keep("old.", now=0.0)
     resume.clear()
     assert resume.take(now=1.0) is None
+
+
+# ── where a resume starts ──
+
+SAID = "The high today is seventy, with a light breeze and"
+
+
+def _resume(said, left="the rest.", gap=0.0):
+    resume.keep(left, said=said, now=0.0)
+    return resume.speech(now=gap)
+
+
+def test_it_backs_up_to_the_nearest_clause_word_and_leads_in():
+    # Four words back covers "a light breeze and"; "and" is the nearest boundary.
+    assert _resume(SAID, "seventy and sunny.") == "Anyway, and seventy and sunny."
+
+
+def test_it_backs_up_to_the_word_after_a_comma():
+    assert _resume("The high today is seventy, with a light") == \
+        "Anyway, with a light the rest."
+
+
+def test_a_cut_right_after_a_comma_needs_no_backing_up():
+    assert _resume("The high today is seventy,") == "Anyway, the rest."
+
+
+def test_a_cut_after_a_full_stop_starts_the_next_sentence_clean():
+    assert _resume("It is sunny. Bring sunglasses.") == "Anyway, the rest."
+
+
+def test_with_no_boundary_in_range_it_backs_up_the_whole_window():
+    assert _resume("one two three four five six", gap=0.0) == \
+        "Anyway, three four five six the rest."
+
+
+def test_a_longer_gap_backs_up_further():
+    said = "Step count alone matters little for gaining muscle on a lift"
+    near = _resume(said, gap=5.0)
+    far = _resume(said, gap=45.0)
+    assert len(far.split()) - len(near.split()) == 4
+
+
+def test_it_never_backs_up_past_what_it_kept():
+    said = "a b c d e f g h i j k l m n o p"
+    out = _resume(said, left="END", gap=100.0)
+    assert out == "Anyway, " + " ".join(said.split()[-resume.SAID_KEPT_WORDS:]) + " END"
+
+
+def test_the_lead_in_rotates_and_never_doubles_the_first_word():
+    leads = [_resume("one two three four five six").split()[0] for _ in range(3)]
+    assert len(set(leads)) == 3, "three resumes in a row should not open the same way"
+    resume._lead_next = 1       # the next lead is "So,"
+    assert _resume("The high is seventy, so") == "As I was saying, so the rest."
+
+
+def test_nothing_said_before_the_cut_means_no_lead_in():
+    assert _resume("", left="Step count matters.") == "Step count matters."
+
+
+def test_it_is_said_once_and_goes_stale_like_take():
+    resume.keep("the rest.", said=SAID, now=0.0)
+    assert resume.speech(now=1.0) is not None
+    assert resume.speech(now=2.0) is None
+    resume.keep("the rest.", said=SAID, now=0.0)
+    assert resume.speech(now=resume.RESUME_WINDOW_S + 1) is None
 
 
 # ── a whole turn ──
@@ -188,3 +254,11 @@ def test_a_cut_during_the_lead_in_keeps_the_answer_he_never_heard(turn):
     turn(_FakeStream(["Let me check."], [weather]),
          _FakeStream(["It is sunny. Bring sunglasses."]), cut_first=True)
     assert resume.take() == "me check. It is sunny. Bring sunglasses."
+
+
+def test_a_cut_reply_keeps_the_word_she_did_say(turn):
+    turn(_FakeStream(THREE), cut_first=True)
+    out = resume.speech()
+    # "Step" was heard and is the start of the reply, so it is replayed.
+    assert out == ("Anyway, Step count alone matters little. You lift four days a week. "
+                   "Recovery matters more.")

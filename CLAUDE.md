@@ -126,7 +126,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
-│   ├── resume.py              # what she had left to say when he cut her off, held for a go on
+│   ├── resume.py              # what she had left to say when he cut her off, held for a go on, and where to start it
 │   ├── timing.py              # Per turn latency instrumentation
 │   ├── brain.py               # ask_nova orchestrator
 │   ├── auth.py                # JWT + bcrypt password hashing
@@ -526,7 +526,8 @@ Landed since v0.7.1, unreleased:
 - Barge in: "hey nova" over her stops her mid sentence; so does any speech of
   his, and what he said is kept and answered as the next turn
 - What a cut reply had left to say is kept for two minutes (`resume.py`), ready
-  for a "go on". Kept only; nothing speaks it yet
+  for a "go on", with the line that picks it up (backs up to a clause, rotated
+  lead in). Built only; nothing speaks it yet
 
 ## What Is Next
 
