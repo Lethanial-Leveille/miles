@@ -254,7 +254,7 @@ Then test:
 cd src && python3 -m pytest tests/ -q
 ```
 
-Measured Oct 30 2026 in a clone with no `.env` and an empty home: 1423 pass,
+Measured Oct 30 2026 in a clone with no `.env` and an empty home: 1447 pass,
 6 skip, the same as on the Pi. The six are in `test_speculation.py` and import
 `audio.py`, which opens the mic and loads `models/hey_nova.onnx`; they skip
 without the model, and on the Pi while `miles-voice` holds the mic. Any
