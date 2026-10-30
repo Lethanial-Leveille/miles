@@ -132,7 +132,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1355 passing, 6 skipped, Oct 12 2026)
+│   └── tests/                 # pytest suite (1343 passing, 6 skipped, Oct 30 2026)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -182,6 +182,8 @@ warnings it cost before Sep 6 2026, is in
 ├── build/                     # Temp WAV files (gitignored)
 ├── whisper.cpp/               # Compiled from source (gitignored)
 ├── .env                       # Password hash, JWT secret, API keys (gitignored)
+├── requirements.txt           # pip packages, pinned to what runs on the Pi
+├── requirements-dev.txt       # requirements.txt plus pytest; what a cloud session installs
 ├── README.md                  # Public facing project description
 └── CLAUDE.md
 ```
@@ -207,6 +209,47 @@ tmux new -s miles
 # Ctrl+B then D                # detach
 tmux attach -t miles           # reattach
 ```
+
+## Cloud Sessions
+
+A cloud session (Claude Code on the web) gets a fresh clone and nothing
+gitignored: no `.env`, `models/`, `data/`, `build/` or `whisper.cpp/`, and no
+mic, speaker, radar or systemd. So it can read, edit, test and push code, and
+it cannot run Nova. Anything that changes the Pi happens on the Pi, with
+`scripts/deploy.sh`.
+
+The environment's setup script, pasted into its settings on claude.ai, installs
+everything before the session starts. This is the versioned copy; when a torch
+pin changes in `requirements.txt`, change it here and there too:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+# the clone is either the working directory or a folder named miles inside it
+[ -f requirements-dev.txt ] || cd miles
+# root needs no sudo; any other user does
+SUDO=""; [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+# PyAudio compiles against PortAudio's headers
+$SUDO apt-get update -qq && $SUDO apt-get install -y -qq portaudio19-dev
+# allow pip on a distro managed Python; a pip too old to know it ignores it
+export PIP_BREAK_SYSTEM_PACKAGES=1
+# torch's CPU build first: the default x86 wheel pulls gigabytes of CUDA
+python3 -m pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+# everything else; the torch pins are already met, so pip skips them
+python3 -m pip install -r requirements-dev.txt
+```
+
+Then test:
+
+```bash
+cd src && python3 -m pytest tests/ -q
+```
+
+Measured Oct 30 2026 in a clone with no `.env` and an empty home: 1339 pass.
+Ten tests fail there and pass on the Pi, both for gitignored files, not code:
+the six in `test_speculation.py` load `models/hey_nova.onnx` (on the Pi they
+skip while `miles-voice` holds the mic), and four in `test_local_intent.py`
+need the rendered phrase WAVs in `data/phrases`. Anything else failing is real.
 
 ## Key Config Values
 
