@@ -1584,11 +1584,11 @@ is retraining the model; see
 [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#on-the-array-oct-2-2026-still-no-threshold).
 
 
-### What a cut reply had left to say is kept (Oct 30 2026) (DONE, nothing speaks it yet)
+### What a cut reply had left to say is kept (Oct 30 2026) (DONE)
 
 `resume.py`, `_Heard.remainder`, a record on `StreamRouter`, `words_unheard`.
-Nothing says the remainder yet; that is the next change, and the order below is
-why this one went first. Tests are in `test_resume.py`.
+This was built first, kept and not spoken, and the two entries after it say it.
+Tests are in `test_resume.py`.
 
 **The record is taken at the router, not the consumer.** The consumer stops
 reading the moment he cuts in and its feeder is cancelled holding whatever it
@@ -1623,7 +1623,7 @@ the follow up answer that was collected and never played.
 A cut lead in is the same case: "me check. It is sunny" is a fragment before an
 answer, and the rewind covers it.
 
-### Where a resume starts (Oct 30 2026) (DONE, nothing calls it yet)
+### Where a resume starts (Oct 30 2026) (DONE)
 
 `resume.speech()`, `resume.keep(text, said=...)`, `_Heard.said()`.
 
@@ -1654,6 +1654,34 @@ lead in: she has nothing to pick back up.
 **The gap is measured from when the remainder was kept**, which is when her turn
 ended, seconds after the cut. That is close enough for a window measured in tens
 of seconds.
+
+### A stop that came to nothing resumes by itself (Oct 30 2026) (DONE)
+
+`brain.speak_what_was_left()`, `voice_main.resume_after_empty_stop()`.
+
+**"No real speech" is the two checks the loop already had, not a new one.** A
+transcript `is_noise_transcript` rejects, or `verify_voice` returning `NO_AUDIO`
+(too little voiced audio). Both were already "still listening" branches for a
+recording that follows a stop. The second answers the worry about whisper: when
+Deepgram fails, whisper can write plausible words over silence, so the
+transcript looks real, but the voiced time is still tiny and `NO_AUDIO` fires.
+**Rejected:** a new word count or confidence test, which would be a third
+definition of nothing alongside these two.
+
+**She speaks it through the reply consumer.** `_tts_consumer`, so the first
+sentence starts at once and he can cut in on it. If he does, what is still
+unsaid is held again from what that attempt got through, with a fresh `said`.
+**Rejected:** `tts.speak(line)`, which plays all of it as one request (a long
+wait for first audio) and cannot be interrupted, so a second tap would cost him
+the rest of the answer, the exact loss this change exists to prevent.
+
+**No Claude call.** They are her own words, and a call would cost latency and
+let her rephrase instead of finish.
+
+**Known gap: her history.** It still ends at "[You were cut off here.]" for the
+first attempt, so the next turn's Claude does not know she finished. Left
+because saving the resumed text means deciding how a resumed reply sits in
+history beside the cut one, which is a change of its own.
 
 **Not verified by ear.** Nobody has heard it. The tests check which words come
 back, not whether the phrasing sounds natural through the voice. The rotation

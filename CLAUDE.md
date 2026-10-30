@@ -367,7 +367,7 @@ of the value itself.
 - `BARGE_IN_STOP_DIR = ~/miles/data/barge_in_stops`, `BARGE_IN_STOP_MAX_FILES = 100`
   (the audio behind every stop, so a false one can be heard)
 - `RESUME_WINDOW_S = 120` (in `resume.py`, not `config.py`; since Oct 30 2026. How
-  long the unsaid part of a cut reply is held. Nothing speaks it yet. Why:
+  long the unsaid part of a cut reply is held, and the longest a resume waits. Why:
   [BACKEND_TODO.md](docs/BACKEND_TODO.md#resuming-a-reply-he-cut-off-partly-built-oct-30-2026))
 
 ### Model and prompt — why: [BRAIN.md](docs/BRAIN.md)
@@ -527,7 +527,8 @@ Landed since v0.7.1, unreleased:
   his, and what he said is kept and answered as the next turn
 - What a cut reply had left to say is kept for two minutes (`resume.py`), ready
   for a "go on", with the line that picks it up (backs up to a clause, rotated
-  lead in). Built only; nothing speaks it yet
+  lead in). A stop followed by noise or too short a recording says it by itself;
+  not yet heard on the Pi
 
 ## What Is Next
 

@@ -21,7 +21,7 @@ import speculative_turn
 from tools import registry, permits
 from database import latest_message_id
 import wake_gate
-from brain import ask_nova, TurnResult
+from brain import ask_nova, speak_what_was_left, TurnResult
 from database import init_db, log_wake_near_miss, save_message
 from parsing import is_noise_transcript, split_after_wake_phrase
 from config import (CHUNK, WAKE_THRESHOLD, WAKE_LOG_FLOOR, MAX_FOLLOWUP_TURNS,
@@ -177,6 +177,20 @@ def _local_allowed(match, tier):
     except Exception:
         return True
     return permits(spec, tier)
+
+
+def resume_after_empty_stop():
+    """She was stopped and what followed was not speech: finish her sentence.
+
+    Returns the interruption that cut the resumed speech, or None. It is claimed
+    here, as after any reply, because he may cut in on this too and the next
+    recording must start from what he said."""
+    if not speak_what_was_left():
+        return None
+    interruption = audio.claim_interruption()
+    if interruption is None:
+        audio.flush_input()
+    return interruption
 
 
 def run_turn(text, named=False, tier=None, conversation_start=None, followup=False):
@@ -498,6 +512,7 @@ try:
                         # in silence; a cough that cut her off just times out.
                         print(f"Nothing usable in his interruption ({followup_text!r}); "
                               "still listening.", flush=True)
+                        interruption = resume_after_empty_stop()
                         continue
                     print(f"No speech detected (transcript: {followup_text!r}). "
                           "Returning to wake word.\n", flush=True)
@@ -548,6 +563,7 @@ try:
                         # for him, so she keeps listening for the rest.
                         print("His interruption was too short to answer; still listening.",
                               flush=True)
+                        interruption = resume_after_empty_stop()
                         continue
                     print("Nothing to verify. Returning to wake word.\n", flush=True)
                     break

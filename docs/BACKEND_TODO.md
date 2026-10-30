@@ -1048,19 +1048,17 @@ Pi at all, and a "go on" is wanted anyway.
 
 **Built:** the unsaid part of a cut reply is kept for two minutes in `resume.py`.
 The rule for what it holds and what lets go of it is in the
-[decision log](SESSION_START.md#what-a-cut-reply-had-left-to-say-is-kept-oct-30-2026-done-nothing-speaks-it-yet).
+[decision log](SESSION_START.md#what-a-cut-reply-had-left-to-say-is-kept-oct-30-2026-done).
 
-**Also built, not yet called:** what to say. `resume.speech()` backs up to a
-clause boundary and opens with a short rotated lead in; the rule and why are in
-the decision log under "Where a resume starts".
+**Also built:** what to say, and saying it after a stop that came to nothing.
+`resume.speech()` backs up to a clause boundary with a rotated lead in, and
+`voice_main` speaks it when the recording after a stop is noise or too short to be
+speech. The rules and why are in the decision log under "Where a resume starts"
+and "A stop that came to nothing resumes by itself".
 
 **Not built, in order:**
-1. **Resume by itself when a stop came to nothing.** When the recording after a
-   stop holds no real speech (Deepgram returns no words), `voice_main` takes
-   `resume.speech()` and speaks it, with no Claude call. This is what makes a tap
-   harmless. **Decide first** what "no real speech" means when Deepgram has failed
-   and whisper is the floor, since whisper fills silence with plausible words
-   ([AUDIO_PIPELINE.md](AUDIO_PIPELINE.md)).
+1. **Her history after a resume.** It still ends at the cut off mark, so the next
+   turn does not know she finished.
 2. **"Go on" as a local intent.** "Go on", "continue", "keep going" matched in
    `local_intent.py`, the remainder spoken with no Claude call. It must decline
    when nothing is held, so the words fall through to Claude. **Decide:** when he
@@ -1068,8 +1066,8 @@ the decision log under "Where a resume starts".
    only when "go on" is all he said; anything more is a new turn she answers.
 3. **Tune the barge in floor from labelled stops.** Needs the Pi: listen to
    `data/barge_in_stops`, label the false ones, replay them through
-   `SpeechOnset`. Do it after 1, so the number being tuned is a cost of a short
-   pause and no longer a lost answer.
+   `SpeechOnset`. Do it after the resume is heard working on the Pi, so the
+   number being tuned is a cost of a short pause and no longer a lost answer.
 
 ### Wakes while he is away (planned, Oct 30 2026)
 
