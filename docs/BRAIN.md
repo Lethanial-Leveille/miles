@@ -262,6 +262,15 @@ the first real command.
 would leave "set a timer for ten minutes" then "make it fifteen instead" reaching
 Claude as a follow up whose subject it never saw.
 
+**"Go on" is the second exception** (Oct 30 2026). `go_on` matches here and is
+never executed here: finishing a reply has to go through the reply consumer so
+he can cut in on it, which a fixed sentence handed to `_run_local` cannot do.
+`run_turn` calls `_run_go_on` instead. The gate passes only when the **whole**
+transcript is "go on", "continue", "keep going" or a "please" variant, and only
+while a remainder is held (`resume.held()`, which does not consume it).
+Declining sends it to Claude, who has the conversation. The reasoning is in
+[SESSION_START.md](SESSION_START.md#go-on-is-a-local-intent-oct-30-2026-done).
+
 **Weather is the exception to every rule in this section.** Added Aug 13 2026.
 
 It is the only local intent whose answer is composed rather than chosen, so it

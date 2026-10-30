@@ -170,6 +170,11 @@ def _local_allowed(match, tier):
     so a guest's match runs locally only if its tool is allowed at that tier, or
     it is not a tool at all, like the time of day. Otherwise Claude answers, and
     the gate says it is his to grant."""
+    if match.name == "go_on":
+        # Not a tool, so the check below would let it through. What she had left
+        # may be his: she was reading his calendar when he was cut off, and a
+        # guest saying "go on" must not make her finish it.
+        return tier is None
     if tier is None:
         return True
     try:
@@ -177,6 +182,21 @@ def _local_allowed(match, tier):
     except Exception:
         return True
     return permits(spec, tier)
+
+
+def _run_go_on(user_text):
+    """He asked her to go on and something is held: finish it. None if nothing
+    played, so Claude answers instead of leaving him in silence.
+
+    Saves both sides for the reason _run_local does, and the assistant side is
+    what she actually got through, so a second cut in is marked as one."""
+    said = speak_what_was_left()
+    if not said:
+        return None
+    print("(local intent: go_on)", flush=True)
+    save_message("user", user_text)
+    save_message("assistant", said)
+    return TurnResult(text=said, dismissed=False)
 
 
 def resume_after_empty_stop():
@@ -219,7 +239,11 @@ def run_turn(text, named=False, tier=None, conversation_start=None, followup=Fal
         # the hole this function was written to close.
         match = local_intent.classify(text)
         if match is not None and _local_allowed(match, tier):
-            return _run_local(match, text)
+            if match.name != "go_on":
+                return _run_local(match, text)
+            result = _run_go_on(text)
+            if result is not None:
+                return result
         return ask_nova(text, speculation=speculation, named=named, tier=tier,
                         followup=followup,
                         conversation_start=conversation_start)

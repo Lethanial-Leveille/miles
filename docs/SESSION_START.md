@@ -1683,6 +1683,47 @@ first attempt, so the next turn's Claude does not know she finished. Left
 because saving the resumed text means deciding how a resumed reply sits in
 history beside the cut one, which is a change of its own.
 
+### "Go on" is a local intent (Oct 30 2026) (DONE)
+
+`local_intent._gate_go_on`, `voice_main._run_go_on`, `resume.held()`.
+
+**Resume only when "go on" is all he said.** The gate matches the whole
+normalized transcript against a handful of phrases. "Go on and set a timer" and
+"go on, what about Friday" are new requests, and a new request is answered, not
+used as permission to finish the old reply. It was the
+suggestion in BACKEND_TODO, and he asked for it as the rule.
+
+**It declines when nothing is held**, checked with `resume.held()`, which does not
+take the remainder: classifying must not use it up, because a gate that spends
+what it checks would make the second classification of the same words fail.
+Declined, the words reach Claude, who has the conversation and can ask what he
+means.
+
+**It is not executed by `execute()`.** Every other intent returns a fixed sentence
+for `_run_local` to play. Finishing a reply has to go through the reply consumer
+so he can cut in on it, so `run_turn` hands `go_on` to `_run_go_on`. If nothing
+actually played (the window ended between classify and speaking, or synthesis
+failed) it returns None and Claude answers, rather than leaving him in silence.
+
+**History is written for this one.** "go on" and what she actually got through are
+saved, for the reason `_run_local` gives: otherwise the next turn sees a "go on"
+whose subject it never saw. If he cuts in again the saved text ends in the cut off
+mark, as any cut reply does. This closes the history gap for a spoken "go on";
+the automatic resume after a stop to nothing still leaves it open, since it has
+no turn of his to attach to.
+
+**Guests cannot use it.** Local intents skip the permission gate, and
+`_local_allowed` let anything unregistered through. What she had left may be his
+(she was reading his calendar when cut off), so `go_on` runs locally only when
+`tier is None`, a verified him. A guest's "go on" goes to Claude at the guest tier.
+The automatic resume after a stop has no such check and does not need one: it
+finishes what she was already saying aloud in the room.
+
+**Not verified on the Pi or by ear.** The embedding half is stubbed in the tests,
+as in `test_local_intent.py`; only the gate and the wiring are asserted. Whether
+real "go on" transcripts clear `INTENT_SIMILARITY_THRESHOLD` against the four
+examples has not been measured.
+
 **Not verified by ear.** Nobody has heard it. The tests check which words come
 back, not whether the phrasing sounds natural through the voice. The rotation
 state and the window steps are first guesses, and the place to tune them is a

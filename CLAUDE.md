@@ -111,7 +111,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── spoken_archive.py      # keeps each spoken reply as heard, with the text sent
 │   ├── phrasebank.py          # Pre rendered Victoria, played from disk, no network
 │   ├── netcheck.py            # Why a network call failed, answered locally
-│   ├── local_intent.py        # Answer timers and dismiss without Claude
+│   ├── local_intent.py        # Answer timers, dismiss and a bare go on without Claude
 │   ├── stream_router.py       # Delta buffering, sentence flush
 │   ├── tools.py               # Tool registry, @tool decorator, schema generation
 │   ├── memory_tool.py         # remember tool, with supersede and expiry
@@ -527,8 +527,9 @@ Landed since v0.7.1, unreleased:
   his, and what he said is kept and answered as the next turn
 - What a cut reply had left to say is kept for two minutes (`resume.py`), ready
   for a "go on", with the line that picks it up (backs up to a clause, rotated
-  lead in). A stop followed by noise or too short a recording says it by itself;
-  not yet heard on the Pi
+  lead in). A stop followed by noise or too short a recording says it by itself,
+  and a bare "go on" from him says it on request (a guest's does not); not yet
+  heard on the Pi
 
 ## What Is Next
 

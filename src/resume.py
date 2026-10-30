@@ -122,6 +122,16 @@ def speech(now=None):
         return " ".join([_next_lead(first), *replay, text]).strip()
 
 
+def held(now=None):
+    """Whether speech() would say something right now, without taking it.
+
+    For a gate that has to decide whether a "go on" means anything before the
+    turn is committed to the local path."""
+    now = time.monotonic() if now is None else now
+    with _lock:
+        return _left is not None and now - _left[2] <= RESUME_WINDOW_S
+
+
 def clear():
     """The conversation moved on: a "go on" now would not mean the old reply."""
     global _left

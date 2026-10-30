@@ -287,17 +287,17 @@ def speaker(monkeypatch):
 
 def test_nothing_held_means_she_says_nothing(speaker):
     sent, spoke = speaker()
-    assert spoke is False and sent == []
+    assert spoke == "" and sent == []
 
 
 def test_she_finishes_the_reply_from_a_clause_and_says_it_once(speaker):
     resume.keep("seventy and sunny. Bring sunglasses.", said=SAID)
     sent, spoke = speaker()
-    assert spoke is True
+    assert spoke == "Anyway, and seventy and sunny. Bring sunglasses.", "what she said"
     assert sent[0] == "Anyway, and seventy and sunny."
     assert "Bring sunglasses." in " ".join(sent)
     assert resume.take() is None, "a second stop to nothing must not repeat it"
-    assert speaker()[1] is False
+    assert speaker()[1] == ""
 
 
 def test_the_first_sentence_goes_out_on_its_own(speaker):
@@ -336,3 +336,109 @@ def test_a_stop_to_nothing_never_calls_claude():
     source = (pathlib.Path(__file__).resolve().parent.parent / "voice_main.py").read_text()
     helper = source[source.index("def resume_after_empty_stop"):source.index("def run_turn")]
     assert "ask_nova" not in helper and "run_turn" not in helper
+
+
+# ── "go on", said by him ──
+
+import local_intent as li
+
+
+@pytest.fixture
+def sure(monkeypatch):
+    """The semantic half stubbed, as test_local_intent does: what is under test
+    is the gate, which is exact."""
+    monkeypatch.setattr(li, "_scores", lambda text: {n: 1.0 for n in li.EXAMPLES})
+
+
+@pytest.mark.parametrize("text", ["go on", "Go on.", "keep going", "continue",
+                                  "please go on", "Go on, please"])
+def test_go_on_alone_resumes_when_something_is_held(text, sure):
+    resume.keep("the rest.", said=SAID)
+    match = li.classify(text)
+    assert match is not None and match.name == "go_on", text
+
+
+def test_classifying_does_not_use_up_what_is_held(sure):
+    resume.keep("the rest.", said=SAID)
+    li.classify("go on")
+    li.classify("go on")
+    assert resume.speech() is not None, "only speaking it may consume it"
+
+
+@pytest.mark.parametrize("text", ["go on", "keep going", "continue"])
+def test_go_on_with_nothing_held_goes_to_claude(text, sure):
+    assert li.classify(text) is None
+
+
+def test_go_on_after_the_window_goes_to_claude(sure, monkeypatch):
+    resume.keep("the rest.", said=SAID, now=0.0)
+    monkeypatch.setattr(resume.time, "monotonic", lambda: resume.RESUME_WINDOW_S + 1)
+    assert li.classify("go on") is None
+    monkeypatch.setattr(resume.time, "monotonic", lambda: resume.RESUME_WINDOW_S)
+    assert li.classify("go on") is not None, "the last second of the window still counts"
+
+
+@pytest.mark.parametrize("text", [
+    "go on and set a timer for ten minutes",
+    "go on what about friday",
+    "wait go on",
+    "no go on to the next one",
+    "continue with the second point",
+    "keep going straight",
+])
+def test_anything_more_than_go_on_is_a_new_turn(text, sure):
+    """He said more than the continuation, so she answers him instead."""
+    resume.keep("the rest.", said=SAID)
+    match = li.classify(text)
+    assert match is None or match.name != "go_on", text
+
+
+def test_the_semantic_half_must_agree_too(monkeypatch):
+    monkeypatch.setattr(li, "_scores", lambda text: {n: 0.0 for n in li.EXAMPLES})
+    resume.keep("the rest.", said=SAID)
+    assert li.classify("go on") is None
+
+
+def _voice_main_function(name):
+    import ast
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parent.parent / "voice_main.py"
+    tree = ast.parse(src.read_text())
+    return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def test_a_guest_cannot_make_her_finish_what_may_be_his():
+    import ast
+    fn = _voice_main_function("_local_allowed")
+    scope = {"registry": SimpleNamespace(get=lambda name: 1 / 0),
+             "permits": lambda spec, tier: True}
+    exec(compile(ast.Module([fn], []), "voice_main.py", "exec"), scope)
+    allowed = scope["_local_allowed"]
+    go_on = SimpleNamespace(name="go_on")
+    assert allowed(go_on, None) is True
+    assert allowed(go_on, "genin") is False
+
+
+def test_go_on_saves_both_sides_and_falls_back_when_nothing_played():
+    import ast
+    fn = _voice_main_function("_run_go_on")
+    saved = []
+    said = ["Anyway, the rest."]
+    scope = {"speak_what_was_left": lambda: said[0],
+             "save_message": lambda role, text: saved.append((role, text)),
+             "TurnResult": lambda text, dismissed: (text, dismissed),
+             "print": lambda *a, **k: None}
+    exec(compile(ast.Module([fn], []), "voice_main.py", "exec"), scope)
+    run = scope["_run_go_on"]
+    assert run("go on") == ("Anyway, the rest.", False)
+    assert saved == [("user", "go on"), ("assistant", "Anyway, the rest.")]
+    saved.clear()
+    said[0] = ""
+    assert run("go on") is None and saved == [], "Claude answers, and nothing was invented"
+
+
+def test_run_turn_hands_go_on_to_the_resume_not_the_fixed_sentence_path():
+    import ast
+    body = ast.unparse(_voice_main_function("run_turn"))
+    assert "_run_go_on(text)" in body
+    assert body.index("match.name != 'go_on'") < body.index("_run_local(match, text)")
