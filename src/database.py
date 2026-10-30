@@ -744,6 +744,32 @@ def _migration_032_hevy_restores(conn):
     conn.execute("ALTER TABLE hevy_progressions ADD COLUMN kind TEXT NOT NULL DEFAULT 'raise'")
 
 
+def _migration_033_push_devices(conn):
+    """The phones that get a push, one row per APNs device token.
+
+    environment is kept per row because a token only works against the APNs
+    host it was issued by. A build run from Xcode gets a sandbox token and a
+    TestFlight build gets a production one, and a token sent to the wrong host
+    is refused as BadDeviceToken. Storing which one the app reported lets both
+    builds exist at once, which they do the day TestFlight is installed beside
+    the Xcode build.
+
+    A refused token is marked inactive, not deleted: the app registers again on
+    every launch, and that flips it back on without a second row appearing."""
+    conn.execute("""
+        CREATE TABLE push_devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,
+            environment TEXT NOT NULL,
+            device_name TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            registered_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            last_failure TEXT
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -777,6 +803,7 @@ MIGRATIONS = [
     (30, _migration_030_hevy_progressions),
     (31, _migration_031_checkin_log),
     (32, _migration_032_hevy_restores),
+    (33, _migration_033_push_devices),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -2062,5 +2089,70 @@ def active_reminder_count(kind=None):
         return conn.execute(
             "SELECT COUNT(*) FROM reminders WHERE completed = 0 AND kind = ?",
             (kind,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+# ── Push devices ──
+
+def save_push_device(token, environment, device_name=None):
+    """Remember a phone's APNs token, or wake one that was marked dead.
+
+    Upsert on the token, so the app can call this on every launch. Apple says a
+    token can change, never that it will not, and the launch call is how a new
+    one reaches this table."""
+    now = datetime.now().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("""
+            INSERT INTO push_devices (token, environment, device_name, registered_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(token) DO UPDATE SET
+                environment = excluded.environment,
+                device_name = excluded.device_name,
+                active = 1,
+                last_seen_at = excluded.last_seen_at,
+                last_failure = NULL
+        """, (token, environment, device_name, now, now))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def active_push_devices():
+    """(token, environment) for every phone that should get a push."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT token, environment FROM push_devices WHERE active = 1 ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def deactivate_push_device(token, reason):
+    """Stop sending to a token APNs refused, and keep why.
+
+    Kept rather than deleted so a phone that only needs to register again
+    comes back as the same row, and so the reason is on hand when a push that
+    should have arrived did not."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "UPDATE push_devices SET active = 0, last_failure = ? WHERE token = ?",
+            (reason, token))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_push_device(token):
+    """Forget a token outright. A phone that signs out asks for this, so a
+    handset that is no longer his stops receiving what Nova says."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute("DELETE FROM push_devices WHERE token = ?", (token,))
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()

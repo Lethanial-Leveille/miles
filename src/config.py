@@ -1093,3 +1093,34 @@ FOLLOWUP_TIMEOUT = 3.0
 # "we're good") are ordinary mid conversation utterances that would have ended
 # a session by accident. Nova now recognizes the intent and emits
 # [ACTION: dismiss]; see prompts.py.
+
+
+# ── Push notifications, through Apple's push service (APNs) ──
+#
+# Reminders and timers used to be heard only in his room. With these set, the
+# poller also sends them to his phone. The whole feature is off until the three
+# variables below are in .env, and a send with any of them missing is skipped,
+# so the Pi runs exactly as it did before the Apple Developer Program.
+#
+# APNS_TEAM_ID  developer.apple.com, Membership details. Not assumed from the
+#               Xcode project: that value is whatever team the app was last
+#               signed with, and enrolling can change it.
+# APNS_KEY_ID   the ten character id of the key made under Certificates, IDs
+#               and Profiles, Keys, with Apple Push Notifications ticked.
+# APNS_KEY_PATH where its AuthKey_XXXX.p8 file sits. Apple lets it be
+#               downloaded once, and the file is a secret, so it stays out of
+#               the repo (*.p8 is gitignored).
+PUSH_NOTIFICATIONS = True
+APNS_TEAM_ID       = os.environ.get("APNS_TEAM_ID")
+APNS_KEY_ID        = os.environ.get("APNS_KEY_ID")
+APNS_KEY_PATH      = os.environ.get("APNS_KEY_PATH")
+# The topic APNs routes by. It has to equal the app's bundle identifier.
+APNS_BUNDLE_ID     = os.environ.get("APNS_BUNDLE_ID", "com.Lethanial.Nova")
+# What gets a push. A timer set by voice is also heard in the room, and a
+# kitchen timer buzzing a phone in another room is still the point of a timer.
+PUSH_KINDS         = ("reminder", "timer")
+# How long APNs holds a push for a phone that is off or has no signal. A
+# reminder is worth reading late; a timer that finished an hour ago is not.
+PUSH_TTL_S         = {"reminder": 6 * 3600, "timer": 300}
+PUSH_DEFAULT_TTL_S = 3600
+APNS_TIMEOUT_S     = 10.0

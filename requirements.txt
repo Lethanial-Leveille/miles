@@ -32,6 +32,13 @@ torchaudio==2.11.0
 Resemblyzer==0.1.4
 sentence-transformers==5.7.0
 
+# Push notifications (push.py). Added Oct 30 2026 from a cloud session, so these
+# are floors, not freezes: replace them with the Pi's pip freeze after installing.
+# h2 is what lets httpx speak HTTP/2, the only transport Apple's push service
+# accepts; cryptography is the ES256 backend python-jose signs the APNs token with.
+h2>=4.2.0
+cryptography>=42
+
 # Server and auth
 fastapi==0.136.1
 uvicorn==0.46.0
