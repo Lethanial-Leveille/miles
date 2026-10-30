@@ -1678,10 +1678,7 @@ the rest of the answer, the exact loss this change exists to prevent.
 **No Claude call.** They are her own words, and a call would cost latency and
 let her rephrase instead of finish.
 
-**Known gap: her history.** It still ends at "[You were cut off here.]" for the
-first attempt, so the next turn's Claude does not know she finished. Left
-because saving the resumed text means deciding how a resumed reply sits in
-history beside the cut one, which is a change of its own.
+**Her history is amended; see "Her history after a resume" below.**
 
 ### "Go on" is a local intent (Oct 30 2026) (DONE)
 
@@ -1723,6 +1720,41 @@ finishes what she was already saying aloud in the room.
 as in `test_local_intent.py`; only the gate and the wiring are asserted. Whether
 real "go on" transcripts clear `INTENT_SIMILARITY_THRESHOLD` against the four
 examples has not been measured.
+
+### Her history after a resume (Oct 30 2026) (DONE)
+
+`database.extend_message`, `resume.keep(message_id=...)`,
+`speak_what_was_left(amend_history=True)`.
+
+**Why it mattered.** The cut reply is saved as what he heard plus
+"[You were cut off here.]", and the trimmer keeps that mark on purpose: it is why
+his next message reads the way it does. After the automatic resume finished the
+sentence, nothing touched that row, so the next turn's Claude believed he never
+heard the end and could say it again or ask if he wanted it.
+
+**The cut reply's own row is extended in place.** `keep()` stores the id
+`save_message` returned for it; after she speaks, the mark comes off and what she
+said is appended. Fully heard, the row reads as one reply with no mark, which is
+true. Cut in on again, it ends in the mark again, and the next turn still sees
+where. The row is amended by id, not "the latest row", so a typed or phone turn
+saved in between cannot be overwritten.
+
+**It is the literal transcript.** Replayed words and the lead in are in it
+("...breeze and Anyway, and seventy..."), because that is what was said aloud.
+The trimmer cuts a reply to thirty words anyway. **Rejected:** a second assistant
+row (the mark stays on the first, so it still reads as cut, and two assistant
+messages in a row is an odd shape); a "[resumed]" note (Claude would need teaching
+what it means, where removing the mark says it directly); a cleaned "heard plus
+remainder" text (claims words she did not say).
+
+**A spoken "go on" does not amend.** It saves its own user and assistant rows, so
+history already reads cut off, "go on", continuation, which is coherent.
+
+**A failed amend is printed and swallowed.** It runs in the voice loop outside
+`run_turn`'s boundary, and a locked database is not worth a restart.
+
+**Not verified on the Pi.** The tests use a throwaway database and the real
+trimmer; nothing has run against the live `miles.db`.
 
 **Not verified by ear.** Nobody has heard it. The tests check which words come
 back, not whether the phrasing sounds natural through the voice. The rotation

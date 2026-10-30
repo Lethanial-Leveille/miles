@@ -270,7 +270,7 @@ def test_a_cut_reply_keeps_the_word_she_did_say(turn):
 def speaker(monkeypatch):
     """Speaks what she is given on fakes. cut_at is the 1 based number of the
     request to interrupt, a quarter of the way in, or None to let all play."""
-    def run(cut_at=None):
+    def run(cut_at=None, amend_history=False):
         sent = []
 
         def play(synthesis):
@@ -281,7 +281,7 @@ def speaker(monkeypatch):
                             lambda text, *a, **k: SimpleNamespace(
                                 text=text, heard_s=1.0, audio_s=4.0))
         monkeypatch.setattr(brain, "_play_with_barge_in", play)
-        return sent, brain.speak_what_was_left()
+        return sent, brain.speak_what_was_left(amend_history=amend_history)
     return run
 
 
@@ -442,3 +442,109 @@ def test_run_turn_hands_go_on_to_the_resume_not_the_fixed_sentence_path():
     body = ast.unparse(_voice_main_function("run_turn"))
     assert "_run_go_on(text)" in body
     assert body.index("match.name != 'go_on'") < body.index("_run_local(match, text)")
+
+
+# ── her history after a resume ──
+
+def test_extend_message_adds_to_the_row_and_drops_the_mark(db):
+    mark = brain.CUT_OFF_MARK
+    row = db.save_message("assistant", f"The high is seventy, {mark}")
+    db.extend_message(row, "Anyway, and sunny.", drop_suffix=mark)
+    assert db.get_recent_messages()[-1]["content"] == "The high is seventy, Anyway, and sunny."
+
+
+def test_extend_message_leaves_a_row_without_the_mark_whole(db):
+    row = db.save_message("assistant", "Fine.")
+    db.extend_message(row, "More.", drop_suffix=brain.CUT_OFF_MARK)
+    assert db.get_recent_messages()[-1]["content"] == "Fine. More."
+
+
+def test_extend_message_on_a_missing_row_does_nothing(db):
+    db.save_message("assistant", "Fine.")
+    db.extend_message(9999, "More.")
+    assert [m["content"] for m in db.get_recent_messages()] == ["Fine."]
+
+
+def test_the_cut_reply_remembers_which_row_it_was(turn):
+    turn(_FakeStream(THREE), cut_first=True)
+    assert resume.message_id() == 7, "the row save_message returned for the cut reply"
+
+
+def test_peeking_at_the_row_does_not_use_it_up():
+    resume.keep("the rest.", said=SAID, message_id=3, now=0.0)
+    assert resume.message_id(now=1.0) == 3
+    assert resume.message_id(now=1.0) == 3
+    assert resume.speech(now=1.0) is not None
+
+
+def test_a_stale_or_empty_hold_has_no_row():
+    assert resume.message_id() is None
+    resume.keep("the rest.", said=SAID, message_id=3, now=0.0)
+    assert resume.message_id(now=resume.RESUME_WINDOW_S + 1) is None
+
+
+@pytest.fixture
+def amended(monkeypatch):
+    calls = []
+    monkeypatch.setattr(brain, "extend_message",
+                        lambda message_id, text, drop_suffix="": calls.append(
+                            (message_id, text, drop_suffix)))
+    return calls
+
+
+def test_finishing_after_a_stop_to_nothing_extends_the_cut_row(speaker, amended):
+    resume.keep("seventy and sunny.", said=SAID, message_id=5)
+    _, said = speaker(amend_history=True)
+    assert amended == [(5, "Anyway, and seventy and sunny.", brain.CUT_OFF_MARK)]
+    assert said == "Anyway, and seventy and sunny."
+
+
+def test_cut_again_the_row_ends_in_the_mark_and_stays_amendable(speaker, amended):
+    resume.keep("It is sunny today. Bring sunglasses.", said=SAID, message_id=5)
+    _, said = speaker(cut_at=1, amend_history=True)
+    assert said.endswith(brain.CUT_OFF_MARK)
+    assert amended[0][:2] == (5, said)
+    assert resume.message_id() == 5, "a third try amends the same row"
+
+
+def test_no_saved_row_means_nothing_to_amend(speaker, amended):
+    resume.keep("seventy and sunny.", said=SAID)
+    speaker(amend_history=True)
+    assert amended == []
+
+
+def test_a_failed_amend_does_not_end_the_voice_loop(speaker, monkeypatch):
+    def broken(*a, **k):
+        raise RuntimeError("database is locked")
+    monkeypatch.setattr(brain, "extend_message", broken)
+    resume.keep("seventy and sunny.", said=SAID, message_id=5)
+    _, said = speaker(amend_history=True)
+    assert said, "she still spoke, and told the caller so"
+
+
+def _next_turn_sees(db):
+    return brain._trim_history(db.get_recent_messages())[-1]["content"]
+
+
+def test_after_a_full_resume_the_next_turn_sees_a_reply_he_heard(speaker, db):
+    row = db.save_message("assistant", f"The high today is {brain.CUT_OFF_MARK}")
+    resume.keep("seventy and sunny.", said="The high today is", message_id=row)
+    assert _next_turn_sees(db).endswith(brain.CUT_OFF_MARK)
+    speaker(amend_history=True)
+    after = _next_turn_sees(db)
+    assert brain.CUT_OFF_MARK not in after, "he heard the end, so it no longer says he did not"
+    assert "seventy and sunny" in after
+
+
+def test_after_a_second_cut_the_next_turn_still_sees_where(speaker, db):
+    row = db.save_message("assistant", f"The high today is {brain.CUT_OFF_MARK}")
+    resume.keep("seventy and sunny. Bring sunglasses.", said="The high today is",
+                message_id=row)
+    speaker(cut_at=1, amend_history=True)
+    assert _next_turn_sees(db).endswith(brain.CUT_OFF_MARK)
+
+
+def test_a_spoken_go_on_does_not_amend_because_it_saves_its_own_rows(speaker, amended):
+    resume.keep("seventy and sunny.", said=SAID, message_id=5)
+    speaker()
+    assert amended == []
