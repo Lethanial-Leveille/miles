@@ -261,18 +261,23 @@ def _note_what_was_left(heard, written, leaks_seen, in_the_room, ignored):
 
 
 def speak_what_was_left():
-    """Finish the reply he cut off, if one is held. True when she spoke.
+    """Finish the reply he cut off, if one is held. What she said of it, or ""
+    when nothing was held or nothing played.
+
+    That is her history's wording: what reached the room, and the cut off mark
+    when he cut in again.
 
     For a stop that came to nothing: a tap, a cough, a dropped fork. She goes
     through the same consumer as any reply, so the first sentence starts at once
     and he can cut in again, in which case what is still unsaid is held afresh
     from what this attempt got through. No Claude call: these are her own words.
 
-    Her history is not touched. It still says she was cut off at the first stop,
-    so the next turn does not know she went on."""
+    Her history is not touched here. A caller that answers a spoken "go on" saves
+    what this returns; a stop that came to nothing has no turn to attach it to, so
+    the next turn still sees her cut off at the first stop."""
     line = resume.speech()
     if line is None:
-        return False
+        return ""
     sentences = [s for s in re.split(r"(?<=[.!?])\s+", line) if s.strip()]
     heard = _Heard()
 
@@ -286,7 +291,7 @@ def speak_what_was_left():
     print(f"  resuming: {len(line.split())} words", flush=True)
     asyncio.run(speak())
     _note_what_was_left(heard, sentences, None, in_the_room=True, ignored=False)
-    return True
+    return heard.text() if heard.cut else heard.said()
 
 
 async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set,

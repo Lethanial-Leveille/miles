@@ -1056,15 +1056,14 @@ The rule for what it holds and what lets go of it is in the
 speech. The rules and why are in the decision log under "Where a resume starts"
 and "A stop that came to nothing resumes by itself".
 
+**Also built:** "go on" as a local intent, resuming only when it is all he said and
+only for him, not a guest. Decision log: "Go on is a local intent".
+
 **Not built, in order:**
-1. **Her history after a resume.** It still ends at the cut off mark, so the next
-   turn does not know she finished.
-2. **"Go on" as a local intent.** "Go on", "continue", "keep going" matched in
-   `local_intent.py`, the remainder spoken with no Claude call. It must decline
-   when nothing is held, so the words fall through to Claude. **Decide:** when he
-   spoke over her, does "go on" resume or does she answer him? Suggested: resume
-   only when "go on" is all he said; anything more is a new turn she answers.
-3. **Tune the barge in floor from labelled stops.** Needs the Pi: listen to
+1. **Her history after the automatic resume.** It still ends at the cut off mark,
+   so the next turn does not know she finished. A spoken "go on" already saves
+   what she got through.
+2. **Tune the barge in floor from labelled stops.** Needs the Pi: listen to
    `data/barge_in_stops`, label the false ones, replay them through
    `SpeechOnset`. Do it after the resume is heard working on the Pi, so the
    number being tuned is a cost of a short pause and no longer a lost answer.

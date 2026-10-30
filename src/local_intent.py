@@ -43,6 +43,7 @@ import actions
 import embeddings
 import netcheck
 import phrasebank
+import resume
 from database import active_reminder_count
 from parsing import NUMBER_WORDS, words_for_number
 from config import INTENT_SIMILARITY_THRESHOLD, MAX_DISMISS_WORDS
@@ -96,6 +97,12 @@ EXAMPLES = {
         "that's it for now",
         "alright bye",
         "I'm good thanks",
+    ],
+    'go_on': [
+        "go on",
+        "please go on",
+        "continue",
+        "keep going",
     ],
     'weather': [
         "what's the weather",
@@ -348,11 +355,29 @@ def _gate_weather(text):
     return {}
 
 
+# The whole utterance, not a word inside it. "Go on and set a timer" and "go on,
+# what about Friday" are new requests, and she answers a new request instead of
+# finishing the old one; so a continuation has to be only the continuation.
+_GO_ON_PHRASES = {"go on", "go on please", "please go on", "continue",
+                  "please continue", "keep going"}
+
+
+def _gate_go_on(text):
+    if text not in _GO_ON_PHRASES:
+        return None
+    # Nothing held is a "go on" with nothing to go on to. Declining sends it to
+    # Claude, who has the conversation and can ask what he means.
+    if not resume.held():
+        return None
+    return {}
+
+
 GATES = {
     'set_timer': _gate_set_timer,
     'time_of_day': _gate_time_of_day,
     'cancel_reminder': _gate_cancel_reminder,
     'dismiss': _gate_dismiss,
+    'go_on': _gate_go_on,
     'weather': _gate_weather,
 }
 
@@ -520,5 +545,9 @@ def execute(match):
 
     if match.name == 'weather':
         return _weather_response()
+
+    # go_on is matched here and spoken by voice_main (_run_go_on), not executed
+    # here: finishing a reply has to go through the reply consumer so he can cut
+    # in on it, and a fixed sentence to hand back cannot do that.
 
     raise ValueError(f"no handler for intent {match.name!r}")
