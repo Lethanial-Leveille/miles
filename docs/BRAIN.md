@@ -343,6 +343,38 @@ note reached 56 of 63 and ignored "Is Trump a good president?", the Sep 26 case
 the note was first written for, every time. **Run the replay before changing
 any of this wording.**
 
+**Room talk after a false wake, reworded (Oct 30 2026, on a branch until the
+room test).** He reported her waking unasked. Oct 12 to 26 she woke 76 times,
+nearly all on his roommates talking, and answered most of it with "I caught
+fragments", "I'm here, what do you need", or advice on what she overheard. Most
+of those voices failed verification, so they ran as guests, a prompt the replay
+had never measured. Three causes, three changes, examples approved by him first:
+
+- The wake note led with "Answer any question or request in it". It now leads
+  with the detector firing on conversation, then the test: a short question
+  standing alone is for her, questions inside people's talk are not, and
+  "I caught fragments", "I'm here" and "what do you need" are named as wrong.
+- WHAT_REACHES_YOU told her to say back the words she received whenever a turn
+  made no sense, which is where "I caught fragments" came from. That now needs
+  the turn to read as asked of her; "yeah", "no", "alright" or a sentence
+  trailing off gets ignore (he chose silence for a bare filler, Oct 30).
+- GUEST_BLOCK opened "Someone else is speaking to you", deciding the question
+  before she could. It now says the voice may be speaking to her or may only
+  be talking in the room, and that WHEN HE IS NOT TALKING TO YOU applies.
+
+`replay_ignore.py` now carries those turns as `WAKE`, his labels, each at its
+real tier and with the real gap since her last reply (without the gap, a
+question asked hours after some room talk reads as part of it). Room talk
+silent 30 of 81 before and 60 to 72 after on the new turns, 43 of 63 before
+and 54 to 61 after on the older set; answered 37 of 39 before, 34 to 38 after.
+The cost is a missed real request now and then ("How about the ascanola?",
+"Is Donald Trump a good president?", each ignored one run in three), which
+costs him a second "hey nova". Two things the wording cannot fix: she still
+sometimes calls ignore and speaks a sentence beside it, and the text streams to
+the speaker before the call is seen, so it is heard. A version that also told
+her to quote a misheard question back fell to 26 of 81: naming that option in
+the note invites it.
+
 ## Tools and the permission gate
 
 **The model proposes, the executor decides.** A tool call is a request. Between

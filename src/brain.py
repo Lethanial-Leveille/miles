@@ -694,8 +694,13 @@ def _with_recalled(messages: list, query: str, log: bool = True) -> list:
 
 # Quoted by the prompt and the ignore tool, so all three name the same thing.
 NAMED_TURN_MARK = "Your wake word was heard just before this"
-NAMED_TURN_NOTE = (f"[{NAMED_TURN_MARK}. Answer any question or request in it, even "
-                   "mid conversation. If it holds none, only people talking, call ignore.]")
+NAMED_TURN_NOTE = (f"[{NAMED_TURN_MARK}. The detector also fires on conversation that "
+                   "never said your name, often. Find the words in this message that ask "
+                   "you something. A short question standing on its own is for you, even "
+                   "when it reads strangely. Questions inside people's conversation with "
+                   "each other are not. If there are any, answer them. If there are none, "
+                   "call ignore and say nothing at all: not \"I caught fragments\", not "
+                   "\"I'm here\", not \"what do you need\".]")
 FOLLOWUP_NOTE = ("[Heard in the window after your reply. Answer it if it speaks to you "
                  "or follows from what you said. If it is people talking to each other, "
                  "call ignore.]")
@@ -720,6 +725,15 @@ def _with_named_note(messages: list, named: bool, followup: bool = False) -> lis
     times (16 before) and answered 22 of 24 meant for her (24 before; the misses
     were a garbled reply to her, "Actually, never mind oranges"). A firmer note
     reached 56 of 63 and ignored "Is Trump a good president?" every time.
+
+    Oct 30 2026 the note leads with the detector's doubt, then the test: a short
+    question standing alone is for her, questions inside people's talk are not.
+    Oct 12 to 26 she had answered most false wakes on his roommates with "I
+    caught fragments". Replayed on those turns at their real tier and gap, room
+    talk silent 30 of 81 before, 60 to 72 after; the older set 43 of 63 before,
+    54 to 61 after; answered 34 to 38 of 39 to 42 meant for her, 37 of 39
+    before. A version that also told her to quote a misheard question back fell
+    to 26 of 81: naming that option here invites it.
 
     followup is a voice follow up opened without the wake word. Only the voice
     loop knows either, so a typed turn gets neither note."""
