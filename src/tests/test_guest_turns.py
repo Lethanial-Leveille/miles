@@ -106,7 +106,7 @@ def test_a_guest_turn_sends_nothing_of_his(monkeypatch):
     request = str(sent[0]["system"]) + str(sent[0]["messages"])
     for private in ("ReliaQuest", "PRIVATE SEED", "PRIVATE EPISODE", "PRIVATE RECALL"):
         assert private not in request
-    assert "This is not Lethanial" in request
+    assert "may only be talking in the room" in request
 
 
 def test_guests_stay_quiet_for_speech_not_aimed_at_her():
