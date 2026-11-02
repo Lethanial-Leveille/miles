@@ -15,7 +15,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from jose import JWTError
 
-from auth import verify_password, create_token, decode_token
+from auth import verify_password, create_token, decode_token, DEVICE_SCOPE, DEVICE_TOKEN_EXPIRE_DAYS
 from brain import ask_nova
 from database import (
     init_db, get_active_memories, get_pending_memories,
@@ -24,6 +24,7 @@ from database import (
     open_reminders, cancel_reminder_by_id,
     dismiss_memory_pair, dismissed_memory_pairs, merge_memories,
     save_push_device, remove_push_device, save_health_sync,
+    log_phone_presence, latest_phone_presence,
 )
 from config import MEMORY_SIMILAR_LIST
 from system_state import get_system_state
@@ -40,13 +41,34 @@ init_db()
 
 _bearer = HTTPBearer()
 
+def _unauthorized():
+    # fail closed: any bad or expired token gets a 401, no details leaked
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """A full login. A token carrying any scope is refused here: scoped tokens
+    are narrower than a login by design, and this is every route but the few
+    that name get_device_user."""
     try:
         payload = decode_token(credentials.credentials)
-        return payload["sub"]
     except JWTError:
-        # fail closed: any bad or expired token gets a 401, no details leaked
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        raise _unauthorized()
+    if payload.get("scope"):
+        raise _unauthorized()
+    return payload["sub"]
+
+
+def get_device_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """A full login or the phone's device token. Only for the writes the phone
+    makes in the background: where it is, and its Health data."""
+    try:
+        payload = decode_token(credentials.credentials)
+    except JWTError:
+        raise _unauthorized()
+    if payload.get("scope") not in (None, DEVICE_SCOPE):
+        raise _unauthorized()
+    return payload["sub"]
 
 
 # ── Request / response models ──
@@ -115,6 +137,11 @@ class HealthWorkout(BaseModel):
 class HealthSync(BaseModel):
     days: list[HealthDay] = Field(default_factory=list, max_length=60)
     workouts: list[HealthWorkout] = Field(default_factory=list, max_length=100)
+
+class PhonePresence(BaseModel):
+    state: Literal["home", "away"]
+    # When the phone saw the crossing, not when it arrived here
+    at: datetime
 
 class EventChange(BaseModel):
     title: Optional[str] = None
@@ -462,10 +489,37 @@ def test_push(user: str = Depends(get_current_user)):
     return {"sent": sent}
 
 
+# ── Device token and phone presence ──
+
+@app.post("/auth/device", response_model=TokenResponse)
+def issue_device_token(user: str = Depends(get_current_user)):
+    """The phone's long lived token for background writes. Needs a full login,
+    so it can only be had by someone who could already do everything it can."""
+    return TokenResponse(access_token=create_token(
+        user, expires_minutes=DEVICE_TOKEN_EXPIRE_DAYS * 24 * 60, scope=DEVICE_SCOPE))
+
+
+@app.post("/presence/phone")
+def report_phone_presence(body: PhonePresence, user: str = Depends(get_device_user)):
+    """A geofence crossing. Logged only: nothing acts on it until a few days of
+    these show how promptly and reliably iOS reports them."""
+    at = body.at.astimezone().replace(tzinfo=None) if body.at.tzinfo else body.at
+    log_phone_presence(body.state, at.isoformat())
+    return {"logged": True}
+
+
+@app.get("/presence/phone")
+def phone_presence(user: str = Depends(get_current_user)):
+    latest = latest_phone_presence()
+    if latest is None:
+        return {"state": None, "at": None}
+    return {"state": latest[0], "at": latest[1]}
+
+
 # ── Health ──
 
 @app.post("/health/sync")
-def sync_health(body: HealthSync, user: str = Depends(get_current_user)):
+def sync_health(body: HealthSync, user: str = Depends(get_device_user)):
     """The app's copy of its Health data. Each day replaces the stored day whole,
     so a reading deleted in Health disappears here on the next sync."""
     days = [{"day": d.day.isoformat(), "steps": d.steps,

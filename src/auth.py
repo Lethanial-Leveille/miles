@@ -37,9 +37,21 @@ def verify_password(plain: str) -> bool:
     return _pwd_context.verify(plain, get_password_hash())
 
 
-def create_token(subject: str, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
+# What a device token may do. The phone writes its location and Health data while
+# it sits in a pocket, long after the hour a login lasts, and renewing a login
+# takes Face ID. So the app also holds this: long lived, and good only for those
+# writes. server.py refuses it everywhere else, so a leaked one cannot read a
+# memory or touch the calendar. Rotating MILES_JWT_SECRET revokes every token.
+DEVICE_SCOPE = "device"
+DEVICE_TOKEN_EXPIRE_DAYS = 180
+
+
+def create_token(subject: str, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES,
+                 scope: str | None = None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
     payload = {"sub": subject, "exp": expire}
+    if scope:
+        payload["scope"] = scope
     return jwt.encode(payload, _secret(), algorithm=ALGORITHM)
 
 

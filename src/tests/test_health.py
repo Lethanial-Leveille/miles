@@ -107,7 +107,9 @@ def test_the_tool_reads_what_a_sync_stored(db, monkeypatch):
 
 @pytest.fixture
 def client(db):
+    # The sync route takes a login or the phone's device token
     server.app.dependency_overrides[server.get_current_user] = lambda: "Lethanial"
+    server.app.dependency_overrides[server.get_device_user] = lambda: "Lethanial"
     yield TestClient(server.app)
     server.app.dependency_overrides.clear()
 
