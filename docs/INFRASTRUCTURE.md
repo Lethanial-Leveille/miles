@@ -239,6 +239,8 @@ Reminders and timers: GET /reminders, DELETE /reminders/{id}
 
 Push: POST /push/register, POST /push/unregister, POST /push/test
 Health: POST /health/sync
+Device token: POST /auth/device
+Phone presence: POST and GET /presence/phone
 
 Calendar: GET /calendar/events?days=, PATCH and DELETE /calendar/events/{id}
 WebSocket: /ws
@@ -487,6 +489,31 @@ because they are read back aloud.
 Oura also reports steps and active calories. The tool's fields say `iphone` so
 the two are not read as one. What only the phone has is body weight over time and
 the workouts Apple records, like a run with its distance.
+
+## The device token and the geofence (Nov 2 2026)
+
+The phone writes two things while it sits in a pocket: geofence crossings and
+Health data. A login lasts an hour and renewing it takes Face ID, so those writes
+would mostly be refused. `POST /auth/device`, called with a full login, returns a
+180 day JWT carrying `scope: device`.
+
+**The rule that keeps it safe:** `get_current_user` refuses any token with a
+scope, so a device token opens nothing a login protects. Only `get_device_user`
+accepts it, on `POST /presence/phone` and `POST /health/sync`. It cannot mint
+another device token. Rotating `MILES_JWT_SECRET` revokes every token at once.
+`tests/test_device_token.py` uses real signed tokens, and is mutation tested:
+removing the scope refusal fails three of its tests.
+
+`POST /presence/phone` takes `{"state": "home" | "away", "at": <the phone's
+time>}` and logs it to `phone_presence` with the arrival time beside it. The
+latest state is chosen by the phone's time, since iOS can deliver an older
+crossing after a newer one. **Logged only.** Nothing reads it until a few days of
+rows show how late and how reliably iOS reports a crossing; compare `at` with
+`received_at` for the lateness.
+
+The geofence itself is in the app (`LocationService.swift`): CLMonitor, a 150 m
+circle set from Settings while at home, Always location. Only home or away leaves
+the phone, never coordinates.
 
 ## Related
 

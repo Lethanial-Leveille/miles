@@ -1093,9 +1093,15 @@ whether anyone is.
 **Depends on, in order:** a presence fusion function that turns timestamped
 events (radar, wake, SSH idle, phone on Tailscale, geofence) into `away`,
 `home_idle` or `in_room` with a confidence and expiry each; then a geofence
-endpoint in `server.py` for an iOS Shortcuts automation to post to. **Test the
-automation for a few days on the phone before relying on it**: how reliably iOS
-fires a location automation in the background is not established. This does not
+endpoint in `server.py`. **Test it for a few days on the phone before relying on
+it**: how reliably iOS reports a crossing in the background is not established.
+
+> **Update Nov 2 2026:** the geofence endpoint is built, and in the app rather
+> than a Shortcuts automation: CLMonitor, a device token for background writes,
+> and `POST /presence/phone` logging to `phone_presence`
+> ([INFRASTRUCTURE.md](INFRASTRUCTURE.md#the-device-token-and-the-geofence-nov-2-2026)).
+> **Next:** let it run a few days, read `at` against `received_at` and look for
+> crossings that never came, then build the fusion function and the wake rule. This does not
 help with false wakes while he is home, which is the retraining below.
 
 ### Retrain the wake model on his false wakes (asked Oct 1 2026)
@@ -2146,6 +2152,10 @@ and it needs a login. The access token lasts an hour and the only way back in is
 Face ID. See the next entry, which is the same problem.
 
 ### Health sync in the background
+
+> **Update Nov 2 2026:** the credential this needed now exists. `/health/sync`
+> accepts the device token (`get_device_user`), built for the geofence. What is
+> left is the app side: background delivery, and sending with the device token.
 
 HealthKit can wake the app when new data arrives (background delivery). **Not
 built because** the wake cannot authenticate: the app's token expires after an
