@@ -807,6 +807,24 @@ def _migration_034_health(conn):
     conn.execute("CREATE INDEX idx_health_workouts_started ON health_workouts (started_at)")
 
 
+def _migration_035_phone_presence(conn):
+    """Each time his phone crossed the geofence around home, as the app reported it.
+
+    at is when the phone saw the crossing, received_at when it reached the Pi.
+    They differ whenever iOS holds the event or the phone has no signal, and
+    that gap is part of what has to be learned before anything trusts this:
+    how late and how reliably iOS reports a crossing is not yet known."""
+    conn.execute("""
+        CREATE TABLE phone_presence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            state TEXT NOT NULL,
+            at TEXT NOT NULL,
+            received_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX idx_phone_presence_at ON phone_presence (at)")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -842,6 +860,7 @@ MIGRATIONS = [
     (32, _migration_032_hevy_restores),
     (33, _migration_033_push_devices),
     (34, _migration_034_health),
+    (35, _migration_035_phone_presence),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -2253,5 +2272,32 @@ def last_health_sync():
             "SELECT MAX(t) FROM (SELECT MAX(synced_at) AS t FROM health_days "
             "UNION ALL SELECT MAX(synced_at) FROM health_workouts)").fetchone()
         return row[0]
+    finally:
+        conn.close()
+
+
+# ── Phone presence, from the geofence ──
+
+def log_phone_presence(state, at):
+    """One crossing: state is 'home' or 'away', at the phone's own ISO time."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO phone_presence (state, at, received_at) VALUES (?, ?, ?)",
+            (state, at, datetime.now().isoformat()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def latest_phone_presence():
+    """(state, at) of the most recent crossing by the phone's clock, or None.
+
+    By `at`, not by arrival: a crossing iOS held back can reach the Pi after a
+    newer one, and the newer one is still the truth."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT state, at FROM phone_presence ORDER BY at DESC, id DESC LIMIT 1").fetchone()
     finally:
         conn.close()
