@@ -135,7 +135,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1343 passing, 6 skipped on the Pi, Oct 30 2026; 44 tests added since by push and Health, not yet run there)
+│   └── tests/                 # pytest suite (1343 passing, 6 skipped on the Pi, Oct 30 2026; 54 tests added since by push, Health and the device token, not yet run there)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -472,7 +472,7 @@ STT: Deepgram Nova 3 online, falling back to whisper.cpp (base.en, beam search a
 LLM: Claude API, `claude-haiku-4-5`, streaming, prompt caching on the system prompt.
 TTS: ElevenLabs (Victoria, eleven_v3), pcm_22050 piped to aplay.
 Voice auth: SpeechBrain ECAPA (192 dim cosine similarity); an unverified voice is a guest.
-Memory: SQLite WAL mode, schema migrations to version 34.
+Memory: SQLite WAL mode, schema migrations to version 35.
 Push: Apple's push service (APNs) over HTTP/2, `httpx` with `h2`, ES256 provider token signed by python-jose.
 Phone health: Apple Health (HealthKit), copied to the Pi by the Nova app when it opens.
 Weather: OpenWeatherMap.
@@ -556,6 +556,10 @@ Landed since v0.7.1, unreleased:
 - Phone health: the Nova app copies two weeks of Apple Health (steps, active
   calories, weight, workouts) to the Pi when it opens, and `get_health_summary`
   answers from the copy and says how old it is. Same caveat as push
+- Home or away from the phone: a CLMonitor geofence in the app reports each
+  crossing to `POST /presence/phone`, using a 180 day device token that only the
+  background write routes accept. Logged only, like the radar was, until real
+  days show how reliably iOS reports it
 
 ## What Is Next
 

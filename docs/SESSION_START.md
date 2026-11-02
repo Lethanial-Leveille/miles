@@ -1797,3 +1797,28 @@ requires it fired. And a test that changed `TZ` leaked New York time into the
 session planner tests, because `time.tzset()` is what applies it and restoring
 the variable does not call it again. Both are fixed; the second is the kind of
 failure that shows in a different file from its cause.
+
+### A device token, and the geofence in the app (Nov 2 2026) (DONE, LOGGING ONLY)
+
+The plan for "wakes while he is away" had the phone report home or away through
+an iOS Shortcuts automation. **Built in the app instead**, with CLMonitor, now
+that the paid developer program is in place: no automation to set up by hand, and
+one place that owns the code.
+
+**The blocker was authentication, not location.** A crossing fires with the phone
+in a pocket, long after the hour a login lasts, and renewing takes Face ID. The
+same wall had already stopped background Health sync. Chosen: a 180 day token
+scoped to `device`, accepted only by the background write routes. **Rejected:**
+a longer login (one stolen token would then read everything for months), and an
+unauthenticated presence route (anyone could tell Nova he was away).
+
+**The scope check is the whole design,** so `get_current_user` refuses any token
+carrying a scope at all, not only `device`: a scope added later cannot leak into
+the full routes by accident. Mutation tested.
+
+**Nothing acts on the data yet.** Same path the radar took: log, look, then act.
+How promptly iOS reports a crossing in the background is unmeasured, and a wrong
+"away" would make her deaf in his own room.
+
+**Only home or away leaves the phone, never coordinates.** The Pi does not need
+to know where he is, only whether he is home.
