@@ -2,8 +2,8 @@ import json
 import math
 import re
 import sqlite3
-from datetime import datetime
-from config import DB_PATH, RECALL_MIN_DF, RRF_K
+from datetime import datetime, timedelta
+from config import DAY_STARTS_AT_HOUR, DB_PATH, RECALL_MIN_DF, RRF_K
 
 
 # ── Schema migrations ──
@@ -2122,5 +2122,209 @@ def active_reminder_count(kind=None):
         return conn.execute(
             "SELECT COUNT(*) FROM reminders WHERE completed = 0 AND kind = ?",
             (kind,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+# ── Tasks ──
+# Every function takes now=None so a test can say exactly what time it is.
+# Production passes nothing and gets the real clock.
+
+def task_day(now=None):
+    """The date a moment counts toward, with days starting at DAY_STARTS_AT_HOUR.
+
+    Moving the clock back that many hours and then taking the date does it in
+    one step. With the boundary at 4: 1am on the 13th becomes 9pm on the 12th,
+    so it counts for the 12th; 4am on the 13th becomes midnight on the 13th,
+    the first moment of the new day."""
+    now = now or datetime.now()
+    return (now - timedelta(hours=DAY_STARTS_AT_HOUR)).date().isoformat()
+
+
+def add_task(text, recurrence=None, now=None):
+    """Save a task and return its id. recurrence is None for a one time task or
+    'daily'; the table's CHECK refuses anything else."""
+    now = now or datetime.now()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO tasks (text, recurrence, created_at) VALUES (?, ?, ?)",
+            (text, recurrence, now.isoformat()))
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def complete_task(task_id, now=None):
+    """Mark an active task done for the day now counts toward. False when there
+    is no active task with that id, so an archived one cannot gain new days.
+
+    INSERT OR IGNORE because the key is (task_id, date): a second "done" on
+    the same day meets the existing row and is skipped instead of raising. It
+    still counts as success, since the task is done either way."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        active = conn.execute(
+            "SELECT 1 FROM tasks WHERE id = ? AND archived_at IS NULL",
+            (task_id,)).fetchone()
+        if active is None:
+            return False
+        conn.execute(
+            "INSERT OR IGNORE INTO task_completions (task_id, date) VALUES (?, ?)",
+            (task_id, task_day(now)))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def tasks_today(now=None):
+    """What is left to do today, as (id, text, recurrence) rows in the order
+    they were added.
+
+    One NOT EXISTS covers both kinds of task. For each active task it looks for
+    a completion that settles it: for a one time task any completion at all
+    (recurrence IS NULL makes the date test irrelevant), for a daily task only
+    one dated today. A task with no such row is still to do. Archived tasks are
+    left out before any of that is asked."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute("""
+            SELECT t.id, t.text, t.recurrence FROM tasks t
+            WHERE t.archived_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM task_completions c
+                  WHERE c.task_id = t.id
+                    AND (t.recurrence IS NULL OR c.date = ?))
+            ORDER BY t.id
+        """, (task_day(now),)).fetchall()
+    finally:
+        conn.close()
+
+
+def active_tasks_matching(words):
+    """Active tasks whose text contains words, for "I took my vitamins". The
+    caller decides what to do with none or several; picking one here would be
+    guessing."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT id, text, recurrence FROM tasks "
+            "WHERE archived_at IS NULL AND text LIKE ? ORDER BY id",
+            (f"%{words}%",)).fetchall()
+    finally:
+        conn.close()
+
+
+# ── Lists ──
+
+def find_list(name):
+    """A list's id by its exact name, or None. Reading never creates a list, so
+    "what's on my hardware list" cannot leave an empty list behind."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute("SELECT id FROM lists WHERE name = ?", (name,)).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def get_or_create_list(name, now=None):
+    """A list's id, creating the list the first time something is added to it.
+
+    INSERT OR IGNORE leans on the UNIQUE name: if the list exists the insert is
+    skipped, and the SELECT after it finds the row either way."""
+    now = now or datetime.now()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("INSERT OR IGNORE INTO lists (name, created_at) VALUES (?, ?)",
+                     (name, now.isoformat()))
+        conn.commit()
+        return conn.execute("SELECT id FROM lists WHERE name = ?", (name,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def all_lists():
+    """Every list as (id, name, unchecked count), by name. The LEFT JOIN keeps
+    a list whose items are all checked, with a count of zero."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute("""
+            SELECT l.id, l.name, COUNT(i.id) FROM lists l
+            LEFT JOIN list_items i ON i.list_id = l.id AND i.checked = 0
+            GROUP BY l.id ORDER BY l.name
+        """).fetchall()
+    finally:
+        conn.close()
+
+
+def add_list_item(list_id, text, now=None):
+    """Add text to a list. Returns (item_id, added): added is False when the
+    same text is already on the list unchecked, and item_id is that row.
+
+    Only unchecked rows count as already there. Eggs bought last week is
+    history, and needing eggs again is a new row."""
+    now = now or datetime.now()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        existing = conn.execute(
+            "SELECT id FROM list_items "
+            "WHERE list_id = ? AND checked = 0 AND lower(text) = lower(?)",
+            (list_id, text)).fetchone()
+        if existing:
+            return existing[0], False
+        cursor = conn.execute(
+            "INSERT INTO list_items (list_id, text, created_at) VALUES (?, ?, ?)",
+            (list_id, text, now.isoformat()))
+        conn.commit()
+        return cursor.lastrowid, True
+    finally:
+        conn.close()
+
+
+def list_items(list_id, include_checked=False):
+    """A list's items as (id, text, checked, checked_at, created_at).
+
+    Unchecked first, oldest first, which is the order they were added. Checked
+    ones after, most recently bought first. ORDER BY checked puts the zeros
+    first, and checked_at is NULL on every unchecked row, so it only sorts the
+    checked ones."""
+    where = "list_id = ?" if include_checked else "list_id = ? AND checked = 0"
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            f"SELECT id, text, checked, checked_at, created_at FROM list_items "
+            f"WHERE {where} ORDER BY checked, checked_at DESC, id",
+            (list_id,)).fetchall()
+    finally:
+        conn.close()
+
+
+def unchecked_items_matching(list_id, words):
+    """Unchecked items on one list whose text contains words, as (id, text)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT id, text FROM list_items "
+            "WHERE list_id = ? AND checked = 0 AND text LIKE ? ORDER BY id",
+            (list_id, f"%{words}%")).fetchall()
+    finally:
+        conn.close()
+
+
+def check_list_item(item_id, now=None):
+    """Check one item off, by id. The row stays, with when it was checked.
+    False when there is no unchecked item with that id."""
+    now = now or datetime.now()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "UPDATE list_items SET checked = 1, checked_at = ? "
+            "WHERE id = ? AND checked = 0",
+            (now.isoformat(), item_id))
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()
