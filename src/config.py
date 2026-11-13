@@ -1093,3 +1093,10 @@ FOLLOWUP_TIMEOUT = 3.0
 # "we're good") are ordinary mid conversation utterances that would have ended
 # a session by accident. Nova now recognizes the intent and emits
 # [ACTION: dismiss]; see prompts.py.
+
+
+# ── Lists and tasks ──
+# The hour a new day starts for daily tasks, in the Pi's local time. Not
+# midnight: a task finished at 1am belongs to the day he was still living in,
+# and counting it toward the next one would mark tomorrow done before it began.
+DAY_STARTS_AT_HOUR = 4
