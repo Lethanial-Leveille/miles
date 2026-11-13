@@ -23,6 +23,8 @@ from database import (
     save_memory, supersede_memory, get_memory_chain, memory_status, memory_content,
     open_reminders, cancel_reminder_by_id,
     dismiss_memory_pair, dismissed_memory_pairs, merge_memories,
+    all_lists, list_items, check_list_item, uncheck_list_item, list_item_exists,
+    task_day, tasks_today, complete_task,
 )
 from config import MEMORY_SIMILAR_LIST
 from system_state import get_system_state
@@ -393,6 +395,65 @@ def cancel_reminder(reminder_id: int, user: str = Depends(get_current_user)):
     if not cancel_reminder_by_id(reminder_id):
         raise HTTPException(status_code=404, detail="No outstanding reminder with that id")
     return {"cancelled": True}
+
+
+# ── Lists and tasks ──
+# What the app reads, and the taps it makes: checking an item off, putting it
+# back, and finishing a task. Adding stays voice only for now, as asked. Everything goes
+# through the same database functions as the tools, so a tap and "check off
+# eggs" leave exactly the same row behind.
+
+@app.get("/lists")
+def get_lists(user: str = Depends(get_current_user)):
+    return [{"id": l[0], "name": l[1], "unchecked": l[2]} for l in all_lists()]
+
+
+@app.get("/lists/{list_id}/items")
+def get_list_items(list_id: int, include_checked: bool = False,
+                   user: str = Depends(get_current_user)):
+    """Unchecked items first, in the order added; with include_checked, the
+    purchase history after them, most recent first."""
+    if list_id not in {l[0] for l in all_lists()}:
+        raise HTTPException(status_code=404, detail="No list with that id")
+    return [{"id": i[0], "text": i[1], "checked": bool(i[2]),
+             "checked_at": i[3], "created_at": i[4]}
+            for i in list_items(list_id, include_checked=include_checked)]
+
+
+@app.post("/lists/items/{item_id}/check")
+def check_item(item_id: int, user: str = Depends(get_current_user)):
+    """Idempotent: an item that is already checked answers 200 and keeps its
+    first checked_at, so a retry from the phone does not read as an error.
+    Only a missing item is 404."""
+    if not check_list_item(item_id) and not list_item_exists(item_id):
+        raise HTTPException(status_code=404, detail="No item with that id")
+    return {"checked": True}
+
+
+@app.post("/lists/items/{item_id}/uncheck")
+def uncheck_item(item_id: int, user: str = Depends(get_current_user)):
+    """Undo a tap: the item goes back on the list with checked_at cleared.
+    Idempotent like check; only a missing item is 404."""
+    if not uncheck_list_item(item_id):
+        raise HTTPException(status_code=404, detail="No item with that id")
+    return {"checked": False}
+
+
+@app.get("/tasks/today")
+def get_tasks_today(user: str = Depends(get_current_user)):
+    """day is the 4am day the list is for. At 1am it is still yesterday's
+    date, and the app should say so rather than leave him wondering why
+    today's vitamins show as done."""
+    return {"day": task_day(),
+            "tasks": [{"id": t[0], "text": t[1], "recurrence": t[2]}
+                      for t in tasks_today()]}
+
+
+@app.post("/tasks/{task_id}/complete")
+def finish_task(task_id: int, user: str = Depends(get_current_user)):
+    if not complete_task(task_id):
+        raise HTTPException(status_code=404, detail="No active task with that id")
+    return {"completed": True, "day": task_day()}
 
 
 def _calendar_call(fn, *args, **kwargs):
