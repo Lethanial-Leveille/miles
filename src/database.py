@@ -2389,6 +2389,31 @@ def unchecked_items_matching(list_id, words):
     return _exact_first(rows, words)
 
 
+def list_item_exists(item_id):
+    """Whether an item with this id exists, checked or not."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute("SELECT 1 FROM list_items WHERE id = ?",
+                            (item_id,)).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def uncheck_list_item(item_id):
+    """Put a checked item back on the list, by id: checked to 0 and checked_at
+    cleared. Unchecking an item that is already unchecked changes nothing and
+    still counts. False only when there is no item with that id."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "UPDATE list_items SET checked = 0, checked_at = NULL WHERE id = ?",
+            (item_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
 def check_list_item(item_id, now=None):
     """Check one item off, by id. The row stays, with when it was checked.
     False when there is no unchecked item with that id."""
