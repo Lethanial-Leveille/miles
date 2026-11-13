@@ -155,6 +155,9 @@ Live at `https://miles.lethanial.com`.
 | `/memories/similar`, `/memories/similar/dismiss`, `/memories/merge/draft`, `/memories/merge` | GET, POST | Yes |
 | `/reminders`, `/reminders/{reminder_id}` | GET, DELETE | Yes |
 | `/calendar/events`, `/calendar/events/{event_id}` | GET, PATCH, DELETE | Yes |
+| `/lists`, `/lists/{list_id}/items` | GET | Yes |
+| `/lists/items/{item_id}/check`, `/lists/items/{item_id}/uncheck` | POST | Yes |
+| `/tasks/today`, `/tasks/{task_id}/complete` | GET, POST | Yes |
 | `/history` | GET | Yes |
 | `/status`, `/status/details` | GET | Yes |
 | `/ws` | WebSocket | Yes, token checked in the socket |
@@ -170,8 +173,8 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 |--------|-------|
 | Median perceived latency, last 30 Claude turns (Oct 2 to 12 2026) | 3.0 seconds, from the end of speech to first audio, including the silence wait that decides you have finished |
 | ElevenLabs eleven_v3 time to first byte | 647ms median over 12 live turns (Sep 2026) |
-| Registered tools | 34 |
-| Test suite | 1455 passing |
+| Registered tools | 39 |
+| Test suite | 1539 passing |
 
 ---
 

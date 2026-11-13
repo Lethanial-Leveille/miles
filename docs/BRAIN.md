@@ -597,6 +597,25 @@ Accepting a discovered job is the only write. It is staged through
 that turn, because `propose` merges one turn's proposals under a single yes and
 two accepts would become a bulk accept.
 
+### Lists and tasks (Nov 13 2026)
+
+`lists_tasks.py` holds seven tools: `list_add`, `list_check` and `list_show`
+for chunin and above, and `task_add`, `task_complete`, `archive_task` and
+`tasks_today` for hokage only. Only `list_show` and `tasks_today` return to the
+model. The rest are fire and forget, and anything that did not happen (nothing
+matched, several did, already on the list) is a `ToolNotice`, which she says
+and which is logged apart from errors.
+
+**A list name finds the list that exists, never renames one.** `find_list`
+tries the name as said, then the plural forms both ways: "groceries" finds
+grocery and "errands" finds errand, and "supply" finds supplies and "errand"
+finds errands. A form that matches no list is dropped, so with no match the
+list is created exactly as said. Reads never create a list.
+
+A task's day starts at 4am (`DAY_STARTS_AT_HOUR`), so vitamins taken at 1am
+count for the day before. The app's routes are in
+[INFRASTRUCTURE.md](INFRASTRUCTURE.md#fastapi-endpoints).
+
 ## Nova speaks, she does not recite
 
 Rewritten Sep 13 2026, after he described her as reading rather than speaking.
