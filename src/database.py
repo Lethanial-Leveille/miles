@@ -744,6 +744,61 @@ def _migration_032_hevy_restores(conn):
     conn.execute("ALTER TABLE hevy_progressions ADD COLUMN kind TEXT NOT NULL DEFAULT 'raise'")
 
 
+def _migration_033_lists_and_tasks(conn):
+    """Shopping style lists and a daily task list.
+
+    Only new tables, so nothing that exists is read, changed or moved.
+
+    A checked item is never deleted: checked and checked_at are kept so what he
+    bought, and when, can be read back later.
+
+    A daily task is one row forever, never copied each morning. Whether it is
+    done today is whether task_completions has a row for it on today's date, so
+    "today's tasks" is a query and there is no overnight job that could fail to
+    run. A one time task uses the same table: it is done once it has any row.
+    The primary key on (task_id, date) means finishing it twice in one day
+    stores one row, not two.
+
+    archived_at retires a task without deleting it, so a daily task he stops
+    doing keeps every day it was done. NULL means the task is active."""
+    conn.execute("""
+        CREATE TABLE lists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE list_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            list_id INTEGER NOT NULL REFERENCES lists(id),
+            text TEXT NOT NULL,
+            checked INTEGER NOT NULL DEFAULT 0,
+            checked_at TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX idx_list_items_list ON list_items (list_id, checked)")
+    # The CHECK refuses any recurrence but daily, so a typo like "Daily" fails
+    # at the insert instead of becoming a task that never shows up.
+    conn.execute("""
+        CREATE TABLE tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL,
+            recurrence TEXT CHECK (recurrence IS NULL OR recurrence = 'daily'),
+            created_at TEXT NOT NULL,
+            archived_at TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE task_completions (
+            task_id INTEGER NOT NULL REFERENCES tasks(id),
+            date TEXT NOT NULL,
+            PRIMARY KEY (task_id, date)
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -777,6 +832,7 @@ MIGRATIONS = [
     (30, _migration_030_hevy_progressions),
     (31, _migration_031_checkin_log),
     (32, _migration_032_hevy_restores),
+    (33, _migration_033_lists_and_tasks),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
