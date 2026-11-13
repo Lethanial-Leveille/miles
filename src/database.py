@@ -799,6 +799,14 @@ def _migration_033_lists_and_tasks(conn):
     """)
 
 
+def _migration_034_tool_notices(conn):
+    """Whether a tool call ended in a notice: an expected outcome Nova had to
+    say, like "eggs is already on the list", as opposed to a fault. Kept apart
+    from is_error so the errors stay worth reading. Every existing row takes
+    the default, 0, which is what each of them was."""
+    conn.execute("ALTER TABLE tool_call_log ADD COLUMN is_notice INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -833,6 +841,7 @@ MIGRATIONS = [
     (31, _migration_031_checkin_log),
     (32, _migration_032_hevy_restores),
     (33, _migration_033_lists_and_tasks),
+    (34, _migration_034_tool_notices),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -1922,12 +1931,13 @@ def log_timing(turn_type, action_fired, transcript, speech_end_to_endpoint_ms,
 
 
 def log_tool_call(tool_name, arguments, result, is_error=False,
-                  duration_ms=None, model=None):
+                  duration_ms=None, model=None, is_notice=False):
     """One row per tool call. Truncates the result on write.
 
     Failures are logged too, with is_error set. A tool that errored is the most
     interesting row in the table: it is the one that explains why Nova said
-    something strange."""
+    something strange. A notice (tools.ToolNotice) sets is_notice instead,
+    since it was an expected outcome and not a fault."""
     text = "" if result is None else str(result)
     if len(text) > TOOL_RESULT_MAX_CHARS:
         text = text[:TOOL_RESULT_MAX_CHARS] + "..."
@@ -1935,10 +1945,11 @@ def log_tool_call(tool_name, arguments, result, is_error=False,
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         """INSERT INTO tool_call_log
-           (created_at, tool_name, arguments, result, is_error, duration_ms, model)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+           (created_at, tool_name, arguments, result, is_error, duration_ms,
+            model, is_notice)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (datetime.now().isoformat(), tool_name, json.dumps(arguments or {}),
-         text, int(is_error), duration_ms, model)
+         text, int(is_error), duration_ms, model, int(is_notice))
     )
     conn.commit()
     conn.close()
@@ -2203,29 +2214,80 @@ def tasks_today(now=None):
         conn.close()
 
 
-def active_tasks_matching(words):
-    """Active tasks whose text contains words, for "I took my vitamins". The
-    caller decides what to do with none or several; picking one here would be
-    guessing."""
+def archive_task(task_id, now=None):
+    """Retire a task: it leaves today's list and can gain no new days, and the
+    row and its completions stay. False when there is no active task with that
+    id."""
+    now = now or datetime.now()
     conn = sqlite3.connect(DB_PATH)
     try:
-        return conn.execute(
-            "SELECT id, text, recurrence FROM tasks "
-            "WHERE archived_at IS NULL AND text LIKE ? ORDER BY id",
-            (f"%{words}%",)).fetchall()
+        cursor = conn.execute(
+            "UPDATE tasks SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
+            (now.isoformat(), task_id))
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()
 
 
+def _exact_first(rows, words):
+    """The matching rule's first half, shared by tasks and list items.
+
+    rows are everything containing words. If any of them is words exactly,
+    ignoring case, only those come back: "milk" means milk, not oat milk. If
+    none is, every partial match comes back, and the caller takes a single one
+    as the answer and asks about several. The text is column 1 in both
+    callers."""
+    wanted = words.strip().lower()
+    exact = [row for row in rows if row[1].lower() == wanted]
+    return exact or rows
+
+
+def active_tasks_matching(words):
+    """Active tasks matching words, for "I took my vitamins", by the rule in
+    _exact_first. The caller decides what to do with none or several; picking
+    one here would be guessing."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT id, text, recurrence FROM tasks "
+            "WHERE archived_at IS NULL AND text LIKE ? ORDER BY id",
+            (f"%{words.strip()}%",)).fetchall()
+    finally:
+        conn.close()
+    return _exact_first(rows, words)
+
+
 # ── Lists ──
 
+def _list_name_candidates(name):
+    """The names an existing list could be under, the name as said first.
+
+    "groceries" could be the grocery list ("ies" to "y") and "errands" the
+    errand list (trailing "s" off). These are only ever looked up, never
+    stored: a candidate that matches no list is dropped, so "glasses" can find
+    a "glasse" list only if one somehow exists, and otherwise a new list is
+    named exactly as said."""
+    candidates = [name]
+    if name.endswith("ies"):
+        candidates.append(name[:-3] + "y")
+    if name.endswith("s"):
+        candidates.append(name[:-1])
+    return candidates
+
+
 def find_list(name):
-    """A list's id by its exact name, or None. Reading never creates a list, so
+    """A list's id by name, or None, trying the name as said and then the
+    plural forms in _list_name_candidates. Reading never creates a list, so
     "what's on my hardware list" cannot leave an empty list behind."""
     conn = sqlite3.connect(DB_PATH)
     try:
-        row = conn.execute("SELECT id FROM lists WHERE name = ?", (name,)).fetchone()
-        return row[0] if row else None
+        for candidate in _list_name_candidates(name):
+            row = conn.execute("SELECT id FROM lists WHERE name = ?",
+                               (candidate,)).fetchone()
+            if row:
+                return row[0]
+        return None
     finally:
         conn.close()
 
@@ -2233,8 +2295,14 @@ def find_list(name):
 def get_or_create_list(name, now=None):
     """A list's id, creating the list the first time something is added to it.
 
-    INSERT OR IGNORE leans on the UNIQUE name: if the list exists the insert is
-    skipped, and the SELECT after it finds the row either way."""
+    An existing list wins, by find_list, so "groceries" adds to grocery rather
+    than starting a second list. Only when nothing matches is a list created,
+    under the name exactly as given. INSERT OR IGNORE leans on the UNIQUE name,
+    so two adds racing to create the same list still end with one row, and the
+    SELECT after it finds that row either way."""
+    existing = find_list(name)
+    if existing is not None:
+        return existing
     now = now or datetime.now()
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -2303,15 +2371,22 @@ def list_items(list_id, include_checked=False):
 
 
 def unchecked_items_matching(list_id, words):
-    """Unchecked items on one list whose text contains words, as (id, text)."""
+    """Unchecked items matching words, as (id, text), by the rule in
+    _exact_first. list_id None searches every list, for "check off eggs" when
+    no list was named."""
+    where = "checked = 0 AND text LIKE ?"
+    params = [f"%{words.strip()}%"]
+    if list_id is not None:
+        where += " AND list_id = ?"
+        params.append(list_id)
     conn = sqlite3.connect(DB_PATH)
     try:
-        return conn.execute(
-            "SELECT id, text FROM list_items "
-            "WHERE list_id = ? AND checked = 0 AND text LIKE ? ORDER BY id",
-            (list_id, f"%{words}%")).fetchall()
+        rows = conn.execute(
+            f"SELECT id, text FROM list_items WHERE {where} ORDER BY id",
+            params).fetchall()
     finally:
         conn.close()
+    return _exact_first(rows, words)
 
 
 def check_list_item(item_id, now=None):

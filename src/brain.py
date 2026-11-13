@@ -18,7 +18,7 @@ from database import (save_message, delete_message, extend_message, last_reply_a
 from parsing import extract_memories, strip_leading_bracket_cue
 from stream_router import StreamRouter
 import interrupt_speech
-from tools import registry, Permission, permits
+from tools import registry, Permission, ToolNotice, permits
 from database import log_tool_call
 import alerts
 import memory_pass
@@ -40,6 +40,7 @@ import hevy_tools     # noqa: F401
 import prowl_tools    # noqa: F401
 import pending_action # noqa: F401
 import web_search     # noqa: F401
+import lists_tasks    # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
                     HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN,
@@ -466,6 +467,7 @@ async def _say(text, channel, device):
 # tool cannot silently show nothing. None means no stage: dismiss and ignore are
 # state changes, not work.
 _STAGE_WORDS = {
+    "archive_task":            "Retiring the task",
     "cancel_reminder":         "Cancelling a reminder",
     "check_calendar_freebusy": "Checking when you're free",
     "confirm_pending_action":  "Making the change",
@@ -487,8 +489,11 @@ _STAGE_WORDS = {
     "get_upcoming_events":     "Checking your calendar",
     "get_weather":             "Checking the weather",
     "ignore":                  None,
+    "list_add":                "Adding it to your list",
+    "list_check":              "Checking it off",
     "list_job_applications":   "Looking through your applications",
     "list_pending_memories":   "Looking at what's waiting for review",
+    "list_show":               "Reading your list",
     "lower_access":            "Changing access",
     "plan_sessions":           "Planning around your week",
     "remember":                "Remembering that",
@@ -496,6 +501,9 @@ _STAGE_WORDS = {
     "review_pending_memory":   "Updating your memories",
     "set_reminder":            "Setting a reminder",
     "set_timer":               "Setting a timer",
+    "task_add":                "Adding the task",
+    "task_complete":           "Marking it done",
+    "tasks_today":             "Checking today's tasks",
     "undo_last_change":        "Undoing that",
     "update_calendar_event":   "Changing the event",
 }
@@ -1022,6 +1030,7 @@ def _run_tools(tool_uses, model, tier):
     results = []
     for block in tool_uses:
         started = time.monotonic()
+        notice = False
         try:
             spec = registry.get(block.name)
             if not permits(spec, tier):
@@ -1031,13 +1040,20 @@ def _run_tools(tool_uses, model, tier):
             else:
                 output = registry.call(block.name, dict(block.input))
                 is_error = False
+        except ToolNotice as exc:
+            # Before the general case, which would catch it too. Sent as an
+            # error so Nova speaks it, without "failed", because nothing did.
+            output = str(exc)
+            is_error = True
+            notice = True
         except Exception as exc:
             output = f"{block.name} failed: {exc}"
             is_error = True
 
         elapsed = (time.monotonic() - started) * 1000.0
         log_tool_call(block.name, dict(block.input), output,
-                      is_error=is_error, duration_ms=elapsed, model=model)
+                      is_error=is_error and not notice, is_notice=notice,
+                      duration_ms=elapsed, model=model)
         results.append({"block": block, "output": output, "is_error": is_error})
     return results
 

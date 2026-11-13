@@ -18,6 +18,7 @@ import hevy_tools     # noqa: F401  registers the Hevy tools
 import prowl_tools    # noqa: F401  registers the Prowl tools
 import pending_action # noqa: F401  registers confirm_pending_action
 import web_search     # noqa: F401  offers web_search, run by Anthropic
+import lists_tasks    # noqa: F401  registers the list and task tools
 from tools import Permission, permits, registry
 
 EXPECTED = {
@@ -53,6 +54,13 @@ EXPECTED = {
     "get_job_search_summary":  (Permission.READ,           True),
     "list_job_applications":   (Permission.READ,           True),
     "get_job_application":     (Permission.READ,           True),
+    "list_add":                (Permission.WRITE,          False),
+    "list_check":              (Permission.WRITE,          False),
+    "list_show":               (Permission.READ,           True),
+    "task_add":                (Permission.WRITE,          False),
+    "task_complete":           (Permission.WRITE,          False),
+    "archive_task":            (Permission.WRITE,          False),
+    "tasks_today":             (Permission.READ,           True),
 }
 
 # READ in kind, private in content, or writes beyond this Pi. None of these
@@ -67,6 +75,7 @@ HOKAGE_ONLY = {
     "undo_last_change", "get_job_search_summary", "list_job_applications",
     "get_job_application",
     "get_recent_workouts", "get_lift_history", "get_routines", "get_session_plan",
+    "task_add", "task_complete", "archive_task", "tasks_today",
 }
 
 # WRITE tools that legitimately cost a second round trip, with the reason.
