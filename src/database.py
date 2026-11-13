@@ -2263,16 +2263,20 @@ def active_tasks_matching(words):
 def _list_name_candidates(name):
     """The names an existing list could be under, the name as said first.
 
-    "groceries" could be the grocery list ("ies" to "y") and "errands" the
-    errand list (trailing "s" off). These are only ever looked up, never
-    stored: a candidate that matches no list is dropped, so "glasses" can find
-    a "glasse" list only if one somehow exists, and otherwise a new list is
-    named exactly as said."""
+    Both directions: "groceries" could be the grocery list ("ies" to "y") and
+    "errands" the errand list (trailing "s" off), and the other way "supply"
+    could be the supplies list ("y" to "ies") and "errand" the errands list
+    ("s" on). These are only ever looked up, never stored: a candidate that
+    matches no list is dropped, so "glasses" can find a "glasse" list only if
+    one somehow exists, and otherwise a new list is named exactly as said."""
     candidates = [name]
     if name.endswith("ies"):
         candidates.append(name[:-3] + "y")
     if name.endswith("s"):
         candidates.append(name[:-1])
+    if name.endswith("y"):
+        candidates.append(name[:-1] + "ies")
+    candidates.append(name + "s")
     return candidates
 
 

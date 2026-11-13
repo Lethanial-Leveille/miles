@@ -435,7 +435,26 @@ def test_a_trailing_s_finds_the_singular_list(db):
 def test_a_plural_with_no_singular_list_is_created_as_said(db):
     lid = db.get_or_create_list("supplies")
     assert db.all_lists() == [(lid, "supplies", 0)]
-    assert db.find_list("supply") is None
+
+
+def test_supply_adds_to_the_supplies_list(db):
+    registry.call("list_add", {"item": "tape", "list_name": "supplies"})
+    registry.call("list_add", {"item": "glue", "list_name": "supply"})
+    [(lid, name, unchecked)] = db.all_lists()
+    assert (name, unchecked) == ("supplies", 2)
+    assert db.find_list("supply") == lid
+
+
+def test_a_singular_finds_the_list_with_an_s(db):
+    lid = db.get_or_create_list("errands")
+    assert db.get_or_create_list("errand") == lid
+
+
+def test_a_singular_with_no_plural_list_is_created_as_said(db):
+    db.get_or_create_list("supplies")
+    lid = db.get_or_create_list("hardware")
+    assert db.find_list("hardware") == lid
+    assert {row[1] for row in db.all_lists()} == {"supplies", "hardware"}
 
 
 def test_whats_on_my_groceries_list_reads_grocery(db):
