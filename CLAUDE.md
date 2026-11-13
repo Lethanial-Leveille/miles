@@ -125,6 +125,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── hevy_tools.py          # Hevy workouts, lift history, routines, session targets; read only
 │   ├── hevy_progress.py       # raises a routine's weight when a workout earned it, on a timer
 │   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
+│   ├── lists_tasks.py         # lists and tasks by voice: add, check off, read; days start at 4am
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
 │   ├── resume.py              # what she had left to say when he cut her off, held for a go on, and where to start it
@@ -134,7 +135,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1455 passing, 6 skipped, Oct 30 2026)
+│   └── tests/                 # pytest suite (1539 passing, 6 skipped, Nov 13 2026, on the Pi)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold

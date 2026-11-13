@@ -248,6 +248,10 @@ POST /memories/merge/draft, POST /memories/merge
 Reminders and timers: GET /reminders, DELETE /reminders/{id}
 
 Calendar: GET /calendar/events?days=, PATCH and DELETE /calendar/events/{id}
+
+Lists and tasks: GET /lists, GET /lists/{id}/items?include_checked=,
+POST /lists/items/{id}/check, POST /lists/items/{id}/uncheck,
+GET /tasks/today, POST /tasks/{id}/complete
 WebSocket: /ws
 
 `POST /speak` takes `{"text": "..."}` and streams back mp3, `audio/mpeg`,
@@ -316,6 +320,24 @@ minutes (`ACCESS_TOKEN_EXPIRE_MINUTES` in `auth.py`). No refresh token is issued
   they are **not** added to Nova's spoken undo, which groups changes by
   conversation turn. Google failures return 502 with Google's message, so an
   expired token never reads as an empty week.
+- **Lists and tasks, Nov 13 2026.** The app reads and taps; adding stays voice
+  only. Every route goes through the same `database.py` functions as the
+  tools, so a tap and "check off eggs" leave the same row.
+  `GET /lists` is `[{id, name, unchecked}]` by name, a list with nothing left
+  on it included at zero. `GET /lists/{id}/items` is `[{id, text, checked,
+  checked_at, created_at}]`, unchecked only, in the order added;
+  `include_checked=true` adds the purchase history after them, most recent
+  first. A missing list is 404.
+  `POST /lists/items/{id}/check` answers `{"checked": true}` and
+  `.../uncheck` answers `{"checked": false}`. **Both are idempotent:** checking
+  an item that is already checked is 200 and keeps its first `checked_at`, and
+  unchecking sets `checked` back to 0 and clears `checked_at`. Only an item that
+  does not exist is 404, so a retry from the phone never reads as an error.
+  `GET /tasks/today` is `{day, tasks: [{id, text, recurrence}]}`. `day` is the
+  4am day (`DAY_STARTS_AT_HOUR` in `config.py`): at 1am it is still
+  yesterday's date, and the app should show it rather than leave him
+  wondering why today's vitamins read as done. `POST /tasks/{id}/complete` is
+  `{"completed": true, day}`, 404 for a task that is missing or archived.
 
 ## Environment variables
 
