@@ -1,10 +1,14 @@
-"""Lists and tasks: migration 33 and the queries. The tools and routes add
-their tests here as they land."""
+"""Lists and tasks: migration 33, the queries and the tools. The routes add
+their tests here when they land."""
 
 import sqlite3
 from datetime import datetime
 
+import pytest
+
 import database
+import lists_tasks
+from tools import ToolNotice, permits, registry
 
 
 def _tables(path):
@@ -43,7 +47,7 @@ def test_migration_33_leaves_existing_rows_alone(tmp_path, monkeypatch):
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
     conn.close()
     assert after == before
-    assert version == 33
+    assert version == database.MIGRATIONS[-1][0]
     assert {"lists", "list_items", "tasks", "task_completions"} <= _tables(path)
 
 
@@ -51,7 +55,8 @@ def test_migration_33_runs_once(db):
     # A second start must not try to create the tables again.
     db.init_db()
     conn = sqlite3.connect(db.DB_PATH)
-    assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 33
+    assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == \
+        database.MIGRATIONS[-1][0]
     conn.close()
 
 
@@ -263,3 +268,249 @@ def test_all_lists_counts_only_unchecked(db):
     db.add_list_item(h, "nails")
     db.check_list_item(iid)
     assert db.all_lists() == [(g, "grocery", 1), (h, "hardware", 1)]
+
+
+
+def test_archive_task_keeps_the_row(db):
+    tid = db.add_task("take vitamins", "daily")
+    assert db.archive_task(tid, now=datetime(2026, 11, 12, 9, 0)) is True
+    # Archiving twice finds nothing active to archive.
+    assert db.archive_task(tid) is False
+    conn = sqlite3.connect(db.DB_PATH)
+    row = conn.execute("SELECT text, archived_at FROM tasks WHERE id = ?",
+                       (tid,)).fetchone()
+    conn.close()
+    assert row == ("take vitamins", "2026-11-12T09:00:00")
+
+
+# ── The matching rule: exact wins, then a lone partial, else ask ──
+
+def test_exact_item_match_wins_over_partial(db):
+    lid = db.get_or_create_list("grocery")
+    milk, _ = db.add_list_item(lid, "milk")
+    db.add_list_item(lid, "oat milk")
+    assert db.unchecked_items_matching(lid, "Milk") == [(milk, "milk")]
+
+
+def test_exact_task_match_wins_over_partial(db):
+    a = db.add_task("vitamins", "daily")
+    db.add_task("buy vitamins")
+    assert db.active_tasks_matching("vitamins") == [(a, "vitamins", "daily")]
+
+
+def test_no_list_searches_every_list(db):
+    g = db.get_or_create_list("grocery")
+    h = db.get_or_create_list("hardware")
+    eggs, _ = db.add_list_item(g, "eggs")
+    nails, _ = db.add_list_item(h, "nails")
+    assert db.unchecked_items_matching(None, "nails") == [(nails, "nails")]
+    assert db.unchecked_items_matching(g, "nails") == []
+
+
+# ── The tools, called the way Nova calls them ──
+
+def _unchecked(db, name):
+    return [row[1] for row in db.list_items(db.find_list(name))]
+
+
+def test_list_names_ignore_my_the_and_list():
+    for said in ("My Grocery List", "the grocery list", "grocery", " grocery "):
+        assert lists_tasks.stored_list_name(said) == "grocery"
+
+
+def test_add_eggs_to_my_grocery_list(db):
+    result = registry.call("list_add", {"item": "eggs",
+                                        "list_name": "my grocery list"})
+    assert result == "Added eggs to the grocery list."
+    assert _unchecked(db, "grocery") == ["eggs"]
+
+
+def test_adding_eggs_again_is_refused_out_loud(db):
+    registry.call("list_add", {"item": "eggs", "list_name": "grocery"})
+    with pytest.raises(ToolNotice, match="already on the grocery list"):
+        registry.call("list_add", {"item": "eggs", "list_name": "grocery"})
+    assert _unchecked(db, "grocery") == ["eggs"]
+
+
+def test_check_off_milk_with_oat_milk_on_the_list_checks_milk(db):
+    registry.call("list_add", {"item": "milk", "list_name": "grocery"})
+    registry.call("list_add", {"item": "oat milk", "list_name": "grocery"})
+    assert registry.call("list_check", {"item": "milk"}) == "Checked off milk."
+    assert _unchecked(db, "grocery") == ["oat milk"]
+
+
+def test_one_partial_match_is_checked_without_asking(db):
+    registry.call("list_add", {"item": "oat milk", "list_name": "grocery"})
+    assert registry.call("list_check", {"item": "oat"}) == "Checked off oat milk."
+
+
+def test_several_partial_matches_ask_and_check_nothing(db):
+    registry.call("list_add", {"item": "oat milk", "list_name": "grocery"})
+    registry.call("list_add", {"item": "whole milk", "list_name": "grocery"})
+    with pytest.raises(ToolNotice,
+                       match="More than one unchecked item matches 'milk': "
+                             "oat milk, whole milk. Ask which one."):
+        registry.call("list_check", {"item": "milk"})
+    assert _unchecked(db, "grocery") == ["oat milk", "whole milk"]
+
+
+def test_checking_off_something_not_on_the_list_is_refused(db):
+    registry.call("list_add", {"item": "eggs", "list_name": "grocery"})
+    with pytest.raises(ToolNotice, match="No unchecked item matches 'bread'"):
+        registry.call("list_check", {"item": "bread"})
+
+
+def test_checking_on_a_list_that_does_not_exist_is_refused(db):
+    with pytest.raises(ToolNotice, match="There is no hardware list"):
+        registry.call("list_check", {"item": "nails", "list_name": "hardware"})
+
+
+def test_whats_on_my_grocery_list(db):
+    for item in ("eggs", "milk", "bread"):
+        registry.call("list_add", {"item": item, "list_name": "grocery"})
+    registry.call("list_check", {"item": "milk"})
+    assert registry.call("list_show", {"list_name": "my grocery list"}) == \
+        "On the grocery list: eggs, bread."
+
+
+def test_list_show_for_an_empty_or_missing_list(db):
+    assert registry.call("list_show", {"list_name": "hardware"}) == \
+        "There is no hardware list."
+    assert db.find_list("hardware") is None
+    registry.call("list_add", {"item": "eggs", "list_name": "grocery"})
+    registry.call("list_check", {"item": "eggs"})
+    assert registry.call("list_show", {"list_name": "grocery"}) == \
+        "The grocery list is empty."
+
+
+def test_daily_task_by_voice_then_done_then_retired(db):
+    assert registry.call("task_add", {"task": "take my vitamins",
+                                      "recurrence": "daily"}) == \
+        "Added the daily task: take my vitamins."
+    registry.call("task_add", {"task": "call the bank"})
+    assert registry.call("tasks_today", {}) == \
+        "Still to do today: take my vitamins, call the bank."
+    assert registry.call("task_complete", {"task": "vitamins"}) == \
+        "Marked done: take my vitamins."
+    assert registry.call("tasks_today", {}) == "Still to do today: call the bank."
+    assert registry.call("archive_task", {"task": "bank"}) == \
+        "Stopped tracking: call the bank."
+    assert registry.call("tasks_today", {}) == "Nothing left to do today."
+
+
+def test_stop_tracking_vitamins(db):
+    registry.call("task_add", {"task": "take my vitamins", "recurrence": "daily"})
+    registry.call("archive_task", {"task": "vitamins"})
+    assert registry.call("tasks_today", {}) == "Nothing left to do today."
+    with pytest.raises(ToolNotice, match="No task matches 'vitamins'"):
+        registry.call("task_complete", {"task": "vitamins"})
+
+
+# ── Who may use them ──
+
+@pytest.mark.parametrize("name", ["list_add", "list_check", "list_show"])
+def test_family_can_use_lists_and_a_guest_cannot(name):
+    spec = registry.get(name)
+    assert not permits(spec, "genin")
+    assert permits(spec, "chunin")
+
+
+
+# ── Plurals find the list that exists, and never rename one ──
+
+def test_groceries_adds_to_the_grocery_list(db):
+    registry.call("list_add", {"item": "milk", "list_name": "grocery"})
+    registry.call("list_add", {"item": "eggs", "list_name": "groceries"})
+    [(lid, name, unchecked)] = db.all_lists()
+    assert (name, unchecked) == ("grocery", 2)
+    assert _unchecked(db, "grocery") == ["milk", "eggs"]
+
+
+def test_a_trailing_s_finds_the_singular_list(db):
+    lid = db.get_or_create_list("errand")
+    assert db.get_or_create_list("errands") == lid
+    assert db.find_list("errands") == lid
+
+
+def test_a_plural_with_no_singular_list_is_created_as_said(db):
+    lid = db.get_or_create_list("supplies")
+    assert db.all_lists() == [(lid, "supplies", 0)]
+    assert db.find_list("supply") is None
+
+
+def test_whats_on_my_groceries_list_reads_grocery(db):
+    registry.call("list_add", {"item": "eggs", "list_name": "grocery"})
+    assert registry.call("list_show", {"list_name": "groceries"}) == \
+        "On the groceries list: eggs."
+
+
+# ── Notices reach Nova like errors and are logged apart from them ──
+
+class _Block:
+    def __init__(self, name, arguments):
+        self.name = name
+        self.input = arguments
+
+
+def _last_log(db):
+    conn = sqlite3.connect(db.DB_PATH)
+    row = conn.execute("SELECT result, is_error, is_notice FROM tool_call_log "
+                       "ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    return row
+
+
+def test_already_on_the_list_reaches_nova_and_logs_as_a_notice(db):
+    import brain
+    registry.call("list_add", {"item": "eggs", "list_name": "grocery"})
+    [result] = brain._run_tools(
+        [_Block("list_add", {"item": "eggs", "list_name": "grocery"})],
+        "model", "hokage")
+    said = ("eggs is already on the grocery list, so nothing was added. "
+            "Say it was already there.")
+    # Sent as an error, so the loop makes the second call and she says it.
+    assert result["is_error"] is True
+    assert result["output"] == said
+    assert brain._needs_second_call([result])
+    assert _last_log(db) == (said, 0, 1)
+
+
+def test_a_real_failure_is_still_an_error(db):
+    import brain
+    [result] = brain._run_tools(
+        [_Block("list_add", {"item": "eggs", "list_name": " "})],
+        "model", "hokage")
+    assert result["is_error"] is True
+    assert result["output"] == "list_add failed: a list needs a name, like grocery"
+    assert _last_log(db)[1:] == (1, 0)
+
+
+def test_a_success_is_neither(db):
+    import brain
+    [result] = brain._run_tools(
+        [_Block("list_add", {"item": "eggs", "list_name": "grocery"})],
+        "model", "hokage")
+    assert result["is_error"] is False
+    assert _last_log(db) == ("Added eggs to the grocery list.", 0, 0)
+
+
+def test_migration_34_keeps_old_tool_calls_as_they_were(tmp_path, monkeypatch):
+    path = str(tmp_path / "miles.db")
+    monkeypatch.setattr(database, "DB_PATH", path)
+    monkeypatch.setattr(database, "MIGRATIONS", database.MIGRATIONS[:33])
+    database.init_db()
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO tool_call_log (created_at, tool_name, result, is_error) "
+                 "VALUES ('2026-11-01T09:00:00', 'get_weather', 'down', 1)")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.undo()
+    monkeypatch.setattr(database, "DB_PATH", path)
+    database.init_db()
+
+    conn = sqlite3.connect(path)
+    row = conn.execute("SELECT tool_name, result, is_error, is_notice "
+                       "FROM tool_call_log").fetchone()
+    conn.close()
+    assert row == ("get_weather", "down", 1, 0)

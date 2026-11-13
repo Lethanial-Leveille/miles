@@ -85,6 +85,17 @@ class ToolError(Exception):
     """Raised for registration mistakes and unknown tool lookups."""
 
 
+class ToolNotice(Exception):
+    """An expected outcome a tool has to say out loud rather than a fault:
+    already on the list, nothing matched, which one did you mean.
+
+    The executor in brain.py sends it to Nova exactly as it sends an error, so
+    she gets a second call and says it instead of "Done.", but logs it as a
+    notice. A plain exception there would put "eggs is already on the list" in
+    tool_call_log beside a weather API that is down, and the errors that need
+    looking at would drown in ones that never did."""
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
