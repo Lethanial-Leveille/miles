@@ -174,7 +174,7 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 | Median perceived latency, last 30 Claude turns (Oct 2 to 12 2026) | 3.0 seconds, from the end of speech to first audio, including the silence wait that decides you have finished |
 | ElevenLabs eleven_v3 time to first byte | 647ms median over 12 live turns (Sep 2026) |
 | Registered tools | 40 |
-| Test suite | 1539 passing |
+| Test suite | 1637 passing |
 
 ---
 
@@ -192,6 +192,8 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 | v0.7.1 | ElevenLabs streaming, sentence router, wake chime | Complete |
 | Unreleased | Native tool use with a permission gate, Google Calendar and Oura, calendar undo, local intent, speculative transcription, eleven_v3 voice | Landed |
 | Unreleased | ReSpeaker XVF3800 array, Deepgram with Whisper fallback, ECAPA verification, web search, Hevy workouts and automatic progression, Prowl job search, barge in, picking up a reply that was cut off | Landed |
+| Unreleased | Push notifications for reminders and timers through Apple's push service, and Apple Health data copied from the phone so Nova can answer about weight and runs | Landed, untested on a real phone |
+| Unreleased | Home or away from a geofence on the phone, the first half of telling an empty apartment from a quiet one | Logging, not yet acted on |
 | Next | Evening check in, SSH through the tunnel, morning briefings, Apple ecosystem integrations | Planned |
 
 ---

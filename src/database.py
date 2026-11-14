@@ -807,6 +807,87 @@ def _migration_034_tool_notices(conn):
     conn.execute("ALTER TABLE tool_call_log ADD COLUMN is_notice INTEGER NOT NULL DEFAULT 0")
 
 
+def _migration_035_push_devices(conn):
+    """The phones that get a push, one row per APNs device token.
+
+    environment is kept per row because a token only works against the APNs
+    host it was issued by. A build run from Xcode gets a sandbox token and a
+    TestFlight build gets a production one, and a token sent to the wrong host
+    is refused as BadDeviceToken. Storing which one the app reported lets both
+    builds exist at once, which they do the day TestFlight is installed beside
+    the Xcode build.
+
+    A refused token is marked inactive, not deleted: the app registers again on
+    every launch, and that flips it back on without a second row appearing."""
+    conn.execute("""
+        CREATE TABLE push_devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,
+            environment TEXT NOT NULL,
+            device_name TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            registered_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            last_failure TEXT
+        )
+    """)
+
+
+def _migration_036_health(conn):
+    """What the phone's Health app reports, sent by the Nova app when it opens.
+
+    The Pi cannot read HealthKit; the data lives on the phone and only the app
+    may ask for it. So these tables hold copies, and synced_at says how old a
+    copy is, which Nova has to be able to say because "steps today" is only as
+    fresh as the last time he opened the app.
+
+    health_days is one row per calendar day and each sync replaces the row
+    whole. The app recomputes the last two weeks every time, so a reading he
+    deletes in Health disappears here too instead of lingering.
+
+    health_workouts is keyed by HealthKit's own workout id, so the same run
+    arriving in two syncs is one row."""
+    conn.execute("""
+        CREATE TABLE health_days (
+            day TEXT PRIMARY KEY,
+            steps INTEGER,
+            active_kcal REAL,
+            weight_lb REAL,
+            synced_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE health_workouts (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            minutes REAL NOT NULL,
+            distance_mi REAL,
+            kcal REAL,
+            synced_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX idx_health_workouts_started ON health_workouts (started_at)")
+
+
+def _migration_037_phone_presence(conn):
+    """Each time his phone crossed the geofence around home, as the app reported it.
+
+    at is when the phone saw the crossing, received_at when it reached the Pi.
+    They differ whenever iOS holds the event or the phone has no signal, and
+    that gap is part of what has to be learned before anything trusts this:
+    how late and how reliably iOS reports a crossing is not yet known."""
+    conn.execute("""
+        CREATE TABLE phone_presence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            state TEXT NOT NULL,
+            at TEXT NOT NULL,
+            received_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX idx_phone_presence_at ON phone_presence (at)")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -842,6 +923,9 @@ MIGRATIONS = [
     (32, _migration_032_hevy_restores),
     (33, _migration_033_lists_and_tasks),
     (34, _migration_034_tool_notices),
+    (35, _migration_035_push_devices),
+    (36, _migration_036_health),
+    (37, _migration_037_phone_presence),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -2430,5 +2514,158 @@ def check_list_item(item_id, now=None):
             (now.isoformat(), item_id))
         conn.commit()
         return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ── Push devices ──
+
+def save_push_device(token, environment, device_name=None):
+    """Remember a phone's APNs token, or wake one that was marked dead.
+
+    Upsert on the token, so the app can call this on every launch. Apple says a
+    token can change, never that it will not, and the launch call is how a new
+    one reaches this table."""
+    now = datetime.now().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("""
+            INSERT INTO push_devices (token, environment, device_name, registered_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(token) DO UPDATE SET
+                environment = excluded.environment,
+                device_name = excluded.device_name,
+                active = 1,
+                last_seen_at = excluded.last_seen_at,
+                last_failure = NULL
+        """, (token, environment, device_name, now, now))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def active_push_devices():
+    """(token, environment) for every phone that should get a push."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT token, environment FROM push_devices WHERE active = 1 ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def deactivate_push_device(token, reason):
+    """Stop sending to a token APNs refused, and keep why.
+
+    Kept rather than deleted so a phone that only needs to register again
+    comes back as the same row, and so the reason is on hand when a push that
+    should have arrived did not."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "UPDATE push_devices SET active = 0, last_failure = ? WHERE token = ?",
+            (reason, token))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_push_device(token):
+    """Forget a token outright. A phone that signs out asks for this, so a
+    handset that is no longer his stops receiving what Nova says."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute("DELETE FROM push_devices WHERE token = ?", (token,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ── Health ──
+
+def save_health_sync(days, workouts):
+    """Store one sync from the app: dicts for days (day, steps, active_kcal,
+    weight_lb) and workouts (id, kind, started_at, minutes, distance_mi, kcal).
+
+    One transaction, so a sync that fails halfway leaves the last whole one in
+    place and not a week with some days new and some old."""
+    now = datetime.now().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO health_days (day, steps, active_kcal, weight_lb, synced_at) "
+            "VALUES (:day, :steps, :active_kcal, :weight_lb, :synced_at)",
+            [{**d, "synced_at": now} for d in days])
+        conn.executemany(
+            "INSERT OR REPLACE INTO health_workouts "
+            "(id, kind, started_at, minutes, distance_mi, kcal, synced_at) "
+            "VALUES (:id, :kind, :started_at, :minutes, :distance_mi, :kcal, :synced_at)",
+            [{**w, "synced_at": now} for w in workouts])
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def health_days_since(day):
+    """Rows from this ISO date on, oldest first, as dicts."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT day, steps, active_kcal, weight_lb FROM health_days "
+            "WHERE day >= ? ORDER BY day", (day,))]
+    finally:
+        conn.close()
+
+
+def health_workouts_since(started_iso):
+    """Workouts from this local time on, newest first, as dicts."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, kind, started_at, minutes, distance_mi, kcal FROM health_workouts "
+            "WHERE started_at >= ? ORDER BY started_at DESC", (started_iso,))]
+    finally:
+        conn.close()
+
+
+def last_health_sync():
+    """When the app last sent anything, as an ISO string, or None if never."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(
+            "SELECT MAX(t) FROM (SELECT MAX(synced_at) AS t FROM health_days "
+            "UNION ALL SELECT MAX(synced_at) FROM health_workouts)").fetchone()
+        return row[0]
+    finally:
+        conn.close()
+
+
+# ── Phone presence ──
+
+def log_phone_presence(state, at):
+    """One crossing: state is 'home' or 'away', at the phone's own ISO time."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO phone_presence (state, at, received_at) VALUES (?, ?, ?)",
+            (state, at, datetime.now().isoformat()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def latest_phone_presence():
+    """(state, at) of the most recent crossing by the phone's clock, or None.
+
+    By `at`, not by arrival: a crossing iOS held back can reach the Pi after a
+    newer one, and the newer one is still the truth."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT state, at FROM phone_presence ORDER BY at DESC, id DESC LIMIT 1").fetchone()
     finally:
         conn.close()
