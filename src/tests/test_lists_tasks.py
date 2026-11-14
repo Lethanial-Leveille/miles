@@ -321,27 +321,27 @@ def test_list_names_ignore_my_the_and_list():
 def test_add_eggs_to_my_grocery_list(db):
     result = registry.call("list_add", {"item": "eggs",
                                         "list_name": "my grocery list"})
-    assert result == "Added eggs to the grocery list."
-    assert _unchecked(db, "grocery") == ["eggs"]
+    assert result == "Added Eggs to the grocery list."
+    assert _unchecked(db, "grocery") == ["Eggs"]
 
 
 def test_adding_eggs_again_is_refused_out_loud(db):
     registry.call("list_add", {"item": "eggs", "list_name": "grocery"})
     with pytest.raises(ToolNotice, match="already on the grocery list"):
         registry.call("list_add", {"item": "eggs", "list_name": "grocery"})
-    assert _unchecked(db, "grocery") == ["eggs"]
+    assert _unchecked(db, "grocery") == ["Eggs"]
 
 
 def test_check_off_milk_with_oat_milk_on_the_list_checks_milk(db):
     registry.call("list_add", {"item": "milk", "list_name": "grocery"})
     registry.call("list_add", {"item": "oat milk", "list_name": "grocery"})
-    assert registry.call("list_check", {"item": "milk"}) == "Checked off milk."
-    assert _unchecked(db, "grocery") == ["oat milk"]
+    assert registry.call("list_check", {"item": "milk"}) == "Checked off Milk."
+    assert _unchecked(db, "grocery") == ["Oat milk"]
 
 
 def test_one_partial_match_is_checked_without_asking(db):
     registry.call("list_add", {"item": "oat milk", "list_name": "grocery"})
-    assert registry.call("list_check", {"item": "oat"}) == "Checked off oat milk."
+    assert registry.call("list_check", {"item": "oat"}) == "Checked off Oat milk."
 
 
 def test_several_partial_matches_ask_and_check_nothing(db):
@@ -349,9 +349,9 @@ def test_several_partial_matches_ask_and_check_nothing(db):
     registry.call("list_add", {"item": "whole milk", "list_name": "grocery"})
     with pytest.raises(ToolNotice,
                        match="More than one unchecked item matches 'milk': "
-                             "oat milk, whole milk. Ask which one."):
+                             "Oat milk, Whole milk. Ask which one."):
         registry.call("list_check", {"item": "milk"})
-    assert _unchecked(db, "grocery") == ["oat milk", "whole milk"]
+    assert _unchecked(db, "grocery") == ["Oat milk", "Whole milk"]
 
 
 def test_checking_off_something_not_on_the_list_is_refused(db):
@@ -370,7 +370,7 @@ def test_whats_on_my_grocery_list(db):
         registry.call("list_add", {"item": item, "list_name": "grocery"})
     registry.call("list_check", {"item": "milk"})
     assert registry.call("list_show", {"list_name": "my grocery list"}) == \
-        "On the grocery list: eggs, bread."
+        "On the grocery list: Eggs, Bread."
 
 
 def test_list_show_for_an_empty_or_missing_list(db):
@@ -386,15 +386,15 @@ def test_list_show_for_an_empty_or_missing_list(db):
 def test_daily_task_by_voice_then_done_then_retired(db):
     assert registry.call("task_add", {"task": "take my vitamins",
                                       "recurrence": "daily"}) == \
-        "Added the daily task: take my vitamins."
+        "Added the daily task: Take my vitamins."
     registry.call("task_add", {"task": "call the bank"})
     assert registry.call("tasks_today", {}) == \
-        "Still to do today: take my vitamins, call the bank."
+        "Still to do today: Take my vitamins, Call the bank."
     assert registry.call("task_complete", {"task": "vitamins"}) == \
-        "Marked done: take my vitamins."
-    assert registry.call("tasks_today", {}) == "Still to do today: call the bank."
+        "Marked done: Take my vitamins."
+    assert registry.call("tasks_today", {}) == "Still to do today: Call the bank."
     assert registry.call("archive_task", {"task": "bank"}) == \
-        "Stopped tracking: call the bank."
+        "Stopped tracking: Call the bank."
     assert registry.call("tasks_today", {}) == "Nothing left to do today."
 
 
@@ -423,7 +423,7 @@ def test_groceries_adds_to_the_grocery_list(db):
     registry.call("list_add", {"item": "eggs", "list_name": "groceries"})
     [(lid, name, unchecked)] = db.all_lists()
     assert (name, unchecked) == ("grocery", 2)
-    assert _unchecked(db, "grocery") == ["milk", "eggs"]
+    assert _unchecked(db, "grocery") == ["Milk", "Eggs"]
 
 
 def test_a_trailing_s_finds_the_singular_list(db):
@@ -460,7 +460,7 @@ def test_a_singular_with_no_plural_list_is_created_as_said(db):
 def test_whats_on_my_groceries_list_reads_grocery(db):
     registry.call("list_add", {"item": "eggs", "list_name": "grocery"})
     assert registry.call("list_show", {"list_name": "groceries"}) == \
-        "On the groceries list: eggs."
+        "On the groceries list: Eggs."
 
 
 # ── Notices reach Nova like errors and are logged apart from them ──
@@ -485,7 +485,7 @@ def test_already_on_the_list_reaches_nova_and_logs_as_a_notice(db):
     [result] = brain._run_tools(
         [_Block("list_add", {"item": "eggs", "list_name": "grocery"})],
         "model", "hokage")
-    said = ("eggs is already on the grocery list, so nothing was added. "
+    said = ("Eggs is already on the grocery list, so nothing was added. "
             "Say it was already there.")
     # Sent as an error, so the loop makes the second call and she says it.
     assert result["is_error"] is True
@@ -510,7 +510,7 @@ def test_a_success_is_neither(db):
         [_Block("list_add", {"item": "eggs", "list_name": "grocery"})],
         "model", "hokage")
     assert result["is_error"] is False
-    assert _last_log(db) == ("Added eggs to the grocery list.", 0, 0)
+    assert _last_log(db) == ("Added Eggs to the grocery list.", 0, 0)
 
 
 def test_migration_34_keeps_old_tool_calls_as_they_were(tmp_path, monkeypatch):
@@ -533,3 +533,41 @@ def test_migration_34_keeps_old_tool_calls_as_they_were(tmp_path, monkeypatch):
                        "FROM tool_call_log").fetchone()
     conn.close()
     assert row == ("get_weather", "down", 1, 0)
+
+
+# ── Items and tasks read as written ──
+
+@pytest.mark.parametrize("said, stored", [
+    ("salt", "Salt"),
+    ("  chicken broth ", "Chicken broth"),
+    ("iPhone charger", "iPhone charger"),
+    ("AA batteries", "AA batteries"),
+    ("Eggs", "Eggs"),
+    ("2 lemons", "2 lemons"),
+])
+def test_written_form(said, stored):
+    assert lists_tasks.written_form(said) == stored
+
+
+def test_items_are_stored_capitalized(db):
+    registry.call("list_add", {"item": "salt", "list_name": "grocery"})
+    registry.call("list_add", {"item": "chicken", "list_name": "grocery"})
+    assert _unchecked(db, "grocery") == ["Salt", "Chicken"]
+
+
+def test_a_lowercase_repeat_is_still_a_duplicate(db):
+    registry.call("list_add", {"item": "Salt", "list_name": "grocery"})
+    with pytest.raises(ToolNotice):
+        registry.call("list_add", {"item": "salt", "list_name": "grocery"})
+    assert _unchecked(db, "grocery") == ["Salt"]
+
+
+def test_checking_off_finds_a_capitalized_item(db):
+    registry.call("list_add", {"item": "salt", "list_name": "grocery"})
+    registry.call("list_check", {"item": "salt"})
+    assert _unchecked(db, "grocery") == []
+
+
+def test_tasks_are_stored_capitalized(db):
+    registry.call("task_add", {"task": "take my vitamins", "recurrence": "daily"})
+    assert [t[1] for t in db.tasks_today()] == ["Take my vitamins"]
