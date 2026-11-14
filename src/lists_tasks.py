@@ -65,6 +65,21 @@ def _one(matches, what, words):
     return matches[0]
 
 
+def written_form(words):
+    """Words as they should read on a list: trimmed, first letter capitalized.
+
+    "salt" becomes Salt and "take my vitamins" Take my vitamins, so the app
+    shows what a person would have written. Only the first letter changes,
+    and not at all when the first word already has a capital in it, so
+    "iPhone charger" and "AA batteries" stay as said. Duplicates are compared
+    ignoring case, so "Eggs" and "eggs" are still one item."""
+    words = words.strip()
+    first = words.split(" ", 1)[0]
+    if not words or any(ch.isupper() for ch in first):
+        return words
+    return words[0].upper() + words[1:]
+
+
 # ── Lists ──
 
 _LIST_NAME = {
@@ -79,13 +94,16 @@ _LIST_NAME = {
     description=(
         "Add one item to a named list, creating the list the first time. Call "
         "this for 'add eggs to my grocery list' or 'put milk on the list'. Call "
-        "it once per item when several are named. When no list is named, use "
-        "grocery."
+        "it once per item when several are named, even with no 'and' or commas "
+        "between them, since speech to text often drops both: 'salt chicken "
+        "eggs' is three calls. Keep a name that is one thing together: 'garlic "
+        "salt', 'chicken broth' and 'ice cream' are one call each. When no list "
+        "is named, use grocery."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "item": {"type": "string", "description": "The item, in the words used"},
+            "item": {"type": "string", "description": "One item, in the words used"},
             "list_name": _LIST_NAME,
         },
         "required": ["item", "list_name"],
@@ -95,7 +113,8 @@ _LIST_NAME = {
 )
 def list_add_tool(item, list_name):
     name = stored_list_name(list_name)
-    _, added = add_list_item(get_or_create_list(name), item.strip())
+    item = written_form(item)
+    _, added = add_list_item(get_or_create_list(name), item)
     if not added:
         raise ToolNotice(f"{item} is already on the {name} list, so nothing "
                          f"was added. Say it was already there.")
@@ -195,7 +214,8 @@ _TASK_WORDS = {"type": "string",
     min_tier="hokage",
 )
 def task_add_tool(task, recurrence=None):
-    add_task(task.strip(), recurrence)
+    task = written_form(task)
+    add_task(task, recurrence)
     if recurrence == "daily":
         return f"Added the daily task: {task}."
     return f"Added the task: {task}."

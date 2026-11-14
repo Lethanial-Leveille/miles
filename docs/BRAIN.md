@@ -612,6 +612,13 @@ grocery and "errands" finds errand, and "supply" finds supplies and "errand"
 finds errands. A form that matches no list is dropped, so with no match the
 list is created exactly as said. Reads never create a list.
 
+**Items and tasks are stored as written** (Nov 14 2026): `written_form`
+capitalizes the first letter, so "add salt and chicken" shows Salt and
+Chicken in the app. A first word with a capital already in it ("iPhone
+charger", "AA batteries") is left alone. Several items said without "and"
+("salt chicken eggs") are split by the model, told so in `list_add`; a
+compound like "garlic salt" stays one item. That is judgment, not code.
+
 A task's day starts at 4am (`DAY_STARTS_AT_HOUR`), so vitamins taken at 1am
 count for the day before. The app's routes are in
 [INFRASTRUCTURE.md](INFRASTRUCTURE.md#fastapi-endpoints).
