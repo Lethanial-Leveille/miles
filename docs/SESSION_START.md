@@ -92,7 +92,7 @@ new drift is caught.
 | `VERIFY_THRESHOLD` | `grep VERIFY_THRESHOLD src/config.py` | Sep 27 2026 (0.15, ecapa) |
 | Speaker device resolution | `grep -n SPEAKER src/config.py src/tts.py` | Aug 11 2026 (by name, not device string) |
 | Which modules exist | `ls src/*.py` | Aug 11 2026 (20 modules) |
-| Schema version | `grep -c "^    (" src/database.py` around `MIGRATIONS` | Aug 11 2026 (13) |
+| Schema version | `grep -c "^    (" src/database.py` around `MIGRATIONS` | Oct 30 2026 (34) |
 
 ### Why these specific ones drifted
 
@@ -1766,3 +1766,59 @@ checkout is 1364 passing, 4 failing and 6 erroring, and all ten are missing
 pieces of that checkout (pyaudio, and the phrase bank WAVs in gitignored `data/`),
 the same ten before this change. The Pi's own count in CLAUDE.md has not been
 re run, so it is left as it was.
+
+### Push and phone health, written without a phone (Oct 30 2026) (DONE, UNVERIFIED)
+
+The paid Apple Developer Program started today. Reminders and timers now also go
+to his phone through APNs (`push.py`, migration 35), and the Nova app copies
+Apple Health to the Pi (`health_tools.py`, migration 36). The mechanics are in
+[INFRASTRUCTURE.md](INFRASTRUCTURE.md#push-notifications-oct-30-2026).
+
+**Status is "written and tested against fakes", not "works".** No code ran
+against Apple, and the Swift in `miles-app` was never compiled, because the
+session had no Xcode. The first run on the phone is the test.
+
+**Health sync is foreground only, deliberately.** Background delivery would wake
+the app with an expired token and no way to renew it without Face ID. Building it
+anyway would have produced code that looked finished and mostly could not run.
+The design that fixes it is in BACKEND_TODO.md.
+
+**The team id is not read from the Xcode project.** It holds whatever team the
+app was last signed with, and enrolling in the paid program can change that. It
+goes in `.env`, with the key id and the `.p8` path.
+
+**Fields say `iphone`.** Oura already reports steps and active calories. Two
+sources for one number, with nothing in the name to tell them apart, is how a
+model quotes one as the other.
+
+**Caught by the suite, both mine.** A new tool needs an entry in
+`brain._STAGE_WORDS`, or the app shows nothing while it runs; the test that
+requires it fired. And a test that changed `TZ` leaked New York time into the
+session planner tests, because `time.tzset()` is what applies it and restoring
+the variable does not call it again. Both are fixed; the second is the kind of
+failure that shows in a different file from its cause.
+
+### A device token, and the geofence in the app (Nov 2 2026) (DONE, LOGGING ONLY)
+
+The plan for "wakes while he is away" had the phone report home or away through
+an iOS Shortcuts automation. **Built in the app instead**, with CLMonitor, now
+that the paid developer program is in place: no automation to set up by hand, and
+one place that owns the code.
+
+**The blocker was authentication, not location.** A crossing fires with the phone
+in a pocket, long after the hour a login lasts, and renewing takes Face ID. The
+same wall had already stopped background Health sync. Chosen: a 180 day token
+scoped to `device`, accepted only by the background write routes. **Rejected:**
+a longer login (one stolen token would then read everything for months), and an
+unauthenticated presence route (anyone could tell Nova he was away).
+
+**The scope check is the whole design,** so `get_current_user` refuses any token
+carrying a scope at all, not only `device`: a scope added later cannot leak into
+the full routes by accident. Mutation tested.
+
+**Nothing acts on the data yet.** Same path the radar took: log, look, then act.
+How promptly iOS reports a crossing in the background is unmeasured, and a wrong
+"away" would make her deaf in his own room.
+
+**Only home or away leaves the phone, never coordinates.** The Pi does not need
+to know where he is, only whether he is home.

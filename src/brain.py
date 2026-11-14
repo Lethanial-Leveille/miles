@@ -37,6 +37,7 @@ import tier_tool      # noqa: F401
 import calendar_tools # noqa: F401
 import oura_tools     # noqa: F401
 import hevy_tools     # noqa: F401
+import health_tools   # noqa: F401
 import prowl_tools    # noqa: F401
 import pending_action # noqa: F401
 import web_search     # noqa: F401
@@ -477,6 +478,7 @@ _STAGE_WORDS = {
     "edit_routine":            "Reading your routine",
     "dismiss":                 None,
     "find_schedule_conflicts": "Looking for conflicts",
+    "get_health_summary":      "Checking your Health data",
     "get_job_application":     "Opening that application",
     "get_job_search_summary":  "Checking your job search",
     "get_lift_history":        "Looking at that lift",

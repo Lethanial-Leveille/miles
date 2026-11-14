@@ -9,13 +9,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from jose import JWTError
 
-from auth import verify_password, create_token, decode_token
+from auth import verify_password, create_token, decode_token, DEVICE_SCOPE, DEVICE_TOKEN_EXPIRE_DAYS
 from brain import ask_nova
 from database import (
     init_db, get_active_memories, get_pending_memories,
@@ -25,12 +25,15 @@ from database import (
     dismiss_memory_pair, dismissed_memory_pairs, merge_memories,
     all_lists, list_items, check_list_item, uncheck_list_item, list_item_exists,
     task_day, tasks_today, complete_task,
+    save_push_device, remove_push_device, save_health_sync,
+    log_phone_presence, latest_phone_presence,
 )
 from config import MEMORY_SIMILAR_LIST
 from system_state import get_system_state
 import embeddings
 import memory_merge
 import calendar_tools
+import push
 import tts
 
 app = FastAPI(title="M.I.L.E.S. API", version="0.7")
@@ -40,13 +43,34 @@ init_db()
 
 _bearer = HTTPBearer()
 
+def _unauthorized():
+    # fail closed: any bad or expired token gets a 401, no details leaked
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """A full login. A token carrying any scope is refused here: scoped tokens
+    are narrower than a login by design, and this is every route but the few
+    that name get_device_user."""
     try:
         payload = decode_token(credentials.credentials)
-        return payload["sub"]
     except JWTError:
-        # fail closed: any bad or expired token gets a 401, no details leaked
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        raise _unauthorized()
+    if payload.get("scope"):
+        raise _unauthorized()
+    return payload["sub"]
+
+
+def get_device_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """A full login or the phone's device token. Only for the writes the phone
+    makes in the background: where it is, and its Health data."""
+    try:
+        payload = decode_token(credentials.credentials)
+    except JWTError:
+        raise _unauthorized()
+    if payload.get("scope") not in (None, DEVICE_SCOPE):
+        raise _unauthorized()
+    return payload["sub"]
 
 
 # ── Request / response models ──
@@ -83,6 +107,43 @@ class MemoryMerge(BaseModel):
     keep_id: int
     drop_id: int
     content: str
+
+# An APNs device token is hex, 32 bytes today. Apple says its length may change,
+# so the bound is loose; what matters is that nothing else reaches a URL path.
+class PushToken(BaseModel):
+    token: str = Field(pattern=r"^[0-9a-fA-F]{32,200}$")
+
+class PushRegistration(PushToken):
+    # Which APNs host this token belongs to: a build run from Xcode is sandbox,
+    # one installed from TestFlight or the App Store is production.
+    environment: Literal["sandbox", "production"]
+    device_name: Optional[str] = Field(default=None, max_length=100)
+
+# What the Nova app reads from HealthKit and sends when it opens. Every number is
+# bounded, because these are quoted back to him by voice: one corrupt row
+# ("weight 18300") would be read out as fact.
+class HealthDay(BaseModel):
+    day: date
+    steps: Optional[int] = Field(default=None, ge=0, le=200_000)
+    active_kcal: Optional[float] = Field(default=None, ge=0, le=20_000)
+    weight_lb: Optional[float] = Field(default=None, gt=0, le=1_000)
+
+class HealthWorkout(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    kind: str = Field(min_length=1, max_length=40)
+    started_at: datetime
+    minutes: float = Field(ge=0, le=1_440)
+    distance_mi: Optional[float] = Field(default=None, ge=0, le=500)
+    kcal: Optional[float] = Field(default=None, ge=0, le=20_000)
+
+class HealthSync(BaseModel):
+    days: list[HealthDay] = Field(default_factory=list, max_length=60)
+    workouts: list[HealthWorkout] = Field(default_factory=list, max_length=100)
+
+class PhonePresence(BaseModel):
+    state: Literal["home", "away"]
+    # When the phone saw the crossing, not when it arrived here
+    at: datetime
 
 class EventChange(BaseModel):
     title: Optional[str] = None
@@ -454,6 +515,86 @@ def finish_task(task_id: int, user: str = Depends(get_current_user)):
     if not complete_task(task_id):
         raise HTTPException(status_code=404, detail="No active task with that id")
     return {"completed": True, "day": task_day()}
+
+
+# ── Push notifications ──
+
+@app.post("/push/register")
+def register_push(body: PushRegistration, user: str = Depends(get_current_user)):
+    # Called on every launch, so this is an upsert and a repeat is not an error.
+    save_push_device(body.token.lower(), body.environment, body.device_name)
+    return {"registered": True}
+
+
+@app.post("/push/unregister")
+def unregister_push(body: PushToken, user: str = Depends(get_current_user)):
+    # Signing out should stop Nova's messages reaching that handset. Answering
+    # the same whether or not the token was known keeps this safe to retry.
+    remove_push_device(body.token.lower())
+    return {"unregistered": True}
+
+
+@app.post("/push/test")
+def test_push(user: str = Depends(get_current_user)):
+    """Send a notification now, so the whole chain can be checked without
+    waiting for a reminder: the key, the team, the bundle id, and whether the
+    phone registered against the right APNs host."""
+    gaps = push.missing()
+    if gaps:
+        raise HTTPException(status_code=503,
+                            detail="Push is not set up on the Pi yet: " + ", ".join(gaps))
+    sent = push.notify("Nova", "This is a test notification.", kind="test")
+    if sent == 0:
+        raise HTTPException(status_code=502,
+                            detail="Apple did not accept it. Check journalctl -u miles-server.")
+    return {"sent": sent}
+
+
+# ── Device token and phone presence ──
+
+@app.post("/auth/device", response_model=TokenResponse)
+def issue_device_token(user: str = Depends(get_current_user)):
+    """The phone's long lived token for background writes. Needs a full login,
+    so it can only be had by someone who could already do everything it can."""
+    return TokenResponse(access_token=create_token(
+        user, expires_minutes=DEVICE_TOKEN_EXPIRE_DAYS * 24 * 60, scope=DEVICE_SCOPE))
+
+
+@app.post("/presence/phone")
+def report_phone_presence(body: PhonePresence, user: str = Depends(get_device_user)):
+    """A geofence crossing. Logged only: nothing acts on it until a few days of
+    these show how promptly and reliably iOS reports them."""
+    at = body.at.astimezone().replace(tzinfo=None) if body.at.tzinfo else body.at
+    log_phone_presence(body.state, at.isoformat())
+    return {"logged": True}
+
+
+@app.get("/presence/phone")
+def phone_presence(user: str = Depends(get_current_user)):
+    latest = latest_phone_presence()
+    if latest is None:
+        return {"state": None, "at": None}
+    return {"state": latest[0], "at": latest[1]}
+
+
+# ── Health ──
+
+@app.post("/health/sync")
+def sync_health(body: HealthSync, user: str = Depends(get_device_user)):
+    """The app's copy of its Health data. Each day replaces the stored day whole,
+    so a reading deleted in Health disappears here on the next sync."""
+    days = [{"day": d.day.isoformat(), "steps": d.steps,
+             "active_kcal": d.active_kcal, "weight_lb": d.weight_lb}
+            for d in body.days]
+    workouts = []
+    for w in body.workouts:
+        # The Pi reads times as its own local time everywhere else. The app sends
+        # an instant, so convert it, or a 7 AM run would be stored as noon.
+        started = w.started_at.astimezone().replace(tzinfo=None) if w.started_at.tzinfo else w.started_at
+        workouts.append({"id": w.id, "kind": w.kind, "started_at": started.isoformat(),
+                         "minutes": w.minutes, "distance_mi": w.distance_mi, "kcal": w.kcal})
+    save_health_sync(days, workouts)
+    return {"days": len(days), "workouts": len(workouts)}
 
 
 def _calendar_call(fn, *args, **kwargs):
