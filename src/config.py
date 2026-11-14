@@ -131,7 +131,10 @@ VOICEPRINT_SAMPLE_CAP = 60
 # playing from the array's own jack, the wake model heard him over her 27 of 29
 # times on BARGE_IN_CHANNEL. What was tried and measured is in BACKEND_TODO.md,
 # Barge in on the array.
-BARGE_IN = True
+# Off Nov 14 2026: too many false stops, and the mic was moved, so the
+# floors below were tuned for spots that no longer exist. Back on once they
+# are retuned from data/barge_in_stops.
+BARGE_IN = False
 
 # Which of the array's two channels barge in listens on, while she plays.
 # Sep 30 2026, "hey nova" said over her: channel 0, the processed output, chopped
