@@ -124,6 +124,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── oura_tools.py          # Oura readiness, sleep, heart rate, activity
 │   ├── hevy_tools.py          # Hevy workouts, lift history, routines, session targets; read only
 │   ├── hevy_progress.py       # raises a routine's weight when a workout earned it, on a timer
+│   ├── hevy_edit.py           # routine changes by voice: swap, add, remove, adjust; asked first
 │   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
 │   ├── lists_tasks.py         # lists and tasks by voice: add, check off, read; days start at 4am
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side

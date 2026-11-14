@@ -1679,8 +1679,8 @@ weight he lowers on purpose in the app stays lowered. Only raises are
 guarded: a stale copy can still undo a structural change made from here, so
 check the routine after a session that follows one. Hevy replaces a routine whole on update and has no undo, so an edit
 must keep the old routine locally first, and an exercise name has to resolve
-to one of 451 templates, so a change is read back before it is sent. He builds
-and edits routines in the app, not by voice. Logging workouts by voice is not
+to one of 451 templates, so a change is read back before it is sent. Since Nov 14
+2026 he can also change routines by voice, asked first (`hevy_edit.py`, BRAIN.md). Logging workouts by voice is not
 planned: he logs in the app during the session. No bridge line yet;
 `bridge_health` names Oura, so lifting needs its own rendered phrases.
 

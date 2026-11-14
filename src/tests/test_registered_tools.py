@@ -19,6 +19,7 @@ import prowl_tools    # noqa: F401  registers the Prowl tools
 import pending_action # noqa: F401  registers confirm_pending_action
 import web_search     # noqa: F401  offers web_search, run by Anthropic
 import lists_tasks    # noqa: F401  registers the list and task tools
+import hevy_edit      # noqa: F401  registers edit_routine
 from tools import Permission, permits, registry
 
 EXPECTED = {
@@ -51,6 +52,7 @@ EXPECTED = {
     "get_lift_history":        (Permission.READ,           True),
     "get_routines":            (Permission.READ,           True),
     "get_session_plan":        (Permission.READ,           True),
+    "edit_routine":            (Permission.EXTERNAL_WRITE, True),
     "get_job_search_summary":  (Permission.READ,           True),
     "list_job_applications":   (Permission.READ,           True),
     "get_job_application":     (Permission.READ,           True),
@@ -75,6 +77,7 @@ HOKAGE_ONLY = {
     "undo_last_change", "get_job_search_summary", "list_job_applications",
     "get_job_application",
     "get_recent_workouts", "get_lift_history", "get_routines", "get_session_plan",
+    "edit_routine",
     "task_add", "task_complete", "archive_task", "tasks_today",
 }
 
@@ -107,6 +110,9 @@ ROUND_TRIP_WRITES = {
     "rename_calendar_events",
     # What was undone is read back word for word.
     "undo_last_change",
+    # A proposal to change a routine; the question it returns is the point,
+    # and a name that matches several exercises has to be asked about.
+    "edit_routine",
 }
 
 
