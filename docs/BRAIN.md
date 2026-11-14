@@ -597,6 +597,35 @@ Accepting a discovered job is the only write. It is staged through
 that turn, because `propose` merges one turn's proposals under a single yes and
 two accepts would become a bulk accept.
 
+### Routines are edited by voice, asked first (Nov 14 2026)
+
+`edit_routine` in `hevy_edit.py` swaps, adds or removes an exercise, or
+changes one's sets, reps, rep range, weight, seconds or rest. Asked for after
+Nov 3 2026, when Nova said "Let me update Lower Strength" with no tool behind
+it and then admitted she could not.
+
+- **Asked, then done.** It stages the change through `pending_action` and
+  returns a question built in code ("In Lower Strength, swap Handstand Push Up
+  Negative for Pike Pushup, 2 sets: 3 reps, 4 reps, resting 1 minute 30
+  seconds?"). Only a yes on the next turn runs it.
+- **Read fresh on the yes.** The routine is fetched again and the same change
+  applied to that copy, so an edit he made in the app meanwhile survives and
+  several changes confirmed together build on each other. Backed up to
+  `data/hevy_backups/edit_*` before every write; only the named exercise
+  changes and the rest goes back as read.
+- **Names are matched in code** against Hevy's 454 templates, plurals and
+  spacing forgiven ("pike push ups" is Pike Pushup). Several matches are asked
+  about, never picked.
+- **Targets follow the kind of lift.** A swap keeps sets and reps but drops the
+  old lift's weight. A swap between a rep lift and a timed hold needs the new
+  target said, and so does an added exercise (three sets unless he says).
+- Every Done tells him to refresh routines in the Hevy app, since its stale
+  copy can write the old routine back when he saves a workout (Oct 2 2026).
+  Logged workouts are never edited.
+
+The prompt now also forbids saying a change is being made unless a tool call
+in that turn makes it.
+
 ### Lists and tasks (Nov 13 2026)
 
 `lists_tasks.py` holds seven tools: `list_add`, `list_check` and `list_show`

@@ -41,6 +41,7 @@ import prowl_tools    # noqa: F401
 import pending_action # noqa: F401
 import web_search     # noqa: F401
 import lists_tasks    # noqa: F401
+import hevy_edit      # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
                     HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN,
@@ -473,6 +474,7 @@ _STAGE_WORDS = {
     "confirm_pending_action":  "Making the change",
     "create_calendar_event":   "Adding it to your calendar",
     "delete_calendar_event":   "Deleting the event",
+    "edit_routine":            "Reading your routine",
     "dismiss":                 None,
     "find_schedule_conflicts": "Looking for conflicts",
     "get_job_application":     "Opening that application",
