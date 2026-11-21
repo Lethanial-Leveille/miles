@@ -1,14 +1,16 @@
+import re
 import time
 import threading
 import requests
 import sqlite3
-from datetime import datetime, timedelta
-from config import DEFAULT_LOCATION, WEATHER_API_KEY, DB_PATH, PUSH_KINDS
+from datetime import datetime, timedelta, timezone
+from config import DEFAULT_LOCATION, DB_PATH, PUSH_KINDS
 from tools import Permission, tool
 from parsing import words_for_number
 from database import due_reminders, complete_reminder
 import alerts
 import push
+import apple_keys
 
 
 def _plural(amount, unit):
@@ -40,78 +42,105 @@ def _attributive(unit):
 
 # ── Weather ──
 
+# Apple's WeatherKit and Maps Server API since Nov 21 2026, signed with the
+# same key as push (see apple_keys), replacing OpenWeatherMap and its own key.
+_WEATHER_URL = "https://weatherkit.apple.com/api/v1/weather/en/{lat}/{lon}"
+_GEOCODE_URL = "https://maps-api.apple.com/v1/geocode"
+_TIMEZONE = "America/New_York"
+
 # Coordinates for a place name do not change, and geocoding was previously run
 # on every single request. Caching for the life of the process removes one HTTP
-# call per lookup, which roughly pays for the forecast call added below.
+# call per lookup.
 _GEOCODE_CACHE = {}
 
-# OpenWeatherMap condition ids: 2xx thunderstorm, 3xx drizzle, 5xx rain,
-# 6xx snow. 7xx is atmosphere (haze, fog), 800 clear, 80x cloud. So anything
-# below 700 is falling out of the sky and anything at or above it is not.
-_PRECIP_CEILING = 700
+# Results are ranked near here, so "Gainesville" is the one in Florida rather
+# than Georgia, and other bare city names prefer the nearer match.
+_NEAR = "29.6516,-82.3248"
 
-# Three hour steps, so four blocks is twelve hours. Enough to answer "is it
-# going to rain later" without pretending to a precision the endpoint does not
-# have: this cannot say "it stops in twenty minutes". Minute level precipitation
-# is One Call 3.0, which is a separate signup with a card on file.
-_FORECAST_BLOCKS = 4
+# An hour counts as wet when Apple gives it an even chance or better. Lower
+# than that is the 30% chance most days carry in summer, and announcing it
+# every time teaches him to ignore the warning.
+_PRECIP_CHANCE = 0.5
+
+# Hourly steps, so twelve is the same twelve hours the old three hour forecast
+# covered, now to the hour. It still cannot say "it stops in twenty minutes".
+_FORECAST_HOURS = 12
+
+# conditionCode values that mean something is falling right now. WeatherKit's
+# precipitationIntensity says the same when it is above zero; either is enough.
+_WET_CODES = {
+    "Drizzle", "Rain", "HeavyRain", "Showers", "ScatteredShowers", "IsolatedThunderstorms",
+    "ScatteredThunderstorms", "StrongStorms", "Thunderstorms", "Snow", "HeavySnow",
+    "Flurries", "SnowShowers", "Sleet", "FreezingRain", "FreezingDrizzle", "Hail",
+    "MixedRainAndSleet", "MixedRainAndSnow", "MixedRainfall", "MixedSnowAndSleet",
+    "WintryMix", "Blizzard", "BlowingSnow", "TropicalStorm", "Hurricane",
+}
 
 
 def _geocode(location):
-    """Resolve a place name to coordinates, cached per process."""
+    """Resolve a place name to (lat, lon, name), cached per process."""
     if location in _GEOCODE_CACHE:
         return _GEOCODE_CACHE[location]
 
-    geo = requests.get(
-        "http://api.openweathermap.org/geo/1.0/direct",
-        params={"q": location, "limit": 1, "appid": WEATHER_API_KEY},
+    r = requests.get(
+        _GEOCODE_URL,
+        params={"q": location, "searchLocation": _NEAR},
+        headers={"Authorization": f"Bearer {apple_keys.maps_access_token()}"},
+        timeout=10,
     )
-    rows = geo.json()
+    rows = r.json().get("results", [])
     if not rows:
         return None
 
-    coords = (rows[0]["lat"], rows[0]["lon"])
-    _GEOCODE_CACHE[location] = coords
-    return coords
+    top = rows[0]
+    lines = top.get("formattedAddressLines") or [location]
+    found = (top["coordinate"]["latitude"], top["coordinate"]["longitude"], lines[0])
+    _GEOCODE_CACHE[location] = found
+    return found
 
 
-def _is_precip(block):
-    return block["weather"][0]["id"] < _PRECIP_CEILING
+def _condition(code):
+    """"MostlyCloudy" read as "mostly cloudy"."""
+    return re.sub(r"(?<!^)(?=[A-Z])", " ", code or "").lower()
 
 
-def _precip_outlook(lat, lon, raining_now):
+def _f(celsius):
+    return round(celsius * 9 / 5 + 32)
+
+
+def _wet_hour(hour):
+    return (hour.get("precipitationType", "clear") != "clear"
+            and hour.get("precipitationChance", 0) >= _PRECIP_CHANCE)
+
+
+def _precip_outlook(hours, raining_now, now=None):
     """When precipitation starts or stops in the next twelve hours.
 
     Returns a short phrase, or None when there is nothing to say. None is the
     common case and it matters: a tool that always returns a rain field invites
     Nova to mention rain on a clear day."""
-    try:
-        r = requests.get(
-            "https://api.openweathermap.org/data/2.5/forecast",
-            params={"lat": lat, "lon": lon, "appid": WEATHER_API_KEY,
-                    "units": "imperial"},
-        )
-        blocks = r.json().get("list", [])[:_FORECAST_BLOCKS]
-    except Exception:
-        # A failed forecast must not fail the whole lookup. Current conditions
-        # are still worth answering with.
+    now = now or datetime.now(timezone.utc)
+    ahead = []
+    for hour in hours:
+        start = datetime.fromisoformat(hour["forecastStart"].replace("Z", "+00:00"))
+        if start > now:
+            ahead.append((start, hour))
+    ahead = ahead[:_FORECAST_HOURS]
+    if not ahead:
         return None
 
-    if not blocks:
-        return None
-
-    def when(block):
-        return datetime.fromtimestamp(block["dt"]).strftime("%-I %p")
+    def when(start):
+        return start.astimezone().strftime("%-I %p")
 
     if raining_now:
-        for block in blocks:
-            if not _is_precip(block):
-                return f"easing off around {when(block)}"
+        for start, hour in ahead:
+            if not _wet_hour(hour):
+                return f"easing off around {when(start)}"
         return "continuing through the next several hours"
 
-    for block in blocks:
-        if _is_precip(block):
-            return f"rain likely around {when(block)}"
+    for start, hour in ahead:
+        if _wet_hour(hour):
+            return f"{hour['precipitationType']} likely around {when(start)}"
     return None
 
 
@@ -127,28 +156,39 @@ def fetch_weather(location=None):
     aloud, every time, whatever was asked. Telling her to be brief fought the
     data she was handed; changing the data is the lever that actually works."""
     location = location or DEFAULT_LOCATION
+    if not apple_keys.configured():
+        return {"error": "Weather is not set up: the Apple key is missing on the Pi."}
 
-    coords = _geocode(location)
-    if coords is None:
+    found = _geocode(location)
+    if found is None:
         return {"error": f"Could not find location: {location}"}
 
-    lat, lon = coords
+    lat, lon, name = found
     r = requests.get(
-        "https://api.openweathermap.org/data/2.5/weather",
-        params={"lat": lat, "lon": lon, "appid": WEATHER_API_KEY,
-                "units": "imperial"},
+        _WEATHER_URL.format(lat=lat, lon=lon),
+        params={"dataSets": "currentWeather,forecastHourly", "timezone": _TIMEZONE},
+        headers={"Authorization": f"Bearer {apple_keys.weatherkit_token()}"},
+        timeout=10,
     )
     d = r.json()
+    now = d["currentWeather"]
 
-    raining_now = _is_precip(d)
+    raining_now = (now.get("precipitationIntensity", 0) > 0
+                   or now.get("conditionCode") in _WET_CODES)
+    try:
+        precip = _precip_outlook(d.get("forecastHourly", {}).get("hours", []), raining_now)
+    except Exception:
+        # A bad forecast must not fail the whole lookup. Current conditions
+        # are still worth answering with.
+        precip = None
     return {
-        "location": location,
-        "temp": round(d["main"]["temp"]),
-        "feels_like": round(d["main"]["feels_like"]),
-        "condition": d["weather"][0]["description"],
-        "humidity": d["main"]["humidity"],
-        "wind_mph": round(d["wind"]["speed"]),
-        "precip": _precip_outlook(lat, lon, raining_now),
+        "location": name,
+        "temp": _f(now["temperature"]),
+        "feels_like": _f(now["temperatureApparent"]),
+        "condition": _condition(now.get("conditionCode")),
+        "humidity": round(now["humidity"] * 100),
+        "wind_mph": round(now["windSpeed"] / 1.609344),
+        "precip": precip,
     }
 
 

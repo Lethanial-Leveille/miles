@@ -348,18 +348,18 @@ minutes (`ACCESS_TOKEN_EXPIRE_MINUTES` in `auth.py`). No refresh token is issued
 
 The services read `~/miles/.env` (gitignored, mode 600) through systemd
 `EnvironmentFile`, and `config.py` loads the same file for anything run by hand.
-`~/.bashrc` also exports ANTHROPIC_API_KEY, WEATHER_API_KEY and FISH_API_KEY, but
+`~/.bashrc` also exports ANTHROPIC_API_KEY, WEATHER_API_KEY (unused since Nov 21 2026) and FISH_API_KEY, but
 only interactive shells see it; no service does.
 
 `~/miles/.env`:
 - MILES_PASSWORD_HASH
 - MILES_JWT_SECRET
 - ANTHROPIC_API_KEY
-- WEATHER_API_KEY
+- WEATHER_API_KEY (unused since weather moved to WeatherKit on Nov 21 2026; safe to delete)
 - ELEVENLABS_API_KEY
 - FISH_API_KEY (retained for rollback only)
 - OURA_CLIENT_ID, OURA_CLIENT_SECRET
-- APNS_TEAM_ID, APNS_KEY_ID, APNS_KEY_PATH (Apple push; see
+- APNS_TEAM_ID, APNS_KEY_ID, APNS_KEY_PATH (one key, "MILES Pi", for APNs, WeatherKit and Maps; the .p8 lives in ~/.miles-keys, mode 600; see
   [Push notifications](#push-notifications-oct-30-2026). Push is off until all
   three are set. `APNS_BUNDLE_ID` defaults to `com.Lethanial.Nova`)
 - HEVY_API_KEY (from Hevy's developer settings; needs Hevy Pro. A static key,
