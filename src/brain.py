@@ -16,6 +16,7 @@ from database import (save_message, delete_message, extend_message, last_reply_a
                       get_recent_messages, get_messages_after, search_memories, memory_manifest,
                       get_shareable_memories, effective_tier)
 from parsing import extract_memories, strip_leading_bracket_cue
+import screen_text
 from stream_router import StreamRouter
 import interrupt_speech
 from tools import registry, Permission, ToolNotice, permits
@@ -1445,6 +1446,11 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         await router.finalize()
         await tts_task
         final_text = accumulated
+
+    # Fixed in code, not asked for again: see screen_text. What is saved and
+    # returned is what the app shows, and the done event replaces the streamed
+    # deltas with it, so the screen ends on the tidied reply.
+    final_text = screen_text.for_display(final_text, channel)
 
     # An empty response is a turn Nova deliberately stayed silent through, and
     # writing it down puts a blank assistant message into the history that the

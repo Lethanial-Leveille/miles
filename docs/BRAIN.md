@@ -231,6 +231,19 @@ what gets saved, so a reader shown it has to be told. Lines code speaks itself,
 a staged question or the `Done.` fallback, are streamed as deltas too, so what
 is read matches what is said.
 
+
+### Tidied in code (Nov 21 2026)
+
+The prompt rules for numerals and dashes did not hold: typed replies still came
+back with "ninety six" and em dashes, because the history she reads is mostly
+spoken replies. screen_text.for_display now runs on every finished reply
+before it is saved and returned. Every channel: an em or en dash between words
+becomes a comma, between two numbers "to"; hyphens inside words are left.
+Text channel only: a spelled out number of 10 or more, a decimal or a
+percentage becomes digits. One to nine stay words, and a run that reads as two
+numbers ("eleven fifty eight") is left as written. The streamed deltas are not
+tidied; the done event carries the tidied reply and replaces them on screen.
+
 ## Local intent
 
 `set_timer`, `time_of_day`, `cancel_reminder`, `dismiss` and `weather` are
