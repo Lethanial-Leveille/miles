@@ -93,7 +93,9 @@ def turn(monkeypatch):
 
 def test_a_typed_reply_is_returned_and_never_played(turn):
     result, played = turn("text", _FakeStream(["Twelve credits", " is full time."]))
-    assert result.text == "Twelve credits is full time."
+    # A typed reply is read, so a spelled out number she wrote anyway becomes
+    # digits; the voice turn below keeps the words it will speak.
+    assert result.text == "12 credits is full time."
     assert played == []
 
 
@@ -146,7 +148,9 @@ def test_the_reply_is_streamed_as_it_is_written(turn):
     result, _ = turn("text", _FakeStream(["Twelve credits", " is full time."]),
                      on_text=lambda kind, text: events.append((kind, text)))
     assert events == [("delta", "Twelve credits"), ("delta", " is full time.")]
-    assert "".join(text for _, text in events) == result.text
+    # The deltas are what she wrote; the reply returned (and sent as done, which
+    # replaces them on screen) is that text tidied by screen_text.
+    assert result.text == "12 credits is full time."
 
 
 def test_a_tool_turn_tells_the_reader_to_drop_the_bridge_sentence(turn):
