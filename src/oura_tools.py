@@ -114,6 +114,35 @@ def _latest_day(items):
     return max(items, key=lambda item: item.get("day", "")) if items else None
 
 
+def wake_from_periods(periods, now):
+    """The end of his most recent main sleep that has already ended, as a naive
+    local time, or None. Naps do not start a new day, so only long sleeps count
+    when there are any."""
+    mains = [p for p in periods if p.get("type") == "long_sleep"] or \
+            [p for p in periods if p.get("type") == "sleep"]
+    ends = []
+    for p in mains:
+        end = p.get("bedtime_end")
+        if not end:
+            continue
+        t = datetime.datetime.fromisoformat(end)
+        if t.tzinfo:
+            t = t.astimezone().replace(tzinfo=None)
+        if t <= now:
+            ends.append(t)
+    return max(ends) if ends else None
+
+
+def last_wake(now=None):
+    """When he last woke up, from the ring, or None if the ring cannot say."""
+    now = now or datetime.datetime.now()
+    try:
+        return wake_from_periods(_get("sleep", **_day_window(now.date())), now)
+    except Exception as exc:
+        print(f"Oura wake time unavailable: {exc}", flush=True)
+        return None
+
+
 def duration_words(seconds):
     """"10 hours 43 minutes". Words carry the unit all the way to speech, where
     "10h 43m" asks the model to expand an abbreviation and a bare number asks it
@@ -129,24 +158,139 @@ def duration_words(seconds):
     return " ".join(parts)
 
 
-def summarize_sleep(periods, daily):
-    """The most recent main sleep, with durations from the sleep periods and the
-    score from daily_sleep. Naps are skipped when a main sleep exists, because
-    "how did I sleep" means the night."""
-    nights = [p for p in periods if p.get("type") == "long_sleep"] or periods
-    if not nights:
+# Nov 21 2026: "how did I sleep" came back as efficiency 76%, deep 1:46, REM
+# 1:41, score 75. A person asked the same question says roughly how long you
+# slept, when you dropped off and woke, and whether that is normal for you. So
+# the summary leads with that, in rounded clock times and plain durations, and
+# keeps the instrument readings under if_he_asks_for_detail.
+
+# Nights to compare against. Two weeks is enough for a usual that a single bad
+# night does not move, short enough to follow a semester changing his hours.
+USUAL_NIGHTS = 14
+_MIN_NIGHTS_FOR_USUAL = 3
+# Differences smaller than these are noise, and "eleven minutes more than
+# usual" is the kind of precision nobody asked for.
+_SAME_DURATION_MIN = 30
+_SAME_CLOCK_MIN = 45
+_AWAKE_IN_BED_WORTH_SAYING_MIN = 45
+_NAP_WORTH_SAYING_MIN = 15
+
+
+def _local(stamp):
+    t = datetime.datetime.fromisoformat(stamp)
+    return t.astimezone().replace(tzinfo=None) if t.tzinfo else t
+
+
+def about_duration(seconds):
+    """"about 7 and a half hours": to the nearest quarter hour, as said aloud."""
+    if not isinstance(seconds, (int, float)):
         return None
-    night = max(nights, key=lambda p: p.get("bedtime_end", ""))
+    quarters = round(seconds / 900)
+    hours, q = divmod(quarters, 4)
+    if hours == 0:
+        minutes = max(5, round(seconds / 300) * 5)
+        return f"about {minutes} minutes"
+    if hours == 1:
+        return {0: "about an hour", 1: "a little over an hour",
+                2: "about an hour and a half", 3: "almost 2 hours"}[q]
+    return {0: f"about {hours} hours",
+            1: f"a little over {hours} hours",
+            2: f"about {hours} and a half hours",
+            3: f"almost {hours + 1} hours"}[q]
+
+
+def clock(t):
+    """Rounded to five minutes, which is as exact as "around" means."""
+    t = t + datetime.timedelta(minutes=2, seconds=30)
+    t = t.replace(minute=t.minute - t.minute % 5, second=0, microsecond=0)
+    return t.strftime("%-I:%M %p").replace(":00 ", " ")
+
+
+def _compare_minutes(diff, same, more, less):
+    if abs(diff) < same:
+        return "about the same as usual"
+    words = about_duration(abs(diff) * 60)
+    return f"{words} {more if diff > 0 else less} than usual"
+
+
+def _minutes_after_six_pm(t):
+    """Bedtimes straddle midnight, so they are compared on an evening clock."""
+    return (t.hour * 60 + t.minute - 18 * 60) % 1440
+
+
+def _rating(score):
+    if score is None:
+        return None
+    return ("great" if score >= 85 else "good" if score >= 75
+            else "okay" if score >= 65 else "rough")
+
+
+def summarize_sleep(periods, daily):
+    """The most recent main sleep, said the way a person would say it.
+
+    Naps are skipped when a main sleep exists, because "how did I sleep" means
+    the night; naps after it are mentioned on their own."""
+    mains = [p for p in periods if p.get("type") == "long_sleep"] or periods
+    if not mains:
+        return None
+    night = max(mains, key=lambda p: p.get("bedtime_end", ""))
     score = next((d.get("score") for d in daily if d.get("day") == night.get("day")), None)
-    return {
-        "date": night.get("day"),
-        "sleep_score_out_of_100": score,
-        "total_sleep": duration_words(night.get("total_sleep_duration")),
-        "time_in_bed": duration_words(night.get("time_in_bed")),
-        "deep_sleep": duration_words(night.get("deep_sleep_duration")),
-        "rem_sleep": duration_words(night.get("rem_sleep_duration")),
-        "efficiency_percent": night.get("efficiency"),
+
+    in_bed = _local(night["bedtime_start"]) if night.get("bedtime_start") else None
+    asleep = in_bed + datetime.timedelta(seconds=night.get("latency") or 0) if in_bed else None
+    woke = _local(night["bedtime_end"]) if night.get("bedtime_end") else None
+    total = night.get("total_sleep_duration")
+    awake_s = (night.get("time_in_bed") or 0) - (total or 0)
+
+    out = {
+        "night": (f"{asleep.strftime('%A')} night" if asleep and asleep.hour >= 12
+                  else f"{(asleep - datetime.timedelta(days=1)).strftime('%A')} night"
+                  if asleep else night.get("day")),
+        "slept": about_duration(total),
+        "fell_asleep_around": clock(asleep) if asleep else None,
+        "woke_up_around": clock(woke) if woke else None,
+        "awake_in_bed": (about_duration(awake_s)
+                         if awake_s >= _AWAKE_IN_BED_WORTH_SAYING_MIN * 60 else None),
+        "overall": _rating(score),
+        "sleep_compared_to_usual": None,
+        "bedtime_compared_to_usual": None,
+        "wake_compared_to_usual": None,
+        "naps_since": [
+            f"{about_duration(n.get('total_sleep_duration'))} around {clock(_local(n['bedtime_start']))}"
+            for n in periods
+            if n is not night and n.get("type") != "long_sleep" and n.get("bedtime_start")
+            and woke and _local(n["bedtime_start"]) > woke
+            and (n.get("total_sleep_duration") or 0) >= _NAP_WORTH_SAYING_MIN * 60
+        ],
+        "if_he_asks_for_detail": {
+            "sleep_score_out_of_100": score,
+            "efficiency_percent": night.get("efficiency"),
+            "deep_sleep": duration_words(night.get("deep_sleep_duration")),
+            "rem_sleep": duration_words(night.get("rem_sleep_duration")),
+            "time_in_bed": duration_words(night.get("time_in_bed")),
+            "lowest_heart_rate_bpm": night.get("lowest_heart_rate"),
+            "average_hrv_ms": night.get("average_hrv"),
+        },
     }
+
+    before = [p for p in periods if p.get("type") == "long_sleep" and p is not night
+              and p.get("bedtime_end", "") < night.get("bedtime_end", "")][-USUAL_NIGHTS:]
+    if len(before) >= _MIN_NIGHTS_FOR_USUAL and asleep and woke and total:
+        usual_total = statistics.median(p["total_sleep_duration"] for p in before
+                                        if p.get("total_sleep_duration"))
+        out["sleep_compared_to_usual"] = _compare_minutes(
+            (total - usual_total) / 60, _SAME_DURATION_MIN, "more", "less")
+        usual_asleep = statistics.median(
+            _minutes_after_six_pm(_local(p["bedtime_start"])
+                                  + datetime.timedelta(seconds=p.get("latency") or 0))
+            for p in before)
+        out["bedtime_compared_to_usual"] = _compare_minutes(
+            _minutes_after_six_pm(asleep) - usual_asleep, _SAME_CLOCK_MIN, "later", "earlier")
+        usual_woke = statistics.median(_minutes_after_six_pm(_local(p["bedtime_end"]))
+                                       for p in before)
+        out["wake_compared_to_usual"] = _compare_minutes(
+            _minutes_after_six_pm(woke) - usual_woke, _SAME_CLOCK_MIN, "later", "earlier")
+    return out
 
 
 def summarize_heart_rate(samples, now):
@@ -200,10 +344,18 @@ def get_oura_readiness():
 @tool(
     name="get_oura_sleep",
     description=(
-        "Lethanial's most recent night of sleep from his Oura ring: total sleep, "
-        "time in bed, deep and REM sleep as durations, efficiency as a percent, "
-        "and the sleep score out of one hundred. Call this when he asks how he "
-        "slept, how long he slept, or about his deep or REM sleep."
+        "Lethanial's most recent night of sleep from his Oura ring, already put "
+        "the way a friend would say it: roughly how long he slept, when he fell "
+        "asleep and woke up, whether he lay awake a long time, naps since, a "
+        "one word rating, and how the night compares to his usual over the "
+        "last two weeks. Call this when he asks how he slept, how long he "
+        "slept, when he went to bed or woke up, or about his deep or REM sleep. "
+        "Answer like a person: lead with about how long and from when to when, "
+        "then only what stands out, such as a much later bedtime than usual, a "
+        "short night, or a long stretch awake. A null comparison means nothing "
+        "notable or not enough history, so leave it out. The numbers under "
+        "if_he_asks_for_detail (score, efficiency, deep, REM, heart rate, HRV) "
+        "are only for when he asks for them by name or asks why."
     ),
     input_schema=_NO_INPUT,
     permission=Permission.READ,
@@ -212,7 +364,10 @@ def get_oura_readiness():
 )
 def get_oura_sleep():
     window = _day_window()
-    summary = summarize_sleep(_get("sleep", **window), _get("daily_sleep", **window))
+    # Two weeks of nights, so the last one can be compared with his usual
+    history = dict(window, start_date=(datetime.date.today()
+                                       - datetime.timedelta(days=USUAL_NIGHTS + 1)).isoformat())
+    summary = summarize_sleep(_get("sleep", **history), _get("daily_sleep", **window))
     return summary or "No sleep recorded in the last three days."
 
 

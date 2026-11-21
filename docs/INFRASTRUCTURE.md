@@ -518,6 +518,18 @@ if it is read as live. Each day sent replaces the stored day whole, so a reading
 deleted in Health disappears here too. Every number is bounded at the endpoint
 because they are read back aloud.
 
+Since Nov 21 2026 (migration 38, ) the app also sends the last
+two days of steps hour by hour, and "today" means his waking day: from the end
+of his last main sleep on the Oura ring (), or from 4 AM
+when the ring has no recent wake time. The tool returns
+ beside , so a question
+at 12:49 AM is no longer answered with the 27 steps since midnight.
+
+ now answers the way a person would: about how long, from when
+to when, time awake in bed, naps since, a one word rating and how the night
+compares with his median over two weeks. Score, efficiency, deep, REM, heart
+rate and HRV sit under .
+
 Oura also reports steps and active calories. The tool's fields say `iphone` so
 the two are not read as one. What only the phone has is body weight over time and
 the workouts Apple records, like a run with its distance.

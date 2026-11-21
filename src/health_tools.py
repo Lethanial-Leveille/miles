@@ -21,7 +21,10 @@ computed in code and handed over as numbers with units in the field names.
 
 from datetime import datetime, timedelta
 
-from database import health_days_since, health_workouts_since, last_health_sync
+from config import DAY_STARTS_AT_HOUR
+from database import (health_days_since, health_steps_between, health_workouts_since,
+                      last_health_sync)
+import oura_tools
 from tools import Permission, tool
 
 _DEFAULT_DAYS = 7
@@ -30,6 +33,10 @@ _MAX_DAYS = 30
 # The app syncs when it opens, so a few hours old is normal and not worth a
 # caveat; past this, "today" figures are likely well behind.
 _STALE_AFTER_HOURS = 6
+
+# A wake time older than this means the ring was off last night, not that he
+# has been up for a day and a half; the 4 AM day start is the better guess then.
+_WAKE_MAX_AGE_HOURS = 22
 
 # Enough runs to hear a pattern in, few enough for one spoken answer.
 _MAX_WORKOUTS = 6
@@ -44,11 +51,24 @@ def _round(value, places=1):
     return None if value is None else round(value, places)
 
 
-def summarize_health(days, workouts, synced_at, now, window_days):
+def waking_day(now, woke=None):
+    """Where his day began: the wake time if the ring has a recent one, else the
+    4 AM day start, which is when the rest of Miles turns the day over. Returns
+    (start, source)."""
+    if woke and timedelta(0) <= now - woke <= timedelta(hours=_WAKE_MAX_AGE_HOURS):
+        return woke, "Oura wake time"
+    start = now.replace(hour=DAY_STARTS_AT_HOUR, minute=0, second=0, microsecond=0)
+    if start > now:
+        start -= timedelta(days=1)
+    return start, f"no wake time from the ring, so counted from {DAY_STARTS_AT_HOUR} AM"
+
+
+def summarize_health(days, workouts, synced_at, now, window_days, waking=None):
     """The answer for the model, from stored rows. Pure, so it can be tested
     against a fixed clock.
 
-    `days` are health_days rows oldest first, `workouts` newest first."""
+    `days` are health_days rows oldest first, `workouts` newest first.
+    `waking` is (start, source, steps) for his day so far, or None."""
     today = now.date().isoformat()
     today_row = next((d for d in days if d["day"] == today), None)
 
@@ -77,7 +97,12 @@ def summarize_health(days, workouts, synced_at, now, window_days):
         "last_synced_hours_ago": _round(age_hours),
         "may_be_out_of_date": age_hours > _STALE_AFTER_HOURS,
         "window_days": window_days,
-        "iphone_steps_today_so_far": today_row["steps"] if today_row else None,
+        # His day, not the calendar's: asked at 12:49 AM on Nov 21 2026, the
+        # midnight count said 27 when he had been up since that morning.
+        "iphone_steps_since_waking": waking[2] if waking else None,
+        "day_started_at": (waking[0].strftime("%-I:%M %p %A") if waking else None),
+        "day_started_from": waking[1] if waking else None,
+        "iphone_steps_since_midnight": today_row["steps"] if today_row else None,
         "iphone_active_calories_today_so_far": (
             _round(today_row["active_kcal"], 0) if today_row else None),
         "iphone_average_steps_per_finished_day": average_steps,
@@ -100,8 +125,8 @@ def summarize_health(days, workouts, synced_at, now, window_days):
 @tool(
     name="get_health_summary",
     description=(
-        "Lethanial's numbers from his iPhone's Health app: steps and active "
-        "calories so far today, his average steps on finished days, his body "
+        "Lethanial's numbers from his iPhone's Health app: steps since he woke "
+        "up and since midnight, active calories so far today, his average steps on finished days, his body "
         "weight and how it has changed, and workouts Apple recorded such as "
         "runs and walks with their distance. Call this when he asks about his "
         "weight, how far he ran, how much he walked, or his steps on his "
@@ -109,7 +134,11 @@ def summarize_health(days, workouts, synced_at, now, window_days):
         "time he opened the Nova app: if may_be_out_of_date is true, say when "
         "the numbers are from instead of presenting them as live. Sleep, "
         "readiness and heart rate are Oura's, and lifting is Hevy's, so use "
-        "those tools for them."
+        "those tools for them. "
+        "When he asks how many steps he took today, his day is since he woke "
+        "up, not since midnight: answer with iphone_steps_since_waking, and "
+        "use iphone_steps_since_midnight only when that is null or he asks "
+        "about the calendar day. day_started_at says when his day began."
     ),
     input_schema={
         "type": "object",
@@ -132,7 +161,12 @@ def get_health_summary(days=_DEFAULT_DAYS):
 
     now = datetime.now()
     since = now - timedelta(days=days)
+    start, source = waking_day(now, oura_tools.last_wake(now))
+    # Hourly buckets, so the hour he woke in counts whole; he was asleep for
+    # the part of it before, so that adds next to nothing.
+    steps = health_steps_between(start.replace(minute=0, second=0, microsecond=0).isoformat(),
+                                 now.isoformat())
     return summarize_health(
         health_days_since(since.date().isoformat()),
         health_workouts_since(since.replace(hour=0, minute=0, second=0).isoformat()),
-        synced_at, now, days)
+        synced_at, now, days, waking=(start, source, steps))

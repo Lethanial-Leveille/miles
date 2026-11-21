@@ -870,6 +870,22 @@ def _migration_036_health(conn):
     conn.execute("CREATE INDEX idx_health_workouts_started ON health_workouts (started_at)")
 
 
+def _migration_038_health_hours(conn):
+    """His phone's steps hour by hour, for "since I woke up".
+
+    Nov 21 2026: asked "how many steps today" at 12:49 AM, Nova said 27, the
+    steps since midnight, when he had been up since the morning before. A day
+    total cannot be cut at the moment he woke, so the app also sends the last
+    two days in hourly buckets, keyed by the hour's local start."""
+    conn.execute("""
+        CREATE TABLE health_hours (
+            start TEXT PRIMARY KEY,
+            steps INTEGER NOT NULL,
+            synced_at TEXT NOT NULL
+        )
+    """)
+
+
 def _migration_037_phone_presence(conn):
     """Each time his phone crossed the geofence around home, as the app reported it.
 
@@ -926,6 +942,7 @@ MIGRATIONS = [
     (35, _migration_035_push_devices),
     (36, _migration_036_health),
     (37, _migration_037_phone_presence),
+    (38, _migration_038_health_hours),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -2585,9 +2602,10 @@ def remove_push_device(token):
 
 # ── Health ──
 
-def save_health_sync(days, workouts):
+def save_health_sync(days, workouts, hours=()):
     """Store one sync from the app: dicts for days (day, steps, active_kcal,
-    weight_lb) and workouts (id, kind, started_at, minutes, distance_mi, kcal).
+    weight_lb), workouts (id, kind, started_at, minutes, distance_mi, kcal) and
+    hours (start, steps), each hour replacing the stored hour whole.
 
     One transaction, so a sync that fails halfway leaves the last whole one in
     place and not a week with some days new and some old."""
@@ -2603,6 +2621,10 @@ def save_health_sync(days, workouts):
             "(id, kind, started_at, minutes, distance_mi, kcal, synced_at) "
             "VALUES (:id, :kind, :started_at, :minutes, :distance_mi, :kcal, :synced_at)",
             [{**w, "synced_at": now} for w in workouts])
+        conn.executemany(
+            "INSERT OR REPLACE INTO health_hours (start, steps, synced_at) "
+            "VALUES (:start, :steps, :synced_at)",
+            [{**h, "synced_at": now} for h in hours])
         conn.commit()
     finally:
         conn.close()
@@ -2628,6 +2650,19 @@ def health_workouts_since(started_iso):
         return [dict(r) for r in conn.execute(
             "SELECT id, kind, started_at, minutes, distance_mi, kcal FROM health_workouts "
             "WHERE started_at >= ? ORDER BY started_at DESC", (started_iso,))]
+    finally:
+        conn.close()
+
+
+def health_steps_between(start_iso, end_iso):
+    """Steps in the hourly buckets starting from start_iso up to end_iso, or None
+    when no hourly data covers the span (an app from before Nov 21 2026)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        count, total = conn.execute(
+            "SELECT COUNT(*), SUM(steps) FROM health_hours WHERE start >= ? AND start <= ?",
+            (start_iso, end_iso)).fetchone()
+        return total if count else None
     finally:
         conn.close()
 

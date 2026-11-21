@@ -42,7 +42,7 @@ def test_today_stays_out_of_the_average():
     summary = health_tools.summarize_health(days, [], "2026-10-30T09:00:00", NOW, 7)
     assert summary["iphone_average_steps_per_finished_day"] == 10000
     assert summary["finished_days_averaged"] == 2
-    assert summary["iphone_steps_today_so_far"] == 800
+    assert summary["iphone_steps_since_midnight"] == 800
 
 
 def test_the_age_of_the_sync_is_stated_and_old_data_is_flagged():
@@ -94,11 +94,12 @@ def test_the_tool_says_so_when_nothing_has_ever_been_sent(db):
 
 
 def test_the_tool_reads_what_a_sync_stored(db, monkeypatch):
+    monkeypatch.setattr(health_tools.oura_tools, "last_wake", lambda now=None: None)
     today = datetime.now().date().isoformat()
     database.save_health_sync(
         [_day(today, steps=4200, kcal=310.0, weight=184.2)], [])
     summary = health_tools.get_health_summary(days=3)
-    assert summary["iphone_steps_today_so_far"] == 4200
+    assert summary["iphone_steps_since_midnight"] == 4200
     assert summary["body_weight"]["latest_pounds"] == 184.2
     assert summary["may_be_out_of_date"] is False
 
@@ -175,3 +176,63 @@ def test_an_instant_is_stored_as_the_pis_local_time(client, db, new_york_time):
 def test_an_implausible_payload_is_refused_whole(client, db, body):
     assert client.post("/health/sync", json=body).status_code == 422
     assert database.last_health_sync() is None
+
+
+# ── his day starts when he wakes ──
+
+def _hour(start, steps):
+    return {"start": start, "steps": steps}
+
+
+def test_steps_since_waking_cross_midnight(db, monkeypatch):
+    """Nov 21 2026: at 12:49 AM the midnight count was 27. He had been up since
+    8:10 the morning before, so his day is everything from then."""
+    now = datetime(2026, 11, 21, 0, 49)
+    woke = datetime(2026, 11, 20, 8, 10)
+    database.save_health_sync([_day("2026-11-21", steps=27)], [], [
+        _hour("2026-11-20T07:00:00", 400),    # before he woke: left out
+        _hour("2026-11-20T08:00:00", 300),
+        _hour("2026-11-20T13:00:00", 3000),
+        _hour("2026-11-21T00:00:00", 27)])
+    monkeypatch.setattr(health_tools.oura_tools, "last_wake", lambda now=None: woke)
+    monkeypatch.setattr(health_tools, "datetime", type("D", (datetime,), {"now": staticmethod(lambda: now)}))
+    summary = health_tools.get_health_summary()
+    assert summary["iphone_steps_since_waking"] == 3327
+    assert summary["iphone_steps_since_midnight"] == 27
+    assert summary["day_started_at"] == "8:10 AM Friday"
+    assert summary["day_started_from"] == "Oura wake time"
+
+
+def test_no_ring_falls_back_to_the_four_am_day():
+    now = datetime(2026, 11, 21, 0, 49)
+    start, source = health_tools.waking_day(now, None)
+    assert start == datetime(2026, 11, 20, 4, 0)
+    assert "4 AM" in source
+
+
+def test_a_wake_time_from_days_ago_is_not_trusted():
+    now = datetime(2026, 11, 21, 15, 0)
+    start, _ = health_tools.waking_day(now, datetime(2026, 11, 19, 8, 0))
+    assert start == datetime(2026, 11, 21, 4, 0)
+
+
+def test_no_hourly_data_says_null_rather_than_zero(db, monkeypatch):
+    """An app from before hourly steps sends none; 0 would be a wrong answer."""
+    database.save_health_sync([_day(datetime.now().date().isoformat(), steps=500)], [])
+    monkeypatch.setattr(health_tools.oura_tools, "last_wake", lambda now=None: None)
+    assert health_tools.get_health_summary()["iphone_steps_since_waking"] is None
+
+
+def test_the_endpoint_takes_hourly_steps(client, db):
+    body = {"hours": [{"start": "2026-11-20T13:00:00-05:00", "steps": 3000},
+                      {"start": "2026-11-20T14:00:00-05:00", "steps": 250}]}
+    assert client.post("/health/sync", json=body).status_code == 200
+    assert database.health_steps_between("2026-11-20T00:00:00", "2026-11-21T00:00:00") == 3250
+
+
+def test_naps_do_not_restart_the_day():
+    import oura_tools
+    now = datetime(2026, 11, 20, 18, 0)
+    periods = [{"type": "long_sleep", "bedtime_end": "2026-11-20T08:10:00-05:00"},
+               {"type": "late_nap", "bedtime_end": "2026-11-20T15:30:00-05:00"}]
+    assert oura_tools.wake_from_periods(periods, now) == datetime(2026, 11, 20, 8, 10)
