@@ -481,7 +481,7 @@ Voice auth: SpeechBrain ECAPA (192 dim cosine similarity); an unverified voice i
 Memory: SQLite WAL mode, schema migrations to version 35.
 Push: Apple's push service (APNs) over HTTP/2, `httpx` with `h2`, ES256 provider token signed by python-jose.
 Phone health: Apple Health (HealthKit), copied to the Pi by the Nova app when it opens.
-Weather: OpenWeatherMap.
+Weather: Apple WeatherKit, with the Maps Server API for place names, both signed by apple_keys.py with the APNs key (Nov 21 2026).
 Calendar: Google Calendar API v3, OAuth, dateparser for spoken times.
 Health: Oura API v2, OAuth.
 Workouts: Hevy API v1, static key (Hevy Pro).

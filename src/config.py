@@ -835,7 +835,6 @@ VOICE_SERIOUS = VoiceSettings(
     use_speaker_boost=True, speed=0.95,
 )
 
-WEATHER_API_KEY  = os.environ.get("WEATHER_API_KEY")
 DEFAULT_LOCATION = "Gainesville"
 
 # Anthropic's own web search, run on their side inside the same Claude call, so

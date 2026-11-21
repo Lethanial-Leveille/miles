@@ -49,7 +49,7 @@ Raspberry Pi 5 (8GB)
   SQLite (WAL): memory, conversation history, reminders, tool calls, per turn timing
   FastAPI + JWT, published through a Cloudflare Tunnel at miles.lethanial.com
 
-External: Anthropic Claude (with web search) · Deepgram · ElevenLabs · Google Calendar · Oura · Hevy · Prowl · OpenWeatherMap
+External: Anthropic Claude (with web search) · Deepgram · ElevenLabs · Google Calendar · Oura · Hevy · Prowl · Apple WeatherKit and Maps
 ```
 
 ---
@@ -117,7 +117,7 @@ The principle underneath all of it: **deterministic code does the math and enfor
 * Oura API v2
 * Hevy API v1
 * Prowl (his own job search tracker)
-* OpenWeatherMap
+* Apple WeatherKit and Maps Server API (geocoding), signed with the push key
 
 ---
 
