@@ -136,9 +136,15 @@ class HealthWorkout(BaseModel):
     distance_mi: Optional[float] = Field(default=None, ge=0, le=500)
     kcal: Optional[float] = Field(default=None, ge=0, le=20_000)
 
+class HealthHour(BaseModel):
+    start: datetime
+    steps: int = Field(ge=0, le=50_000)
+
 class HealthSync(BaseModel):
     days: list[HealthDay] = Field(default_factory=list, max_length=60)
     workouts: list[HealthWorkout] = Field(default_factory=list, max_length=100)
+    # Hourly steps for the last two days, from app builds of Nov 21 2026 on
+    hours: list[HealthHour] = Field(default_factory=list, max_length=72)
 
 class PhonePresence(BaseModel):
     state: Literal["home", "away"]
@@ -593,7 +599,11 @@ def sync_health(body: HealthSync, user: str = Depends(get_device_user)):
         started = w.started_at.astimezone().replace(tzinfo=None) if w.started_at.tzinfo else w.started_at
         workouts.append({"id": w.id, "kind": w.kind, "started_at": started.isoformat(),
                          "minutes": w.minutes, "distance_mi": w.distance_mi, "kcal": w.kcal})
-    save_health_sync(days, workouts)
+    # Same conversion: the hour that started at 8 AM here is stored as 08:00
+    hours = [{"start": (h.start.astimezone().replace(tzinfo=None) if h.start.tzinfo
+                        else h.start).isoformat(), "steps": h.steps}
+             for h in body.hours]
+    save_health_sync(days, workouts, hours)
     return {"days": len(days), "workouts": len(workouts)}
 
 
