@@ -395,22 +395,25 @@ def _steps(run, name, start, status, dry_run, minutes, check_only):
         run.loc("status_option", status=status).filter(visible=True).first.click()
 
     with run.step("confirm_popup"):
-        question = run.loc("confirm_question")
         try:
-            question.first.wait_for(timeout=POPUP_TIMEOUT_MS)
+            run.loc("confirm_heading").first.wait_for(timeout=POPUP_TIMEOUT_MS)
+            run.loc("confirm_question", status=status).first.wait_for(timeout=POPUP_TIMEOUT_MS)
         except Exception:
-            # The one dangerous failure: an option was clicked and Evallo did
-            # not ask. Find out at once whether it changed anything.
+            # The one dangerous failure: an option was clicked and the expected
+            # popup did not appear. Either it is worded differently now (the
+            # page is left without confirming, which changes nothing) or Evallo
+            # stopped asking. Find out at once whether anything changed.
             now = _status_after_reload(run, name, start)
             raise RuntimeError(
-                f"No confirmation popup after clicking {status}. The status now reads "
+                f"The \"Update changes\" popup asking about {status} did not appear "
+                f"as expected after clicking {status}. The status now reads "
                 f"{now!r}" + (" — IT MAY HAVE CHANGED WITHOUT ASKING." if now != current else
                               "; nothing changed."))
 
     if dry_run:
         with run.step("go_back"):
             run.loc("confirm_no").click()
-            run.loc("confirm_question").first.wait_for(state="hidden")
+            run.loc("confirm_question", status=status).first.wait_for(state="hidden")
         verify_unchanged(run, name, start, current)
         return Result("dry_run_ok", f"Dry run for {name}'s session {when} worked: Evallo "
                       f"asked to confirm {status}, I went back, and it is still {current}.",

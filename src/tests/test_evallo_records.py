@@ -68,3 +68,17 @@ def test_unlogged_list_keeps_one_row_per_session(tmp_path):
 
 def test_unlogged_list_starts_empty(tmp_path):
     assert evallo_unlogged.load(tmp_path / "missing.json") == []
+
+
+def test_popup_selectors_match_the_real_popup():
+    """Worded as Lethanial saw them on Nov 23 2026."""
+    from evallo_selectors import describe
+    assert describe("confirm_heading") == {"kind": "text", "text": "Update changes", "exact": True}
+    assert describe("confirm_question", status="No Show")["text"] == \
+        "Are you sure you want to mark this session as No Show?"
+    assert describe("confirm_question", status="Completed")["exact"] is True
+    assert describe("confirm_yes")["name"] == "Yes, confirm"
+    assert describe("confirm_no")["name"] == "No, go back"
+    toast = describe("success_toast")
+    assert toast["text"] == "Session updated successfully" and toast["exact"] is True
+    assert toast["text"] != "Session scheduled successfully"

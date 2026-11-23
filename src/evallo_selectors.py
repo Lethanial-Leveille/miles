@@ -62,12 +62,22 @@ SELECTORS = {
     "status_option": {"kind": "role", "role": "button", "name_format": "{status}", "exact": True},
 
     # ── Confirmation popup and result ────────────────────────────────────
-    # Not yet seen by the script: these three are worded as Lethanial
-    # described them, and the first watched dry run checks them.
-    "confirm_question": {"kind": "text", "text": "Are you sure you want to mark this session as"},
-    "confirm_yes": {"kind": "role", "role": "button", "name": "Yes, confirm"},
-    "confirm_no": {"kind": "role", "role": "button", "name": "No, go back"},
-    "success_toast": {"kind": "text", "text": "Session updated successfully"},
+    # Seen by Lethanial on Nov 23 2026 marking two sessions Completed:
+    #   heading   "Update changes"
+    #   question  "Are you sure you want to mark this session as Completed?"
+    #   note      "Note that this action can be irreversible in some situations."
+    #   buttons   "No, go back"  "Yes, confirm"
+    #   toast     "Session updated successfully"
+    "confirm_heading": {"kind": "text", "text": "Update changes", "exact": True},
+    # The whole sentence, status included, so the popup is proven to be about
+    # the status that was picked and not some other one.
+    "confirm_question": {"kind": "text", "exact": True,
+                         "text_format": "Are you sure you want to mark this session as {status}?"},
+    "confirm_yes": {"kind": "role", "role": "button", "name": "Yes, confirm", "exact": True},
+    "confirm_no": {"kind": "role", "role": "button", "name": "No, go back", "exact": True},
+    # Exact: booking a session shows "Session scheduled successfully", which
+    # must never pass for a status change.
+    "success_toast": {"kind": "text", "text": "Session updated successfully", "exact": True},
 
     # ── Students list ────────────────────────────────────────────────────
     # Each student is a link to their profile: link "Taylor Chen" -> /profile/student/<id>.
