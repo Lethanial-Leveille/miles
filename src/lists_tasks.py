@@ -98,12 +98,24 @@ _LIST_NAME = {
         "between them, since speech to text often drops both: 'salt chicken "
         "eggs' is three calls. Keep a name that is one thing together: 'garlic "
         "salt', 'chicken broth' and 'ice cream' are one call each. When no list "
-        "is named, use grocery."
+        "is named, use grocery. "
+        # Nov 2026: "add jasmine rice salt and pepper" went on the list as
+        # "Pepper", which reads as a vegetable in the store. The old schema said
+        # "in the words used", so the model copied the word even though the
+        # sentence settled the meaning.
+        "Write each item the way it should read in the store, settled by what "
+        "else he said: 'salt and pepper' means the spice, so it is 'salt' and "
+        "'black pepper'; 'peppers and onions for fajitas' is 'bell peppers'. "
+        "Only add words the context makes clear. When it truly could be either "
+        "and nothing settles it, keep his word as he said it rather than guess."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "item": {"type": "string", "description": "One item, in the words used"},
+            "item": {"type": "string",
+                     "description": "One item, as it should read in the store: "
+                                    "his words, made specific when the rest of "
+                                    "the sentence makes the meaning clear"},
             "list_name": _LIST_NAME,
         },
         "required": ["item", "list_name"],
