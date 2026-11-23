@@ -44,6 +44,7 @@ import pending_action # noqa: F401
 import web_search     # noqa: F401
 import lists_tasks    # noqa: F401
 import hevy_edit      # noqa: F401
+import evallo_tools   # noqa: F401
 
 from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
                     HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN,
@@ -477,6 +478,7 @@ _STAGE_WORDS = {
     "create_calendar_event":   "Adding it to your calendar",
     "delete_calendar_event":   "Deleting the event",
     "edit_routine":            "Reading your routine",
+    "set_session_status":      "Opening Evallo",
     "dismiss":                 None,
     "find_schedule_conflicts": "Looking for conflicts",
     "get_health_summary":      "Checking your Health data",

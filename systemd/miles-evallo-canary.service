@@ -1,0 +1,19 @@
+[Unit]
+Description=M.I.L.E.S. Evallo canary: check the session script still works, changing nothing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=theycallmelee
+WorkingDirectory=/home/theycallmelee/miles
+# APNS_* for the push when it fails live in .env.
+EnvironmentFile=/home/theycallmelee/miles/.env
+# Playwright and Chromium live in their own environment, apart from the
+# system Python the voice and server run on.
+ExecStart=/home/theycallmelee/miles/.venv-evallo/bin/python /home/theycallmelee/miles/scripts/evallo_canary.py
+# A stuck browser must not run until morning.
+TimeoutStartSec=10min
+
+# No Restart. A failure has already sent its push and saved its record; the
+# next night tries again.

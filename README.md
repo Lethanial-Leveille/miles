@@ -82,6 +82,55 @@ The principle underneath all of it: **deterministic code does the math and enfor
 
 ---
 
+## Evallo Session Logging
+
+Evallo is the scheduling site the tutoring company uses, and it has no API. So Nova logs a session the way a person would: Playwright drives a headless Chromium through the website. "I finished with Taylor" becomes the tool `set_session_status`, which marks the 4:15 session Completed, No Show or Canceled.
+
+**How a run goes.** Each step has a name, so a failure says where it broke.
+
+1. `check_student`: the student is on his students list. If not, Prep Academy hasn't mapped them yet. He gets a push, the session goes on a local unlogged list, and nothing is logged.
+2. `open_calendar` and `go_to_week`: the week view moves to the session's week.
+3. `read_week`: every card in the week is read. Canceled sessions stay on the calendar, struck through with the same title, so they are dropped before matching. Exactly one live card must match the first name, the tutor and the start time to the minute. If none matches, he gets "No Evallo session for Taylor at 4:15 PM. Book it or check the time." If several match, the run stops rather than guess.
+4. `open_event` and `verify_panel`: the panel's title, date, start time and student are checked against the request before anything is clicked. If it already reads Completed, the run returns "already done".
+5. `open_status`, `pick_status` and `confirm_popup`: the status is chosen and Evallo asks "Are you sure?"
+6. Dry run: `go_back` clicks "No, go back", then `verify_unchanged` reloads and proves nothing changed. Real run: `confirm`, then `verify_changed` waits for "Session updated successfully" and reads the new status back.
+
+**Approval.** The tool is `EXTERNAL_WRITE`, so only the hokage tier can reach it. A real change is only staged through `pending_action`. Nova reads the question back word for word, and it runs only when `confirm_pending_action` comes on his very next turn. Dry runs go straight through.
+
+**Where things are:**
+
+| Path | What it is |
+|---|---|
+| `src/evallo_selectors.py` | Every selector, and the only file to edit when Evallo changes |
+| `src/evallo_matching.py` | Which card a request means. Pure Python, tested without a browser |
+| `src/evallo_runner.py` | The browser steps |
+| `src/evallo_failures.py` | Failure records, deleted after 30 days |
+| `src/evallo_unlogged.py` | Sessions taught that could not be logged yet |
+| `src/evallo_session.py` | The saved login, its expiry, and push |
+| `src/evallo_tools.py` | The Nova tool. It runs the script as a separate process, in `.venv-evallo` |
+| `scripts/evallo_status.py` | By hand. Dry run unless `--real`; `--unlogged` lists the waiting sessions |
+| `scripts/evallo_canary.py` | Nightly at 2 AM (`miles-evallo-canary.timer`) |
+| `scripts/evallo_login.py` | One-time login, run on the Mac |
+
+```bash
+# Dry run, on the Pi. Changes nothing.
+~/miles/.venv-evallo/bin/python scripts/evallo_status.py \
+    --student Taylor --start "2026-11-23 16:15" --status Completed
+```
+
+**Logging in.** Evallo's login is a token in the site's localStorage that lasts 30 days. The Pi has no screen, so run `scripts/evallo_login.py` on the Mac. It opens real Chrome, because Google refuses its sign-in in an automated browser. Log in by hand. It saves only Evallo's data to `data/evallo_state.json`; then copy that file to the Pi's `~/miles/data/`. The canary warns three days before the token runs out. If it does run out, the next run stops with "Evallo login expired, log in again". No password is stored anywhere.
+
+**The nightly canary.** At 2 AM it walks the script on his next session up to the open status menu. It closes the menu without choosing anything and proves the status is unchanged. It does not click an option. Evallo only offers Completed once a session has started, so the only option it could click on a future session is Canceled, every night, on a real student's lesson. A pass is one quiet line in the journal. A failure pushes "Evallo script broke at step X".
+
+**Fixing a broken selector.** A failure saves `data/evallo_failures/<time>_<step>/`, which holds `failure.json`, `screenshot.png` and `page.html`. The snapshots hold students' contact details: the folder is git-ignored and pruned after 30 days.
+
+1. Read `failure.json`. `step` says where it broke; `selector_key` and `selector` say what it was looking for.
+2. Open `screenshot.png` to see what was on the page instead.
+3. Find the element in `page.html`, or open Evallo and look. Prefer the words a person sees, and the element's role (button, textbox, gridcell). Never use Evallo's styling classes such as `text-[10px]`: they change on every redesign.
+4. Change that one entry in `src/evallo_selectors.py`, then run a dry run.
+
+---
+
 ## Tech Stack
 
 **Hardware**

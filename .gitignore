@@ -7,6 +7,14 @@
 !.env.example
 credentials.json
 data/token.json
+# Evallo's login token (30 days), and failure snapshots holding students'
+# names, emails and phone numbers. data/ already covers both; named here
+# so neither depends on that one rule.
+data/evallo_state.json
+data/evallo_failures/
+data/evallo_unlogged.json
+# Playwright and Chromium for the Evallo script, apart from system Python.
+.venv-evallo/
 data/oura_token.json
 # Apple's push key (AuthKey_XXXX.p8). Downloadable once, and it signs as the app.
 *.p8

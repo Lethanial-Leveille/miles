@@ -1,0 +1,13 @@
+[Unit]
+Description=Check the Evallo session script every night at 2 AM
+
+[Timer]
+# Eastern, the Pi's own zone. Quiet hours: nobody is using Evallo, and a
+# failure is waiting on his phone when he wakes, before the day's sessions.
+OnCalendar=*-*-* 02:00:00
+RandomizedDelaySec=5min
+# A night the Pi was off is run at the next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

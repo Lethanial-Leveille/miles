@@ -21,6 +21,7 @@ import pending_action # noqa: F401  registers confirm_pending_action
 import web_search     # noqa: F401  offers web_search, run by Anthropic
 import lists_tasks    # noqa: F401  registers the list and task tools
 import hevy_edit      # noqa: F401  registers edit_routine
+import evallo_tools   # noqa: F401  registers set_session_status
 from tools import Permission, permits, registry
 
 EXPECTED = {
@@ -65,6 +66,7 @@ EXPECTED = {
     "task_complete":           (Permission.WRITE,          False),
     "archive_task":            (Permission.WRITE,          False),
     "tasks_today":             (Permission.READ,           True),
+    "set_session_status":      (Permission.EXTERNAL_WRITE, True),
 }
 
 # READ in kind, private in content, or writes beyond this Pi. None of these
@@ -82,6 +84,7 @@ HOKAGE_ONLY = {
     "edit_routine",
     "task_add", "task_complete", "archive_task", "tasks_today",
     "get_health_summary",
+    "set_session_status",
 }
 
 # WRITE tools that legitimately cost a second round trip, with the reason.
@@ -116,6 +119,9 @@ ROUND_TRIP_WRITES = {
     # A proposal to change a routine; the question it returns is the point,
     # and a name that matches several exercises has to be asked about.
     "edit_routine",
+    # A real run returns the question he must answer; a dry run, what
+    # happened on the website, including "isn't mapped" and "no session".
+    "set_session_status",
 }
 
 
