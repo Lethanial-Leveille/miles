@@ -24,6 +24,7 @@ by another machine, so it is not used here.
 """
 
 import json
+import os
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -31,8 +32,9 @@ from datetime import datetime, timedelta, timezone
 import database
 
 TTL = timedelta(hours=2)
-# Stage D sends texts and adds meeting links; Stage E adds the reschedule.
-KINDS = {"imessage", "evallo_meet_link", "evallo_reschedule"}
+# Stage D sends texts; Stage E adds the reschedule. Sessions are on one fixed
+# Zoom link, so nothing adds meeting links to Evallo any more.
+KINDS = {"imessage", "evallo_reschedule"}
 MAX_TEXT_CHARS = 400
 
 PENDING, APPROVED, SKIPPED, EXPIRED, CLAIMED, DONE, FAILED = (
@@ -60,21 +62,42 @@ def _conn():
     return conn
 
 
-_URL = re.compile(r"https?://\S+|\b\w+\.(?:com|org|net|io|me|ly)/\S*", re.I)
-_MEET = re.compile(r"^https://meet\.google\.com/[a-z0-9\-]+$", re.I)
+_URL = re.compile(r"https?://\S+|\b[\w.-]+\.(?:com|org|net|io|me|ly|us|edu)/\S*", re.I)
+# His fixed UF Zoom meeting, pasted by hand into data/zoom.json as {"link": "..."}.
+# The Mac has its own copy; the two must match exactly or the Pi refuses the text.
+ZOOM_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "zoom.json")
+_ZOOM = re.compile(r"^https://([a-z0-9-]+\.)?zoom\.us/(j/\d{9,11}|my/[A-Za-z0-9_-]+)"
+                   r"(\?pwd=[A-Za-z0-9_-]+(\.\d+)?)?$")
+
+
+def zoom_link():
+    """The one link a text may carry, or None (then no link is allowed at all).
+    Read on every check, so a changed file needs no restart."""
+    try:
+        with open(ZOOM_PATH) as f:
+            link = (json.load(f).get("link") or "").strip()
+    except (OSError, ValueError, AttributeError):
+        return None
+    return link if _ZOOM.match(link) else None
 
 
 def check_text(text):
-    """Texts go to students and parents, many of them minors: short, and no links
-    except a Google Meet one. Raises ValueError with the reason."""
+    """Texts go to students and parents, many of them minors: short, and no link
+    except his one Zoom link from data/zoom.json. Raises ValueError with the reason."""
     text = (text or "").strip()
     if not text:
         raise ValueError("The message is empty.")
     if len(text) > MAX_TEXT_CHARS:
         raise ValueError(f"The message is {len(text)} characters; the limit is {MAX_TEXT_CHARS}.")
-    for url in _URL.findall(text):
-        if not _MEET.match(url.rstrip(".,!?)")):
-            raise ValueError(f"Only Google Meet links are allowed in a message, not {url!r}.")
+    urls = _URL.findall(text)
+    if urls:
+        allowed = zoom_link()
+        for url in urls:
+            if allowed is None:
+                raise ValueError("No links are allowed in a message: the Pi has no Zoom link in "
+                                 f"data/zoom.json, so {url!r} was refused.")
+            if url.rstrip(".,!?)") != allowed:
+                raise ValueError(f"The only link allowed in a message is the Zoom link, not {url!r}.")
     return text
 
 

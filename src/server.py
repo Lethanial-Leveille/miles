@@ -572,7 +572,7 @@ def get_agent_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer))
 
 
 class ApprovalProposal(BaseModel):
-    kind: Literal["imessage", "evallo_meet_link", "evallo_reschedule"]
+    kind: Literal["imessage", "evallo_reschedule"]
     summary: str = Field(min_length=1, max_length=500)
     text: Optional[str] = Field(default=None, max_length=approvals.MAX_TEXT_CHARS)
     chat_name: Optional[str] = Field(default=None, max_length=200)

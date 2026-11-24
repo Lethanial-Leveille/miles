@@ -1,5 +1,6 @@
 """Approvals: one tap per request, two hour expiry, the Mac can never approve."""
 
+import json
 import os
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -18,8 +19,17 @@ import server                                    # noqa: E402
 from tools import Permission, permits, registry  # noqa: E402
 
 T0 = datetime(2026, 11, 23, 19, 0, tzinfo=timezone.utc)
-TEXT = ("Hi! Reminder that Taylor's session is tomorrow at 4:15 PM. Here's the Google "
-        "Meet link: https://meet.google.com/abc-defg-hij. See you then!")
+ZOOM = "https://ufl.zoom.us/j/1234567890?pwd=abc123"
+TEXT = ("Hi! Reminder that Taylor's session is tomorrow at 4:15 PM. Here's the Zoom "
+        f"link: {ZOOM}. See you then!")
+
+
+@pytest.fixture(autouse=True)
+def zoom_file(tmp_path, monkeypatch):
+    path = tmp_path / "zoom.json"
+    path.write_text(json.dumps({"link": ZOOM}))
+    monkeypatch.setattr(approvals, "ZOOM_PATH", str(path))
+    return path
 
 
 @pytest.fixture
@@ -86,11 +96,39 @@ def test_every_step_is_logged_with_text_and_chat(db):
     assert all(e["text"] == TEXT and e["chat_name"] == "Taylor & Mom" and e["at"] for e in log)
 
 
-@pytest.mark.parametrize("bad", ["", "x" * 401, "Visit https://evil.example.com/x now",
-                                 "see bit.ly/abc"])
-def test_texts_are_short_and_meet_links_only(db, bad):
+@pytest.mark.parametrize("bad", [
+    "", "x" * 401, "Visit https://evil.example.com/x now", "see bit.ly/abc",
+    "Join https://meet.google.com/abc-defg-hij",
+    "Join https://ufl.zoom.us/j/9999999999?pwd=other",          # a different Zoom meeting
+    f"Join {ZOOM}&x=1",                                         # the link, altered
+    "Join ufl.zoom.us/j/1234567890",                            # no scheme, still a link
+    f"Join https://zoom.us.evil.com/j/1234567890 or {ZOOM}",
+])
+def test_texts_are_short_and_carry_only_the_zoom_link(db, bad):
     with pytest.raises(ValueError):
         _propose(text=bad, dedupe_key=None)
+
+
+def test_the_zoom_link_is_allowed_with_trailing_punctuation(db):
+    for text in (TEXT, f"Here: {ZOOM}!", "No link at all, see you tomorrow."):
+        assert approvals.check_text(text) == text
+
+
+@pytest.mark.parametrize("content", [None, "", "{bad", '{"link": ""}',
+                                     '{"link": "https://meet.google.com/abc-defg-hij"}'])
+def test_without_a_valid_zoom_file_no_link_is_allowed(db, zoom_file, content):
+    if content is None:
+        zoom_file.unlink()
+    else:
+        zoom_file.write_text(content)
+    with pytest.raises(ValueError, match="No links are allowed"):
+        approvals.check_text(TEXT)
+    assert approvals.check_text("See you tomorrow!") == "See you tomorrow!"
+
+
+def test_meeting_link_edits_are_no_longer_a_kind(db):
+    with pytest.raises(ValueError):
+        _propose(kind="evallo_meet_link", text=None, dedupe_key=None)
 
 
 # ── HTTP ──

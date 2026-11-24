@@ -133,7 +133,7 @@ Evallo is the scheduling site the tutoring company uses, and it has no API. So N
 
 ## Approvals from the Phone
 
-Some actions leave the Pi entirely: texting a student's family a reminder, or adding a Meet link to their Evallo session. Those run on a Mac, and none of them happen until he taps **Approve** on that one request in Nova.
+Some actions leave the Pi entirely: texting a student's family a reminder with the link to his Zoom room. Those run on a Mac, and none of them happen until he taps **Approve** on that one request in Nova.
 
 1. The Mac proposes the action with the exact text and the chat it is for. The Pi stores it and pushes it to the phone with Approve and Skip buttons.
 2. He taps Approve or Skip, on the lock screen or in the app's Approvals screen.
