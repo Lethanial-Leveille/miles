@@ -15,7 +15,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from jose import JWTError
 
-from auth import verify_password, create_token, decode_token, DEVICE_SCOPE, DEVICE_TOKEN_EXPIRE_DAYS
+from auth import (verify_password, create_token, decode_token, DEVICE_SCOPE,
+                  DEVICE_TOKEN_EXPIRE_DAYS, AGENT_SCOPE, AGENT_TOKEN_EXPIRE_DAYS)
 from brain import ask_nova
 from database import (
     init_db, get_active_memories, get_pending_memories,
@@ -34,6 +35,7 @@ import embeddings
 import memory_merge
 import calendar_tools
 import push
+import approvals
 import tts
 
 app = FastAPI(title="M.I.L.E.S. API", version="0.7")
@@ -554,6 +556,119 @@ def test_push(user: str = Depends(get_current_user)):
         raise HTTPException(status_code=502,
                             detail="Apple did not accept it. Check journalctl -u miles-server.")
     return {"sent": sent}
+
+
+# ── Approvals: tapped in Nova, carried out by the Mac ──
+
+def get_agent_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """A full login or the Mac's agent token, for the agent's own routes only."""
+    try:
+        payload = decode_token(credentials.credentials)
+    except JWTError:
+        raise _unauthorized()
+    if payload.get("scope") not in (None, AGENT_SCOPE):
+        raise _unauthorized()
+    return payload["sub"]
+
+
+class ApprovalProposal(BaseModel):
+    kind: Literal["imessage", "evallo_meet_link", "evallo_reschedule"]
+    summary: str = Field(min_length=1, max_length=500)
+    text: Optional[str] = Field(default=None, max_length=approvals.MAX_TEXT_CHARS)
+    chat_name: Optional[str] = Field(default=None, max_length=200)
+    payload: dict = Field(default_factory=dict)
+    dedupe_key: Optional[str] = Field(default=None, max_length=200)
+
+
+class ApprovalResult(BaseModel):
+    ok: bool
+    result: str = Field(default="", max_length=2000)
+
+
+class AgentNote(BaseModel):
+    title: str = Field(default="MILES", max_length=60)
+    body: str = Field(min_length=1, max_length=500)
+
+
+class ContactNames(BaseModel):
+    contacts: dict[str, str]
+
+
+def _approval_http(exc):
+    return HTTPException(status_code=exc.code, detail=str(exc))
+
+
+@app.post("/auth/agent", response_model=TokenResponse)
+def issue_agent_token(user: str = Depends(get_current_user)):
+    """The Mac's long lived token. Needs a full login to get."""
+    return TokenResponse(access_token=create_token(
+        user, expires_minutes=AGENT_TOKEN_EXPIRE_DAYS * 24 * 60, scope=AGENT_SCOPE))
+
+
+@app.get("/approvals")
+def pending_approvals(user: str = Depends(get_current_user)):
+    return {"approvals": approvals.list_pending()}
+
+
+@app.get("/approvals/{approval_id}")
+def one_approval(approval_id: int, user: str = Depends(get_current_user)):
+    try:
+        return approvals.get(approval_id)
+    except approvals.ApprovalError as exc:
+        raise _approval_http(exc)
+
+
+@app.post("/approvals/{approval_id}/approve")
+def approve_request(approval_id: int, user: str = Depends(get_current_user)):
+    # get_current_user refuses scoped tokens: the Mac can never approve.
+    try:
+        return approvals.decide(approval_id, True)
+    except approvals.ApprovalError as exc:
+        raise _approval_http(exc)
+
+
+@app.post("/approvals/{approval_id}/skip")
+def skip_request(approval_id: int, user: str = Depends(get_current_user)):
+    try:
+        return approvals.decide(approval_id, False)
+    except approvals.ApprovalError as exc:
+        raise _approval_http(exc)
+
+
+@app.post("/agent/approvals", status_code=201)
+def agent_propose(body: ApprovalProposal, user: str = Depends(get_agent_user)):
+    try:
+        row, created = approvals.propose(body.kind, body.summary, body.text, body.chat_name,
+                                         body.payload, body.dedupe_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    pushed = approvals.notify_new(row) if created else 0
+    return {"approval": row, "created": created, "pushed": pushed}
+
+
+@app.post("/agent/approvals/claim")
+def agent_claim(kinds: Optional[str] = None, user: str = Depends(get_agent_user)):
+    wanted = set(kinds.split(",")) if kinds else None
+    return {"approvals": approvals.claim_approved(wanted)}
+
+
+@app.post("/agent/approvals/{approval_id}/result")
+def agent_result(approval_id: int, body: ApprovalResult, user: str = Depends(get_agent_user)):
+    try:
+        return {"status": approvals.report(approval_id, body.ok, body.result)}
+    except approvals.ApprovalError as exc:
+        raise _approval_http(exc)
+
+
+@app.post("/agent/notify")
+def agent_notify(body: AgentNote, user: str = Depends(get_agent_user)):
+    return {"sent": push.notify(body.title, body.body, kind="agent")}
+
+
+@app.put("/agent/contacts")
+def agent_contacts(body: ContactNames, user: str = Depends(get_agent_user)):
+    approvals.set_contacts(body.contacts)
+    return {"saved": len(body.contacts)}
 
 
 # ── Device token and phone presence ──

@@ -45,6 +45,12 @@ def verify_password(plain: str) -> bool:
 DEVICE_SCOPE = "device"
 DEVICE_TOKEN_EXPIRE_DAYS = 180
 
+# The Mac agent's token: it may propose approvals, claim approved ones and
+# report how they went, and nothing else. It can never approve, so a bug or a
+# leak on the Mac cannot send a text Lethanial did not tap.
+AGENT_SCOPE = "agent"
+AGENT_TOKEN_EXPIRE_DAYS = 90
+
 
 def create_token(subject: str, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES,
                  scope: str | None = None) -> str:

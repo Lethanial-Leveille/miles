@@ -904,6 +904,50 @@ def _migration_037_phone_presence(conn):
     conn.execute("CREATE INDEX idx_phone_presence_at ON phone_presence (at)")
 
 
+def _migration_039_approvals(conn):
+    """Requests Lethanial must tap Approve on in Nova before the Mac acts
+    (approvals.py), the log of every step of each, and which iMessage chat
+    each student's texts go to, by display name only."""
+    conn.execute("""
+        CREATE TABLE approvals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            text TEXT,
+            chat_name TEXT,
+            payload TEXT NOT NULL DEFAULT '{}',
+            dedupe_key TEXT UNIQUE,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            decided_at TEXT,
+            claimed_at TEXT,
+            finished_at TEXT,
+            result TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX idx_approvals_status ON approvals (status)")
+    conn.execute("""
+        CREATE TABLE approval_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            at TEXT NOT NULL,
+            approval_id INTEGER NOT NULL,
+            event TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            chat_name TEXT,
+            text TEXT,
+            detail TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE imessage_contacts (
+            first_name TEXT PRIMARY KEY,
+            chat_name TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -943,6 +987,7 @@ MIGRATIONS = [
     (36, _migration_036_health),
     (37, _migration_037_phone_presence),
     (38, _migration_038_health_hours),
+    (39, _migration_039_approvals),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago

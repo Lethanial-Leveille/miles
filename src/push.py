@@ -103,13 +103,16 @@ def _forget_provider_token():
         _provider_token_cache = None
 
 
-def build_payload(title, body, kind, data=None):
+def build_payload(title, body, kind, data=None, category=None):
     """The JSON APNs delivers. Anything in `data` rides beside "aps", where the
     app reads it when the notification is tapped."""
     payload = {"aps": {"alert": {"title": title, "body": body},
                        "sound": "default",
                        # Groups a kind's notifications together on the lock screen.
                        "thread-id": kind}}
+    if category:
+        # The app registers buttons for this category (Approve, Skip).
+        payload["aps"]["category"] = category
     for key, value in (data or {}).items():
         if key != "aps":
             payload[key] = value
@@ -164,7 +167,8 @@ def _send_one(client, token, environment, payload, ttl_s, collapse_id):
     return False, f"HTTP {response.status_code} {reason}".strip()
 
 
-def notify(title, body, kind="info", data=None, ttl_s=None, collapse_id=None):
+def notify(title, body, kind="info", data=None, ttl_s=None, collapse_id=None,
+           category=None):
     """Send to every active phone. Returns how many APNs accepted it.
 
     Accepted means APNs took it, not that the phone showed it. APNs does not
@@ -175,7 +179,7 @@ def notify(title, body, kind="info", data=None, ttl_s=None, collapse_id=None):
     if not devices:
         return 0
 
-    payload = build_payload(title, body, kind, data)
+    payload = build_payload(title, body, kind, data, category)
     if ttl_s is None:
         ttl_s = config.PUSH_TTL_S.get(kind, config.PUSH_DEFAULT_TTL_S)
 
