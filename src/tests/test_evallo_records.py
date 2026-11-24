@@ -82,3 +82,50 @@ def test_popup_selectors_match_the_real_popup():
     toast = describe("success_toast")
     assert toast["text"] == "Session updated successfully" and toast["exact"] is True
     assert toast["text"] != "Session scheduled successfully"
+
+
+# ── The status menu, upcoming and past sessions ──────────────────────────
+
+import re  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+from evallo_selectors import SELECTORS, locate  # noqa: E402
+
+UPCOMING_MENU = ["Scheduled", "Tentative", "Canceled", "Available (Subbing)"]
+PAST_MENU = ["Completed", "No Show", "Canceled"]   # Nov 23 2026, a session that had ended
+
+
+@pytest.mark.parametrize("menu", [UPCOMING_MENU, PAST_MENU], ids=["upcoming", "past"])
+def test_menu_open_check_works_for_upcoming_and_past_sessions(menu):
+    # The dry run on a past session broke waiting for a "Scheduled" button
+    # that only upcoming menus have. Each menu must have a button the check sees.
+    pattern = re.compile(SELECTORS["status_menu_open"]["name_regex"])
+    assert any(pattern.fullmatch(option) for option in menu)
+    assert all(pattern.fullmatch(option) for option in menu)
+
+
+@pytest.mark.parametrize("not_an_option", ["Scheduled ", "Update changes", "Yes, confirm",
+                                           "No, go back", "Completedx", ""])
+def test_menu_open_check_ignores_other_buttons(not_an_option):
+    pattern = re.compile(SELECTORS["status_menu_open"]["name_regex"])
+    assert not pattern.search(not_an_option)
+
+
+def test_menu_open_check_is_a_role_lookup_by_regex():
+    class Page:
+        def get_by_role(self, role, **kw):
+            self.call = (role, kw)
+            return self
+    page = Page()
+    locate(page, "status_menu_open")
+    role, kw = page.call
+    assert role == "button" and isinstance(kw["name"], re.Pattern)
+    assert kw["name"].search("No Show")
+
+
+def test_runner_never_presses_escape():
+    # Escape closes Evallo's whole session panel, not just the menu.
+    src = (Path(__file__).resolve().parents[1] / "evallo_runner.py").read_text()
+    assert 'press("Escape")' not in src

@@ -60,6 +60,14 @@ SELECTORS = {
     "status_current": {"kind": "text", "text_format": "{status}", "exact": True},
     # A menu item, e.g. button "Completed".
     "status_option": {"kind": "role", "role": "button", "name_format": "{status}", "exact": True},
+    # Proof the menu is open. What it offers depends on the session: an
+    # upcoming one offers Scheduled, Tentative, Canceled, Available (Subbing);
+    # one that has started offers only Completed, No Show, Canceled (Nov 23
+    # 2026). Any one of those buttons showing means the menu opened. Waiting
+    # for a "Scheduled" button broke on past sessions, which have none.
+    "status_menu_open": {"kind": "role", "role": "button",
+                         "name_regex": r"^(Scheduled|Completed|No Show|Canceled|Tentative"
+                                       r"|Available \(Subbing\))$"},
 
     # ── Confirmation popup and result ────────────────────────────────────
     # Seen by Lethanial on Nov 23 2026 marking two sessions Completed:
@@ -107,6 +115,8 @@ def locate(page, key, **fill):
     entry = describe(key, **fill)
     kind = entry.get("kind")
     if kind == "role":
+        if "name_regex" in entry:
+            return page.get_by_role(entry["role"], name=re.compile(entry["name_regex"]))
         return page.get_by_role(entry["role"], name=entry.get("name"),
                                 exact=entry.get("exact", False))
     if kind == "text":

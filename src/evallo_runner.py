@@ -72,8 +72,11 @@ READ_WEEK_JS = """(cols) => [...document.querySelectorAll(cols.column)].flatMap(
 SETTLED_JS = """(sel) => {
   const cards = [...document.querySelectorAll(sel)];
   const w = window.__evalloSettle || (window.__evalloSettle = {sig: null, same: 0});
-  if (cards.some(c => !c.innerText.trim())) { w.sig = null; w.same = 0; return false; }
-  const sig = cards.map(c => c.innerText.trim()).join('|');
+  // Blocked time (the hatched boxes) is a card with no text, ever (Nov 23
+  // 2026), so an empty card can't mean "still loading". Settled = the same
+  // cards, empty ones included, for five polls in a row. parse_card drops
+  // the empty ones afterwards because they have no time.
+  const sig = cards.length + ':' + cards.map(c => c.innerText.trim()).join('|');
   if (sig === w.sig) { w.same += 1; } else { w.sig = sig; w.same = 0; }
   return w.same >= 4;
 }"""
@@ -367,22 +370,22 @@ def _steps(run, name, start, status, dry_run, minutes, check_only):
 
     with run.step("open_status"):
         run.loc("status_current", status=current).filter(visible=True).first.click()
-        run.loc("status_option", status=current).wait_for()
+        run.loc("status_menu_open").filter(visible=True).first.wait_for()
         offered = [s for s in KNOWN_STATUSES
                    if locate(run.page, "status_option", status=s).filter(visible=True).count()]
         details["offered"] = offered
 
     if check_only:
-        with run.step("open_status"):
-            run.page.keyboard.press("Escape")
+        # No Escape: in Evallo it closes the whole panel, not just the menu.
+        # verify_unchanged loads the calendar from scratch, which drops the
+        # open menu without choosing anything.
         verify_unchanged(run, name, start, current)
         return Result("check_ok", f"Checked {name}'s session {when}: the status menu "
                       f"opens and offers {', '.join(offered)}. Nothing changed.",
                       details=details)
 
     if status not in offered:
-        with run.step("open_status"):
-            run.page.keyboard.press("Escape")
+        # Leave the menu open; nothing was chosen, and the browser closes next.
         if start > datetime.now(M.EVALLO_TZ):
             return Result("not_offered", f"Evallo doesn't offer {status} for {name}'s "
                           f"session {when} yet; it opens once the session has started.",
