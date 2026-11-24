@@ -131,6 +131,24 @@ Evallo is the scheduling site the tutoring company uses, and it has no API. So N
 
 ---
 
+## Approvals from the Phone
+
+Some actions leave the Pi entirely: texting a student's family a reminder, or adding a Meet link to their Evallo session. Those run on a Mac, and none of them happen until he taps **Approve** on that one request in Nova.
+
+1. The Mac proposes the action with the exact text and the chat it is for. The Pi stores it and pushes it to the phone with Approve and Skip buttons.
+2. He taps Approve or Skip, on the lock screen or in the app's Approvals screen.
+3. The Mac claims approved requests, does them, and reports back. Every step is logged with a timestamp, the exact text and the chat.
+
+**Rules enforced in code, in `src/approvals.py`:**
+
+* One request, one tap. There is no batch approve, and nothing approves itself.
+* The Mac logs in with its own 90 day token, scope `agent`. It can propose, claim and report, and the approve routes refuse it, so a bug or a leaked token on the Mac cannot send a text he did not tap.
+* A request expires two hours after it is proposed. An approval nobody claimed in time expires instead of running late.
+* A claimed request is handed out once and never retried, so a text that may already have gone out cannot go out twice.
+* The Pi knows students' chats by display name only. The Mac keeps the actual iMessage chat ids.
+
+---
+
 ## Tech Stack
 
 **Hardware**
@@ -207,6 +225,11 @@ Live at `https://miles.lethanial.com`.
 | `/lists`, `/lists/{list_id}/items` | GET | Yes |
 | `/lists/items/{item_id}/check`, `/lists/items/{item_id}/uncheck` | POST | Yes |
 | `/tasks/today`, `/tasks/{task_id}/complete` | GET, POST | Yes |
+| `/approvals`, `/approvals/{approval_id}` | GET | Yes |
+| `/approvals/{approval_id}/approve`, `/approvals/{approval_id}/skip` | POST | Yes, full login only |
+| `/auth/agent` | POST | Yes, issues the Mac's agent token |
+| `/agent/approvals`, `/agent/approvals/claim`, `/agent/approvals/{approval_id}/result`, `/agent/notify` | POST | Agent token |
+| `/agent/contacts` | PUT | Agent token |
 | `/history` | GET | Yes |
 | `/status`, `/status/details` | GET | Yes |
 | `/ws` | WebSocket | Yes, token checked in the socket |
@@ -222,8 +245,8 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 |--------|-------|
 | Median perceived latency, last 30 Claude turns (Oct 2 to 12 2026) | 3.0 seconds, from the end of speech to first audio, including the silence wait that decides you have finished |
 | ElevenLabs eleven_v3 time to first byte | 647ms median over 12 live turns (Sep 2026) |
-| Registered tools | 40 |
-| Test suite | 1637 passing |
+| Registered tools | 43 |
+| Test suite | 1769 passing |
 
 ---
 
@@ -243,6 +266,7 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 | Unreleased | ReSpeaker XVF3800 array, Deepgram with Whisper fallback, ECAPA verification, web search, Hevy workouts and automatic progression, Prowl job search, barge in, picking up a reply that was cut off | Landed |
 | Unreleased | Push notifications for reminders and timers through Apple's push service, and Apple Health data copied from the phone so Nova can answer about weight and runs | Landed, untested on a real phone |
 | Unreleased | Home or away from a geofence on the phone, the first half of telling an empty apartment from a quiet one | Logging, not yet acted on |
+| Unreleased | Approvals: the Mac proposes texts to students' families and Evallo edits, and nothing runs until he taps Approve in Nova | Landed, first test on a real phone in progress |
 | Next | Evening check in, SSH through the tunnel, morning briefings, Apple ecosystem integrations | Planned |
 
 ---
