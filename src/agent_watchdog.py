@@ -53,8 +53,8 @@ SERVICES = {
     "zoom": ("UF Zoom", f"{MAC} scripts/zoom_login.py"),
     "google": ("Google", f"{MAC} scripts/gcal_login.py --client-secret "
                          "~/PersonalProjects/client_secret.json"),
-    "evallo": ("Evallo", f"{MAC} scripts/evallo_login.py && scp data/evallo_state.json "
-                         "theycallmelee@100.99.248.127:~/miles/data/"),
+    # The login stays on the Mac. Nothing here ever says to copy it anywhere.
+    "evallo": ("Evallo", f"{MAC} scripts/evallo_login.py"),
 }
 
 

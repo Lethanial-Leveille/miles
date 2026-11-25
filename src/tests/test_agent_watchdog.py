@@ -155,7 +155,8 @@ def test_evallo_login_expired_says_how_to_fix_it(db, pushes):
     assert not evallo_session.login_expired("marking Taylor's session Completed")
     (title, body, _), = pushes
     assert title == "Evallo login expired"
-    assert "scripts/evallo_login.py" in body and "scp data/evallo_state.json" in body
+    assert "scripts/evallo_login.py" in body
+    assert "scp" not in body and "evallo_state.json" not in body
     assert "Failed job: the nightly Evallo canary." in body
 
 
@@ -292,3 +293,9 @@ def test_the_route_accepts_evallo_sessions_and_rejects_other_names(db, pushes, m
     bad = client.post("/agent/jobs/report", headers=_h(agent),
                       json={"job": "lunch", "day": DAY, "ok": True})
     assert bad.status_code == 422
+
+
+def test_no_recovery_command_tells_him_to_copy_a_login_anywhere():
+    for service, (_, command) in W.SERVICES.items():
+        for word in ("scp", "rsync", "sftp", "evallo_state.json", "token", "cookie"):
+            assert word not in command.lower(), (service, word)

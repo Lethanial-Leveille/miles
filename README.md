@@ -118,7 +118,7 @@ Evallo is the scheduling site the tutoring company uses, and it has no API. So N
     --student Taylor --start "2026-11-23 16:15" --status Completed
 ```
 
-**Logging in.** Evallo's login is a token in the site's localStorage that lasts 30 days. The Pi has no screen, so run `scripts/evallo_login.py` on the Mac. It opens real Chrome, because Google refuses its sign-in in an automated browser. Log in by hand. It saves only Evallo's data to `data/evallo_state.json`; then copy that file to the Pi's `~/miles/data/`. The canary warns three days before the token runs out. If it does run out, the next run stops with "Evallo login expired, log in again". No password is stored anywhere.
+**Logging in.** Evallo's login is a token in the site's localStorage that lasts 30 days. The Pi has no screen, so run `scripts/evallo_login.py` on the Mac. It opens real Chrome, because Google refuses its sign-in in an automated browser. Log in by hand. It saves only Evallo's data to `data/evallo_state.json` on the Mac, and that login stays on the Mac: it is a credential, so it is never copied, sent or pasted anywhere else. The canary warns three days before the token runs out. If it does run out, the next run stops with "Evallo login expired, log in again". No password is stored anywhere.
 
 **The nightly canary.** At 2 AM it walks the script on his next session up to the open status menu. It closes the menu without choosing anything and proves the status is unchanged. It does not click an option. Evallo only offers Completed once a session has started, so the only option it could click on a future session is Canceled, every night, on a real student's lesson. A pass is one quiet line in the journal. A failure pushes "Evallo script broke at step X".
 
