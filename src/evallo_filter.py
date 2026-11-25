@@ -255,11 +255,14 @@ def collecting():
     caller that builds an answer from several reads can say what state its
     events came from, without a read of its own."""
     seen = []
+    outer = _collector.get()
     token = _collector.set(seen)
     try:
         yield seen
     finally:
         _collector.reset(token)
+        if outer is not None:
+            outer.extend(seen)       # an enclosing collector sees these reads too
 
 
 def record(outcome):
