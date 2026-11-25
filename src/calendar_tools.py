@@ -1088,7 +1088,10 @@ def delete_miles_event(event_id):
         "every calendar he has selected, with overlapping events merged and the "
         "free gaps already computed. Call this when he asks if he is free, or "
         "before proposing a time for something new. Use the free list as given "
-        "rather than working out gaps yourself. " + _WINDOW_HELP
+        "rather than working out gaps yourself. If the answer has no free list and "
+        "says it cannot tell when he is free, a calendar that blocks his time "
+        "could not be read: say exactly that, give only the busy times you were "
+        "given, and never offer or guess free times. " + _WINDOW_HELP
     ),
     input_schema={
         "type": "object",
@@ -1102,17 +1105,38 @@ def delete_miles_event(event_id):
     returns_to_model=True,
     min_tier="hokage",
 )
+def _unreadable_blocking(names):
+    """Which of these unreadable calendars (by name) count toward busy time:
+    MILES, and every calendar not classified as a club or holiday calendar."""
+    if not names:
+        return []
+    service = _service()
+    miles_id = _miles_calendar_id(service)
+    blocking = {name for cid, (name, _, _) in _calendars(service).items()
+                if calendar_roles.role_of(cid, miles_id) == calendar_roles.BLOCKING}
+    return [n for n in names if n in blocking]
+
+
 def check_calendar_freebusy(time_min, time_max):
     start, end = resolve_window(time_min, time_max)
     busy, unreadable = busy_blocks(start, end)
-    free = free_gaps(busy, start.astimezone(), end.astimezone())
     result = {
         "range": f"{_spoken(start)} to {_spoken(end)}",
         "busy": [{"from": _spoken(a), "until": _spoken(b)} for a, b in busy],
-        "free": [{"from": _spoken(a), "until": _spoken(b)} for a, b in free],
     }
-    if unreadable:
+    blocking_down = _unreadable_blocking(unreadable)
+    if blocking_down:
+        # A calendar that blocks his time could not be read, so any gap here may
+        # be covered by an event nobody saw. No free list: busy only, and why.
         result["could_not_read"] = unreadable
+        result["cannot_tell_free"] = (
+            f"I cannot tell when he is free: {', '.join(blocking_down)} could not be read, "
+            "so there may be events missing. Say that, and do not offer free times.")
+        return result
+    free = free_gaps(busy, start.astimezone(), end.astimezone())
+    result["free"] = [{"from": _spoken(a), "until": _spoken(b)} for a, b in free]
+    if unreadable:
+        result["could_not_read"] = unreadable      # context only calendars: named, not blocking
     return result
 
 

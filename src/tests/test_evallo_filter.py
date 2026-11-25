@@ -1089,3 +1089,60 @@ def test_a_reset_that_never_gets_the_lock_fails_startup(db, quick_clear):
         holder.execute("ROLLBACK")
         holder.close()
     assert ef.load_state().on                              # nothing was cleared, and it was loud
+
+
+# ── round 3, group 3: voice free/busy when a blocking calendar is unreadable ──
+
+def _failing(monkeypatch, calendar_ids):
+    inner = cal._service
+
+    class Down(_Reshaped):
+        def events(self):
+            real = self._service.events()
+
+            def list_(calendarId, **query):
+                if calendarId in calendar_ids:
+                    return type("Boom", (), {"execute": staticmethod(
+                        lambda: (_ for _ in ()).throw(RuntimeError("down")))})()
+                return real.list(calendarId=calendarId, **query)
+            return type("E", (), {"list": staticmethod(list_), "get": real.get,
+                                  "patch": real.patch, "delete": real.delete,
+                                  "insert": real.insert})()
+    monkeypatch.setattr(cal, "_service", lambda: Down(inner(), {}))
+
+
+def _freebusy():
+    return cal.check_calendar_freebusy("2026-11-30 8am", "2026-11-30 8pm")
+
+
+def test_everything_readable_keeps_the_free_list(calendar):
+    result = _freebusy()
+    assert result["free"] and "cannot_tell_free" not in result and "could_not_read" not in result
+
+
+def test_a_failed_primary_calendar_gives_no_free_list(calendar, monkeypatch):
+    from config import CALENDAR_ROLES
+    assert CALENDAR_ROLES[fake_google.PRIMARY] == "blocking"
+    _failing(monkeypatch, {fake_google.PRIMARY})
+    result = _freebusy()
+    assert "free" not in result
+    assert result["could_not_read"] == ["primary.fake@example.com"]
+    assert "cannot tell when he is free" in result["cannot_tell_free"]
+    assert "busy" in result
+
+
+def test_only_a_context_calendar_failing_keeps_the_free_list_and_names_it(calendar, monkeypatch):
+    from config import CALENDAR_ROLES
+    club = [cid for cid in (fake_google.ACM, fake_google.NSBE, fake_google.HOLIDAYS)
+            if CALENDAR_ROLES.get(cid, "blocking") != "blocking"]
+    assert club, "the fake's context calendars must be classified"
+    _failing(monkeypatch, {club[0]})
+    result = _freebusy()
+    assert result["free"] and "cannot_tell_free" not in result
+    assert result["could_not_read"]
+
+
+def test_the_tool_description_tells_the_model_not_to_offer_free_times():
+    from tools import registry
+    text = registry.get("check_calendar_freebusy").description
+    assert "never offer or guess free times" in text
