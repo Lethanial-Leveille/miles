@@ -103,6 +103,27 @@ def check_text(text):
     return text
 
 
+# A reminder is several iMessages from one approval (the words, then the Zoom
+# link alone so Messages shows its preview card). text is the parts joined by
+# PART_SEP: the card shows it, and the Mac sends the parts only if they join
+# back to exactly the text that was approved.
+PART_SEP = "\n\n"
+MAX_PARTS = 3
+
+
+def check_parts(text, parts):
+    """Each part must pass check_text on its own, and the parts must join to
+    exactly text. Raises ValueError with the reason."""
+    if not isinstance(parts, list) or not 1 <= len(parts) <= MAX_PARTS \
+            or not all(isinstance(p, str) for p in parts):
+        raise ValueError(f"A reminder is 1 to {MAX_PARTS} messages.")
+    for p in parts:
+        if check_text(p) != p:
+            raise ValueError("Each message must have no leading or trailing spaces.")
+    if PART_SEP.join(parts) != text:
+        raise ValueError("The messages do not join to the text shown for approval.")
+
+
 def _event(conn, row, event, detail=None, now=None):
     conn.execute(
         "INSERT INTO approval_events (at, approval_id, event, kind, chat_name, text, detail) "
@@ -124,6 +145,8 @@ def propose(kind, summary, text, chat_name, payload=None, dedupe_key=None, now=N
         raise ValueError(f"Unknown kind {kind!r}.")
     if kind == "imessage":
         text = check_text(text)
+        if (payload or {}).get("parts") is not None:
+            check_parts(text, payload["parts"])
     now = _now(now)
     conn = _conn()
     try:
@@ -307,5 +330,6 @@ def notify_new(row):
     else:
         body = row["summary"]
     return push.notify("Approve?", body, kind="approval",
-                       data={"approval_id": row["id"], "expires_at": row["expires_at"]},
+                       data={"kind": "approval", "approval_id": row["id"],
+                             "expires_at": row["expires_at"]},
                        category=APPROVAL_CATEGORY, collapse_id=f"approval-{row['id']}")

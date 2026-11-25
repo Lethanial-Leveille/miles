@@ -588,6 +588,10 @@ class ApprovalResult(BaseModel):
 class AgentNote(BaseModel):
     title: str = Field(default="MILES", max_length=60)
     body: str = Field(min_length=1, max_length=500)
+    # The whole message, for the app's error screen (the lock screen shows body).
+    detail: Optional[str] = Field(default=None, max_length=1800)
+    approval_id: Optional[int] = None
+    error: bool = False
 
 
 class ContactNames(BaseModel):
@@ -662,7 +666,13 @@ def agent_result(approval_id: int, body: ApprovalResult, user: str = Depends(get
 
 @app.post("/agent/notify")
 def agent_notify(body: AgentNote, user: str = Depends(get_agent_user)):
-    return {"sent": push.notify(body.title, body.body, kind="agent")}
+    # Rides beside "aps": a tap opens the error screen (error) or the approvals
+    # sheet on approval_id.
+    data = {"kind": "agent", "level": "error" if body.error else "info",
+            "detail": body.detail or body.body}
+    if body.approval_id is not None:
+        data["approval_id"] = body.approval_id
+    return {"sent": push.notify(body.title, body.body, kind="agent", data=data)}
 
 
 @app.put("/agent/contacts")

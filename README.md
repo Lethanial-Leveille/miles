@@ -146,6 +146,11 @@ Some actions leave the Pi entirely: texting a student's family a reminder with t
 * A request expires two hours after it is proposed. An approval nobody claimed in time expires instead of running late.
 * A claimed request is handed out once and never retried, so a text that may already have gone out cannot go out twice.
 * The Pi knows students' chats by display name only. The Mac keeps the actual iMessage chat ids.
+* A text may carry no link except his one Zoom link from `data/zoom.json` (a `pwd` and/or `omn` number in it is fine). A message that is exactly that link is allowed, so Messages shows the Zoom preview card.
+* A reminder is two iMessages from one approval: the words, then the Zoom link alone. The payload's `parts` must join (with a blank line) to exactly the text on the card, and each part must pass the same check, or the Pi refuses it. The Mac sends each part once, in order. If the second fails after the first went, it says which part failed and never resends the first.
+* The Mac drafts nothing within 30 minutes of a session's start, and checks again at the moment of sending. An approved text that hits the cutoff is not sent; he gets "Missed reminder for <Name> <time>, text them yourself if needed."
+
+`/agent/notify` takes `title`, `body` (the lock screen's 500 characters), an optional `detail` (up to 1800), `approval_id` and `error`. They ride in the push, so a tap opens Nova's error screen with the whole message, or Approvals on that request.
 
 ---
 

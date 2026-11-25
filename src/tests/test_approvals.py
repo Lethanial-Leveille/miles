@@ -142,6 +142,36 @@ def test_zoom_links_with_an_omn_number(db, zoom_file, link, ok):
             approvals.check_text(f"Here: {link}1.")
 
 
+FIRST = "Hey Taylor, just a reminder that your session is tomorrow at 4:15 PM. Let me know if anything comes up!"
+
+
+def test_a_message_that_is_exactly_the_zoom_link_is_allowed(db):
+    assert approvals.check_text(ZOOM) == ZOOM
+
+
+def test_two_part_reminder_is_stored_with_its_parts(db):
+    row, created = approvals.propose("imessage", "Remind Taylor", FIRST + "\n\n" + ZOOM, "Taylor & Mom",
+                                     payload={"chat_id": "c", "parts": [FIRST, ZOOM]})
+    assert created and row["payload"]["parts"] == [FIRST, ZOOM]
+
+
+@pytest.mark.parametrize("text,parts", [
+    (FIRST + "\n\n" + ZOOM, [FIRST, "https://ufl.zoom.us/j/9999999999"]),   # a part not in text
+    (FIRST + "\n\n" + ZOOM, [FIRST + "\n\n" + ZOOM]),                     # ok alone, but see below
+    (FIRST, [FIRST, ZOOM]),                                                  # text hides a part
+    (FIRST + "\n\nhttps://evil.example/x", [FIRST, "https://evil.example/x"]),
+    (FIRST + "\n\n" + ZOOM, [FIRST, " " + ZOOM]),
+    ("a\n\nb\n\nc\n\nd", ["a", "b", "c", "d"]),
+    (FIRST, "not a list"),
+])
+def test_parts_that_do_not_match_are_refused(db, text, parts):
+    if parts == [FIRST + "\n\n" + ZOOM]:
+        approvals.check_parts(text, parts)          # one part equal to the text is fine
+        return
+    with pytest.raises(ValueError):
+        approvals.propose("imessage", "Remind Taylor", text, "Taylor & Mom", payload={"parts": parts})
+
+
 def test_meeting_link_edits_are_no_longer_a_kind(db):
     with pytest.raises(ValueError):
         _propose(kind="evallo_meet_link", text=None, dedupe_key=None)
@@ -183,6 +213,22 @@ def test_agent_proposes_and_phone_gets_a_push_with_buttons(client, agent, pushes
     (args, kwargs), = pushes
     assert kwargs["category"] == approvals.APPROVAL_CATEGORY
     assert "Taylor & Mom" in args[1] and TEXT in args[1]
+
+
+def test_agent_notify_carries_detail_level_and_request(client, agent, monkeypatch):
+    sent = []
+    monkeypatch.setattr(push, "notify", lambda *a, **k: sent.append((a, k)) or 1)
+    r = client.post("/agent/notify", headers=_h(agent),
+                    json={"title": "Not done", "body": "short", "detail": "the whole story",
+                          "approval_id": 4, "error": True})
+    assert r.status_code == 200
+    (a, k), = sent
+    assert a[:2] == ("Not done", "short")
+    assert k["data"] == {"kind": "agent", "level": "error", "detail": "the whole story",
+                         "approval_id": 4}
+    sent.clear()
+    client.post("/agent/notify", headers=_h(agent), json={"body": "Sent to Taylor & Mom."})
+    assert sent[0][1]["data"] == {"kind": "agent", "level": "info", "detail": "Sent to Taylor & Mom."}
 
 
 def test_agent_token_can_never_approve(client, agent):
