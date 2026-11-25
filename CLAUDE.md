@@ -78,6 +78,7 @@ warnings it cost before Sep 6 2026, is in
 | [docs/INCIDENTS.md](docs/INCIDENTS.md) | Something broke, or you are about to change a guard that has never fired |
 | [docs/APP_HANDOFF_DUPLICATES.md](docs/APP_HANDOFF_DUPLICATES.md) | Building the duplicate memory screens in miles-app |
 | [docs/STUDY.md](docs/STUDY.md) | Touching the iPad tutor: study sessions, the canvas check, its model and API |
+| [docs/SESSIONS.md](docs/SESSIONS.md) | Touching sessions or the nightly review: the engine, session types, the timer. The app facing shapes are in [docs/SESSIONS_CONTRACT.md](docs/SESSIONS_CONTRACT.md), changed only with his approval |
 | [docs/TESTING.md](docs/TESTING.md) | **Before building any feature.** Examples first, then a scripted room test he runs and Claude grades. Features go on a branch, never straight to main |
 
 ## Repo Structure
@@ -129,6 +130,10 @@ warnings it cost before Sep 6 2026, is in
 │   ├── lists_tasks.py         # lists and tasks by voice: add, check off, read; days start at 4am
 │   ├── health_tools.py        # get_health_summary: the phone's Health data as the app last sent it
 │   ├── push.py                # Reminders and timers to his phone through Apple's push service
+│   ├── session_types.py       # session type registry: purpose, prompt, own tools, model, schedule
+│   ├── sessions.py            # session engine: streamed tool loop, whole transcripts, close, timer tick
+│   ├── session_schedule.py    # when a scheduled session opens, nudges and settles; decisions only
+│   ├── nightly_review.py      # the nightly review session: close out today, plan tomorrow
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
 │   ├── resume.py              # what she had left to say when he cut her off, held for a go on, and where to start it
@@ -138,7 +143,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── server.py              # FastAPI REST, SSE chat stream, app endpoints
 │   ├── voice_main.py          # Audio loop entry point
 │   ├── enroll.py              # Voice enrollment. Stays here: the suite imports it
-│   └── tests/                 # pytest suite (1637 passing, 6 skipped, Nov 14 2026, on the Pi)
+│   └── tests/                 # pytest suite (1899 passing, 6 skipped, Nov 24 2026, on the Pi)
 ├── docs/
 │   ├── SESSION_START.md       # Preflight, drift rules, decision log
 │   ├── BACKEND_TODO.md        # Deferred work, written to be picked up cold
@@ -150,6 +155,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── INCIDENTS.md           # What broke, dated, with the evidence
 │   ├── APP_HANDOFF_DUPLICATES.md # the app side of duplicate memory review
 │   ├── STUDY.md               # the iPad tutor: design, model choice, API
+│   ├── SESSIONS.md            # sessions and the nightly review: design and why
+│   ├── SESSIONS_CONTRACT.md   # the shapes the backend and the app share for sessions
 │   └── TESTING.md             # the ladder every feature climbs, and the scripted room test
 ├── scripts/                      # Operator tools, run by hand from the repo root,
 │                              # or on a timer. Nothing in src/ imports any of these
@@ -169,6 +176,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── replay_ignore.py       # his past turns through the live prompt: does she stay silent on room talk
 │   ├── healthcheck.py         # what broke, on a timer, not by trying to use it
 │   ├── hevy_progress.py       # runs src/hevy_progress.py, from miles-hevy.timer
+│   ├── sessions_tick.py       # opens, pushes and settles the nightly review, from miles-sessions.timer
 │   ├── radar.py               # read and tune the presence radar over its UART
 │   ├── wifi_watchdog.sh       # brings wlan0 back, on a timer, when it drops
 │   ├── deploy.sh              # pull main, restart voice and server (tunnel on request), show logs
@@ -441,9 +449,16 @@ of the value itself.
   `APNS_KEY_ID` and `APNS_KEY_PATH` are in `.env`. `APNS_BUNDLE_ID` defaults to
   `com.Lethanial.Nova`. The `.p8` key is a secret (`*.p8` is gitignored)
 - `PUSH_KINDS = ("reminder", "timer")`
-- `PUSH_TTL_S = {"reminder": 6 hours, "timer": 5 minutes}`, `PUSH_DEFAULT_TTL_S = 3600`
+- `PUSH_TTL_S = {"reminder": 6 hours, "timer": 5 minutes, "session": 3 hours}` (and
+  approval, watchdog, login), `PUSH_DEFAULT_TTL_S = 3600`
   (how long Apple holds a push for a phone that is off; a late timer is noise)
 - `APNS_TIMEOUT_S = 10.0`
+
+### Sessions — why: [SESSIONS.md](docs/SESSIONS.md)
+- `SESSION_MODELS = {"nightly_review": "claude-haiku-4-5"}` (a type missing here runs on `MODEL_A`)
+- `SESSION_BLOCK_EARLIEST = (9, 0)`, `SESSION_BLOCK_LATEST = (21, 0)` (where `schedule_block`
+  looks for a free slot when he gives no time)
+- `MAX_ROUNDS = 6` per turn (in `sessions.py`, not `config.py`)
 
 ### Presence radar — why: [BACKEND_TODO.md](docs/BACKEND_TODO.md#presence-detection)
 - `PRESENCE_SENSOR = True`, `PRESENCE_PORT = "/dev/ttyAMA0"`, `PRESENCE_BAUD = 256000`

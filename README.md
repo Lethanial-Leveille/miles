@@ -242,6 +242,9 @@ Live at `https://miles.lethanial.com`.
 | `/lists`, `/lists/{list_id}/items` | GET | Yes |
 | `/lists/items/{item_id}/check`, `/lists/items/{item_id}/uncheck` | POST | Yes |
 | `/tasks/today`, `/tasks/{task_id}/complete` | GET, POST | Yes |
+| `/sessions`, `/sessions/{session_id}` | GET, POST | Yes |
+| `/sessions/{session_id}/turns` | POST, server sent events | Yes |
+| `/sessions/{session_id}/close` | POST | Yes |
 | `/approvals`, `/approvals/{approval_id}` | GET | Yes |
 | `/approvals/{approval_id}/approve`, `/approvals/{approval_id}/skip` | POST | Yes, full login only |
 | `/auth/agent` | POST | Yes, issues the Mac's agent token |
@@ -266,7 +269,7 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 | Median perceived latency, last 30 Claude turns (Oct 2 to 12 2026) | 3.0 seconds, from the end of speech to first audio, including the silence wait that decides you have finished |
 | ElevenLabs eleven_v3 time to first byte | 647ms median over 12 live turns (Sep 2026) |
 | Registered tools | 43 |
-| Test suite | 1769 passing |
+| Test suite | 1899 passing |
 
 ---
 
@@ -287,6 +290,7 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 | Unreleased | Push notifications for reminders and timers through Apple's push service, and Apple Health data copied from the phone so Nova can answer about weight and runs | Landed, untested on a real phone |
 | Unreleased | Home or away from a geofence on the phone, the first half of telling an empty apartment from a quiet one | Logging, not yet acted on |
 | Unreleased | Approvals: the Mac proposes texts to students' families and Evallo edits, and nothing runs until he taps Approve in Nova | Landed, first test on a real phone in progress |
+| Unreleased | Sessions: a nightly review pushed at 9:30 PM that closes out the day's tasks, plans two or three must dos for tomorrow and blocks them out on the calendar | On a branch, not yet tested on a real night |
 | Next | Evening check in, SSH through the tunnel, morning briefings, Apple ecosystem integrations | Planned |
 
 ---
