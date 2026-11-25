@@ -59,10 +59,16 @@ SUMMARY_MAX_TOKENS = 300
 # posted, the model keeps one short line, and any line with a clock time in it
 # is dropped.
 GUARD_MAX_CHARS = 120
+_HOURS = "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve"
 _CLOCK_TIME = re.compile(
-    r"\b\d{1,2}:\d{2}\b"                          # 2:30, 14:00
-    r"|\b\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)(?![a-z])"  # 2 PM, 9am, 9 a.m.
-    r"|\b\d{1,2}\s+(?:to|until|till|through|-)\s+\d{1,2}\b"  # 2 to 4
+    r"\b\d{1,2}:\d{2}\b"                                          # 2:30, 14:00
+    r"|\b\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)(?![a-z])"                # 2 PM, 9am, 9 a.m.
+    r"|\b\d{1,4}\s*[-\u2013\u2014]\s*\d{1,4}\b"                    # 2-4, 2 to 4 with a dash
+    r"|\b\d{1,2}\s+(?:to|until|till|through)\s+\d{1,2}\b"          # 2 to 4
+    r"|\b(?:at|from|until|till|by|before|after|around)\s+\d{1,4}\b"  # at 2, at 1430
+    rf"|\b(?:at|from|until|till|by|before|after|around)\s+(?:{_HOURS})\b"  # at ten
+    rf"|\b(?:{_HOURS})\s*(?:a\.?m\.?|p\.?m\.?|o'clock)(?![a-z])"   # ten pm, two o'clock
+    rf"|\b(?:{_HOURS})\s+(?:to|until|till|through)\s+(?:{_HOURS})\b"  # two to four
     r"|\b(?:noon|midnight)\b", re.IGNORECASE)
 
 
@@ -434,6 +440,7 @@ def run_turn(session_id, message, on_text=None, now=None):
         token, state = begin_turn(session_id)
         reply = ""
         hold = session_type.posts_messages
+        error = None
         try:
             for round_index in range(MAX_ROUNDS):
                 kwargs = dict(model=model, max_tokens=MAX_TOKENS, system=system,
@@ -461,15 +468,21 @@ def run_turn(session_id, message, on_text=None, now=None):
                     break
 
                 results = _run_tools(session_type, tool_uses, model, tier)
+                another = _needs_another_round(session_type, results)
                 if hold:
                     # The tools have run, so it is known whether code posted.
+                    # Text beside a call that another round follows was never
+                    # streamed, so it is not stored either: a reload then reads
+                    # exactly as the stream did, even when the guard leaves the
+                    # next round with nothing to say.
                     shown = guard_text(round_text) if state.posted else round_text.strip()
-                    blocks = assistant["content"] = _blocks_with_text(blocks, shown)
+                    blocks = assistant["content"] = _blocks_with_text(
+                        blocks, "" if another else shown)
                 result_row = {"role": "user", "content": _result_blocks(results)}
                 database.add_session_messages(session_id, [assistant, result_row], now)
                 messages = messages + [{"role": "assistant", "content": blocks},
                                        {"role": "user", "content": result_row["content"]}]
-                if not _needs_another_round(session_type, results):
+                if not another:
                     if hold:
                         reply = shown
                         _emit(on_text, "delta", shown)
@@ -480,6 +493,12 @@ def run_turn(session_id, message, on_text=None, now=None):
                     _emit(on_text, "reset", "")
                 if hold:
                     reply = ""
+        except Exception as exc:
+            # A later round can fail (the network, the API) after an earlier
+            # round's tools already ran and posted. What code posted and a
+            # requested close are still carried out below, then the error is
+            # raised, so a plan he was shown is never lost from the transcript.
+            error = exc
         finally:
             end_turn(token)
 
@@ -502,6 +521,8 @@ def run_turn(session_id, message, on_text=None, now=None):
             except NotOpen:
                 closed = get(session_id)
             _emit(on_text, "closed", closed["summary"] or "Closed.")
+        if error is not None:
+            raise error
         return reply.strip()
 
 

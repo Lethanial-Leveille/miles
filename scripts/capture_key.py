@@ -27,7 +27,7 @@ from database import add_capture_key, capture_keys, init_db, revoke_capture_key 
 def write_key_file(path, key):
     """Create the file with mode 600 from the start (os.open with 0o600), so
     there is no moment anyone else can read it. Refuses to overwrite one."""
-    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    os.makedirs(os.path.dirname(path) or ".", mode=0o700, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(key + "\n")

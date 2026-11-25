@@ -1210,9 +1210,18 @@ try:
 except FileNotFoundError:
     pass
 
+# Public holidays on which UF has no classes, by their title on the "Holidays in
+# United States" calendar. A holidays calendar day is a break day only when its
+# description says "Public holiday" AND its title is here, because that calendar
+# also lists observances (St. Patrick's Day, Valentine's Day, Tax Day) that are
+# ordinary class days. Verify against UF's academic calendar before changing:
+# Presidents' Day is a class day at UF, so it is not here.
+UF_HOLIDAYS = ["Thanksgiving Day", "Veterans Day", "Martin Luther King Jr. Day", "Memorial Day",
+               "Independence Day", "Labor Day", "Christmas Day", "New Year's Day"]
+
 # Days classes do not meet, as (first day, last day inclusive, name). Verify any
 # other break against UF's academic calendar before adding it; do not guess
-# dates. An all day event on the holidays calendar counts as a break day too.
+# dates. A public holiday listed in UF_HOLIDAYS counts as a break day too.
 UF_BREAKS = [("2026-11-25", "2026-11-28", "Thanksgiving break")]
 
 # Titles of his class events, matched whole (ignoring case), so "DSA" is the
@@ -1220,7 +1229,10 @@ UF_BREAKS = [("2026-11-25", "2026-11-28", "Thanksgiving break")]
 # recurring weekly timed events. Tutoring ("Test Prep") and club events never
 # belong here. A class on a break day shows "(likely cancelled, ...)" and is
 # not busy.
-CLASS_TITLES = ["DSA"]
+# Each course code is listed in both spellings he might type or UF might use.
+CLASS_TITLES = ["DSA",
+                "COP3530", "COP 3530", "CDA3101", "CDA 3101", "MAS3114", "MAS 3114",
+                "ENC2256", "ENC 2256"]
 
 # Words that make a calendar event or a backlog item an exam to study for.
 # Matched as whole words, case blind. Titles containing any EXAM_EXCLUDE text

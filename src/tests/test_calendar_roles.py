@@ -122,7 +122,8 @@ def test_class_titles_match_whole_titles_only():
 
 
 def test_a_holiday_calendar_all_day_event_makes_a_break_day():
-    holiday = ev("Veterans Day", d(11, 0), d(12, 0), calendar=HOLIDAYS, all_day=True)
+    holiday = ev("Veterans Day", d(11, 0), d(12, 0), calendar=HOLIDAYS, all_day=True,
+                 description="Public holiday")
     dsa = ev("DSA", d(11, 13, 55), d(11, 14, 45), repeating=True)
     [_, cancelled] = roles.annotate([holiday, dsa])
     assert cancelled["mark"] == "(likely cancelled, Veterans Day)"
@@ -204,7 +205,8 @@ def test_the_week_view_marks_conflicts_and_open_days():
         ev("Dentist", d(27, 15, 30), d(27, 16, 30)),
         ev("Friday Fishbowl", d(27, 13), d(27, 14), calendar=ACM, repeating=True),
         ev("GBM", d(26, 18), d(26, 19), calendar=NSBE),
-        ev("Thanksgiving Day", d(26, 0), d(27, 0), calendar=HOLIDAYS, all_day=True)])
+        ev("Thanksgiving Day", d(26, 0), d(27, 0), calendar=HOLIDAYS, all_day=True,
+           description="Public holiday")])
     text = rp.week_view(events, "2026-11-25", 4)
     assert text == "\n".join([
         "Wednesday Nov 25",

@@ -153,17 +153,21 @@ EVALLO_KEYS = ("evalloEvent", "evalloSessionId", "orgId")
 
 
 def _guard_not_evallo(calendar_id, event_id, event=None):
-    """Fetch the event and refuse, writing nothing, if it carries any Evallo
-    private property. Every delete and patch goes through here before the API
-    write call. An event already gone (404 or 410) has nothing to protect; the
-    write itself will say so."""
-    if event is None:
-        try:
-            event = _service().events().get(calendarId=calendar_id, eventId=event_id).execute()
-        except HttpError as exc:
-            if exc.status_code in (404, 410):
-                return
-            raise
+    """Fetch the event now and refuse, writing nothing, if it carries any
+    Evallo private property. Every delete and patch goes through here before
+    the API write call. An event already gone (404 or 410) has nothing to
+    protect; the write itself will say so.
+
+    Always fetched at write time. `event` is accepted so older callers keep
+    working but is never trusted: a copy read earlier can be stale, or partial
+    (a list result without extendedProperties), and the check is only worth
+    anything against what Google holds at the moment of the write."""
+    try:
+        event = _service().events().get(calendarId=calendar_id, eventId=event_id).execute()
+    except HttpError as exc:
+        if exc.status_code in (404, 410):
+            return
+        raise
     private = (event.get("extendedProperties") or {}).get("private") or {}
     if any(key in private for key in EVALLO_KEYS):
         raise EvalloProtectedError(
@@ -509,7 +513,16 @@ def _fetch_events(queries):
     which costs about 3ms."""
     def run(query):
         try:
-            items = _service().events().list(**query).execute().get("items", [])
+            # Page through nextPageToken: a calendar with more than one page of
+            # events in the window (a busy tutoring week) used to be cut at the
+            # first page without a word, so busy time was quietly missing.
+            service, items, token = _service(), [], None
+            while True:
+                page = service.events().list(**query, **({"pageToken": token} if token else {})).execute()
+                items += page.get("items", [])
+                token = page.get("nextPageToken")
+                if not token:
+                    break
             return query["calendarId"], items, None
         except Exception as exc:
             return query["calendarId"], None, exc
@@ -564,6 +577,7 @@ def events_for_app(start, end):
                 # a repeating event carries its parent's id), and whether it
                 # blocks time at all.
                 "calendar_id": cid,
+                "description": event.get("description"),
                 "series_id": event.get("recurringEventId") or event["id"],
                 "transparent": event.get("transparency") == "transparent",
                 "declined": any(a.get("self") and a.get("responseStatus") == "declined"
@@ -973,7 +987,7 @@ def get_miles_event(event_id):
             "start": first, "end": last, "all_day": all_day}
 
 
-def move_miles_event(event_id, start, end):
+def move_miles_event(event_id, start, end, summary=None, description=None):
     """Change a block's time. The event must be on the MILES calendar, and the
     write goes only to the MILES calendar id; anything else raises
     EventLookupError and changes nothing."""
@@ -983,6 +997,10 @@ def move_miles_event(event_id, start, end):
         raise EventLookupError("that event is not on the MILES calendar")
     body = {"start": {"dateTime": _local(start).astimezone().isoformat()},
             "end": {"dateTime": _local(end).astimezone().isoformat()}}
+    if summary:
+        body["summary"] = summary
+    if description:
+        body["description"] = description
     _write_patch(calendar_id, event_id, body, event)
 
 
@@ -1106,7 +1124,7 @@ _RESTORABLE = ("summary", "description", "location", "start", "end",
                "colorId", "reminders", "transparency", "visibility")
 
 
-def add_miles_event(summary, start, end):
+def add_miles_event(summary, start, end, description=None):
     """Insert an event on the MILES calendar and return (calendar id, event id).
 
     The only write path for anything outside a voice turn, such as the nightly
@@ -1117,6 +1135,8 @@ def add_miles_event(summary, start, end):
     body = {"summary": summary,
             "start": {"dateTime": start.astimezone().isoformat()},
             "end": {"dateTime": end.astimezone().isoformat()}}
+    if description:
+        body["description"] = description
     calendar_id = _write_calendar_id(service)
     created = service.events().insert(calendarId=calendar_id, body=body).execute()
     return calendar_id, created.get("id")

@@ -650,8 +650,8 @@ def test_confirming_places_again_what_the_calendar_took_since_21_30(db, world, f
     # The proposal had Study at 10, which is taken now, so it is placed again.
     # The fix at 12 and Email at 2 are still free, so they keep their times.
     assert booked["Email professor"] == ("14:00", "15:00")
-    assert booked["Study for linear algebra test"] == ("15:00", "17:00")
-    assert booked["Fix Friday: Test Prep with Alex overlaps Dentist"] == ("12:00", "12:30")
+    assert booked["Linear algebra study"] == ("15:00", "17:00")
+    assert booked["Fix Friday"] == ("12:00", "12:30")
     assert all(start >= "12:00" for start, _ in booked.values())
 
 
@@ -662,8 +662,8 @@ def test_a_deleted_block_reads_not_booked_in_the_posted_final_plan(db, world, fa
     fake_claude([text_block("Good night."), tool_block("confirm_plan", {}, "toolu_1")])
     original = calendar_tools.add_miles_event
 
-    def book_then_he_deletes_it(summary, start, end):
-        calendar_id, event_id = original(summary, start, end)
+    def book_then_he_deletes_it(summary, start, end, description=None):
+        calendar_id, event_id = original(summary, start, end, description)
         if summary.startswith("Fix Friday"):
             world.remove(MILES, event_id)
         return calendar_id, event_id

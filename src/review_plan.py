@@ -93,6 +93,54 @@ def is_exam_title(title):
     return any(w in words for w in EXAM_WORDS)
 
 
+_FILLER = {"the", "a", "an", "to", "for", "of", "and", "my", "about", "with", "on", "in", "at"}
+BLOCK_TITLE_WORDS = 4
+
+
+def block_title(title, short_title=None):
+    """The short name a MILES block carries, 2 to 4 words, so the calendar stays
+    readable ("Linear algebra study", not the whole task). A task may carry its
+    own (short_title). Otherwise it is derived the same way every time:
+      "Study for linear algebra test"  becomes "Linear algebra study"
+      "Fix Friday: Test Prep ... Dentist"  becomes "Fix Friday" (before the colon)
+      anything else drops filler words and keeps the first four words.
+    The full text, the reason and any notes go in the event description."""
+    if short_title and short_title.strip():
+        return short_title.strip()
+    text = title.strip()
+    head = text.split(":", 1)[0].strip() if ":" in text else text
+    study = re.match(r"(?i)^study for (?:the |a |an |my )?(.+?)(?: (?:exam|test|quiz|midterm|final)s?)?$",
+                     head)
+    if study and study.group(1).split():
+        words = study.group(1).split()[:BLOCK_TITLE_WORDS - 1] + ["study"]
+    else:
+        words = [w for w in head.split() if w.casefold() not in _FILLER] or head.split()
+        words = words[:BLOCK_TITLE_WORDS]
+    out = " ".join(words)
+    return out[:1].upper() + out[1:]
+
+
+def block_description(task, reason=None):
+    """What goes in the block's description: the full task text, why it is on
+    the plan (a due date or an exam), his instructions (the task's notes), and
+    for a study plan item its topic and source material folder."""
+    from database import topic_info
+    lines = [task["text"]]
+    if reason and reason not in ("Your choice", "Already planned"):
+        lines.append(f"Why: {reason}")
+    elif task.get("due_date"):
+        lines.append(f"Why: Due {short_day(task['due_date'])}")
+    if task.get("notes"):
+        lines.append(f"Notes: {task['notes']}")
+    if task.get("source") == "study_plan" and task.get("topic_id"):
+        info = topic_info(task["topic_id"])
+        if info and info[0]:
+            lines.append(f"Topic: {info[0]}")
+        if info and info[1]:
+            lines.append(f"Source material: {info[1]}")
+    return "\n".join(lines)
+
+
 def default_minutes(title, minutes=None):
     """60 minutes, 120 for studying for an exam, unless he said."""
     if minutes:
@@ -265,9 +313,10 @@ def due_words(due, today):
 def suggest(today, backlog, events, planned_titles=(), limit=MUST_DO_CAP):
     """At most `limit` things worth doing tomorrow, in this order:
       1. backlog items overdue or due within DUE_SOON_DAYS days of today
-      2. exams in the next EXAM_DAYS days (calendar events on any calendar but
-         MILES, and backlog items whose title says exam or test and are due
-         inside that), as studying for them
+      2. exams in the next EXAM_DAYS days, as studying for them: calendar
+         events on his own and attended calendars (not MILES, not club or
+         holiday context), and backlog items whose title says exam or test and
+         are due inside that
       3. conflicts to fix, from find_conflicts over the same days
       4. the oldest backlog items
     Each is {title, task_id, reason, minutes}. Nothing is suggested twice, and
@@ -300,7 +349,10 @@ def suggest(today, backlog, events, planned_titles=(), limit=MUST_DO_CAP):
     # 2. exams, soonest first
     exams = []
     for e in events:
-        if e.get("editable") or e.get("cancelled") or not is_exam_title(e["title"]):
+        # Only events that are his: a club's "Final GBM of the Semester" is not
+        # an exam. An attended club event is blocking after annotate, so it counts.
+        if (e.get("editable") or e.get("cancelled") or e.get("role", "blocking") != "blocking"
+                or not is_exam_title(e["title"])):
             continue
         first, _ = calendar_roles.event_span(e)
         if tomorrow <= first.date() <= horizon:
@@ -361,14 +413,20 @@ def local_busy(day, exclude_ids=()):
     return local, unreadable
 
 
-def live_block(task):
+def live_block(task, day=None):
     """The MILES event of a task if it still exists, else None. A task whose
     block he deleted by hand has its remembered id cleared, so it can be booked
-    again (before this, the dead id kept refusing a new booking)."""
+    again (before this, the dead id kept refusing a new booking).
+
+    With day, a block on another day is not this plan's block: it is forgotten
+    the same way (the event itself is left alone) so the task can be booked on
+    its day. Otherwise a block left on the 27th would show as the 25th's time."""
     from database import clear_task_calendar_event
     if not task or not task.get("calendar_event_id"):
         return None
     event = calendar_tools.get_miles_event(task["calendar_event_id"])
+    if event is not None and day is not None and event["start"].date() != _day(day):
+        event = None
     if event is None:
         clear_task_calendar_event(task["id"])
     return event
@@ -390,8 +448,8 @@ def place_plan(plan, now=None, keep_slots=False):
     blocks, exclude = {}, set()
     for i, item in enumerate(plan["must_dos"]):
         if item.get("task_id"):
-            block = live_block(get_task(item["task_id"]))
-            if block and block["start"].date() == day:
+            block = live_block(get_task(item["task_id"]), day)
+            if block:
                 blocks[i] = block
                 exclude.add(block["id"])
     try:
@@ -544,7 +602,8 @@ def render_plan(day, order=()):
                 event = calendar_tools.get_miles_event(task["calendar_event_id"])
             except Exception:
                 event, words = None, "could not check the calendar"
-            if event and not event["all_day"]:
+            # Only a block on this plan's own day is its time.
+            if event and not event["all_day"] and event["start"].date() == day:
                 words = range_words(event["start"], event["end"])
         lines.append(f"{n}. {task['text']}, {words}")
     if not musts:

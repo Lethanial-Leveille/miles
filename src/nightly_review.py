@@ -28,7 +28,8 @@ from database import (add_attending, add_task, attending_set, backlog_tasks, com
                       save_day_plan, session_has_user_message, session_plan,
                       set_session_plan, set_task_calendar_event, set_task_status, task_day,
                       tasks_between, tasks_for_day, unschedule_task)
-from review_plan import (ASK, MUST_DO_CAP, build_proposal, clock_words, day_words,
+from review_plan import (ASK, MUST_DO_CAP, block_description, block_title, build_proposal,
+                         clock_words, day_words,
                          default_minutes, find_slot, fitting_gaps, local_busy, live_block,
                          overlaps, place_blocks, place_plan, plan_text, range_words,
                          read_events, render_plan, short_day, today_line, week_view,
@@ -332,7 +333,8 @@ def _entry(raw, plan, must):
     else:
         task = _task_by_title(title, plan["day"])
         task_id = task["id"] if task else None
-    item = {"title": title, "task_id": task_id}
+    item = {"title": title, "task_id": task_id,
+            "short_title": (raw.get("short_title") or "").strip() or (old or {}).get("short_title")}
     if must:
         minutes = raw.get("minutes")
         if minutes is not None and (not isinstance(minutes, int) or not 5 <= minutes <= 600):
@@ -362,6 +364,8 @@ def _entry(raw, plan, must):
         "properties": {
             "must_dos": {"type": "array", "items": {"type": "object", "properties": {
                 "title": {"type": "string"}, "task_id": {"type": "integer"},
+                "short_title": {"type": "string",
+                                "description": "Optional 2 to 4 word name for its calendar block."},
                 "minutes": {"type": "integer"}, "start": {"type": "string"}},
                 "required": ["title"]}},
             "optional": {"type": "array", "items": {"type": "object", "properties": {
@@ -416,6 +420,10 @@ def set_plan(must_dos, optional=None, earliest=None, latest=None, now=None):
 def confirm_plan(now=None):
     now = now or _clock()
     session_id, plan = _session_plan()
+    if plan.get("confirmed"):
+        # A second call (the model sending it twice in one round, or again next
+        # turn) must not insert the tasks or book the blocks a second time.
+        raise ToolNotice("This plan was already confirmed and booked. Nothing was changed.")
     day = _day(plan["day"])
     # The calendar may have changed since 21:30: read it again, keep every slot
     # that is still free, and place again any whose slot is not.
@@ -423,34 +431,47 @@ def confirm_plan(now=None):
     if plan["unchecked"]:
         raise ToolNotice("The calendar could not be read, so nothing was booked. "
                          "Try again in a moment.")
-    must_ids = [m["task_id"] for m in plan["must_dos"] if m.get("task_id")]
-    others = [t for t in tasks_between(day.isoformat(), day.isoformat())
-              if t["must_do"] and t["id"] not in must_ids]
-    if len(others) + len(plan["must_dos"]) > MUST_DO_CAP:
-        raise ToolNotice(f"{day_words(day)} already has other must dos, so this plan would pass "
-                         f"{MUST_DO_CAP}: {', '.join(t['text'] for t in others)}. Nothing was "
-                         "saved. Ask which to drop.")
+
+    # A must do he dropped from the plan stays on the day as an optional task,
+    # so nothing is lost, but it no longer holds a must do slot or a block.
+    must_ids = {m["task_id"] for m in plan["must_dos"] if m.get("task_id")}
+    dropped = [t for t in tasks_between(day.isoformat(), day.isoformat())
+               if t["must_do"] and t["id"] not in must_ids]
 
     items = [{"task_id": m.get("task_id"), "text": m["title"], "must_do": True,
-              "minutes": default_minutes(m["title"], m.get("minutes"))} for m in plan["must_dos"]]
-    items += [{"task_id": o.get("task_id"), "text": o["title"], "must_do": False}
-              for o in plan["optional"]]
+              "minutes": default_minutes(m["title"], m.get("minutes")),
+              "short_title": m.get("short_title")} for m in plan["must_dos"]]
+    items += [{"task_id": o.get("task_id"), "text": o["title"], "must_do": False,
+               "short_title": o.get("short_title")} for o in plan["optional"]]
+    items += [{"task_id": t["id"], "text": t["text"], "must_do": False} for t in dropped]
+    for task in dropped:
+        _remove_block_of(task, now)
     ids = save_day_plan(day.isoformat(), items, now)
 
+    # The ids code just made go back into the plan and are saved at once, so a
+    # failure below (Google) leaves a plan that a retry completes instead of
+    # one that would insert every task again.
+    for entry, task_id in zip(plan["must_dos"] + plan["optional"], ids):
+        entry["task_id"] = task_id
+    set_session_plan(session_id, plan)
+
     problems = []
-    for m, task_id in zip(plan["must_dos"], ids):
-        task = get_task(task_id)
-        if live_block(task) or not m.get("slot"):
-            continue
-        start = datetime.datetime.combine(day, datetime.time.fromisoformat(m["slot"][0]))
-        end = datetime.datetime.combine(day, datetime.time.fromisoformat(m["slot"][1]))
+    for m in plan["must_dos"]:
         try:
-            _, event_id = calendar_tools.add_miles_event(m["title"], start, end)
-            set_task_calendar_event(task_id, event_id, now)
+            task = get_task(m["task_id"])
+            if live_block(task, day) or not m.get("slot"):
+                continue
+            start = datetime.datetime.combine(day, datetime.time.fromisoformat(m["slot"][0]))
+            end = datetime.datetime.combine(day, datetime.time.fromisoformat(m["slot"][1]))
+            _, event_id = calendar_tools.add_miles_event(
+                block_title(task["text"], task.get("short_title")), start, end,
+                block_description(task, m.get("reason")))
+            set_task_calendar_event(task["id"], event_id, now)
         except Exception as exc:
             problems.append(f"{m['title']} ({exc})")
+    plan["confirmed"] = True
     set_session_plan(session_id, plan)
-    post_message(render_plan(day, order=ids))
+    post_message(render_plan(day, order=[m["task_id"] for m in plan["must_dos"]]))
     request_close()
     return "Booked, and closing." + (f" Could not book: {'; '.join(problems)}." if problems else "")
 
@@ -464,19 +485,22 @@ def confirm_plan(now=None):
     input_schema={
         "type": "object",
         "properties": {"title": {"type": "string"},
-                       "due_date": {"type": "string", "description": "YYYY-MM-DD"}},
+                       "due_date": {"type": "string", "description": "YYYY-MM-DD"},
+                       "short_title": {"type": "string",
+                                       "description": "Optional 2 to 4 word name for its calendar block."}},
         "required": ["title"],
     },
     permission=Permission.WRITE,
     returns_to_model=True,
 )
-def add_to_backlog(title, due_date=None, now=None):
+def add_to_backlog(title, due_date=None, short_title=None, now=None):
     now = now or _clock()
     title = str(title or "").strip()
     if not title:
         raise ToolNotice("The backlog item needs a title.")
     due = _date_arg(due_date, "due_date").isoformat() if due_date else None
-    task_id = add_task(title[:1].upper() + title[1:], now=now, due_date=due)
+    task_id = add_task(title[:1].upper() + title[1:], now=now, due_date=due,
+                       short_title=(short_title or "").strip() or None)
     return f"Added {title} to the backlog (task {task_id})" + (f", due {day_words(due)}." if due else ".")
 
 
@@ -616,7 +640,9 @@ def move_block(task_id, start_time, minutes=None, now=None):
     if overlaps(busy, start, end):
         raise ToolNotice(f"{clock_words(start)} to {clock_words(end)} on {day_words(day)} overlaps "
                          "something on his calendar. Nothing was moved.")
-    calendar_tools.move_miles_event(event["id"], start, end)
+    calendar_tools.move_miles_event(event["id"], start, end,
+                                    block_title(task["text"], task.get("short_title")),
+                                    block_description(task))
     return (f"Moved {task['text']} to {clock_words(start)} to {clock_words(end)} on "
             f"{day_words(day)}.")
 
@@ -723,16 +749,20 @@ def schedule_block(task_id=None, duration_minutes=None, start_time=None, earlies
     if not entries:
         raise ToolNotice("Give a task_id, or a list of tasks.")
 
+    ids = [e.get("task_id") for e in entries]
+    if len(set(ids)) != len(ids):
+        raise ToolNotice("The same task is listed twice, which would book two blocks for it. "
+                         "Nothing was added.")
     prepared = []
     for entry in entries:
         task = _active_task(entry.get("task_id"))
         title = task["text"]
         # A block he deleted by hand leaves its id behind; live_block checks
         # Google and clears a dead one, so only a block that exists refuses.
-        if live_block(task):
-            raise ToolNotice(f"{title} already has a block on the calendar.")
         if task["recurrence"] is not None or not task["scheduled_for"]:
             raise ToolNotice(f"{title} has no date, so it has no day to block out.")
+        if live_block(task, _day(task["scheduled_for"])):
+            raise ToolNotice(f"{title} already has a block on the calendar.")
         if task["status"] != "pending":
             raise ToolNotice(f"{title} is {task['status']}, so it needs no block.")
         minutes = entry.get("duration_minutes") or task.get("minutes")
@@ -783,7 +813,9 @@ def schedule_block(task_id=None, duration_minutes=None, start_time=None, earlies
 
     for slot in plans:
         p = slot["item"]
-        _, event_id = calendar_tools.add_miles_event(p["title"], slot["start"], slot["end"])
+        _, event_id = calendar_tools.add_miles_event(
+            block_title(p["title"], p["task"].get("short_title")), slot["start"], slot["end"],
+            block_description(p["task"]))
         set_task_calendar_event(p["task"]["id"], event_id, now)
         booked.append(f"Blocked {p['title']} on {day_words(p['day'])} from "
                       f"{clock_words(slot['start'])} to {clock_words(slot['end'])} on the "

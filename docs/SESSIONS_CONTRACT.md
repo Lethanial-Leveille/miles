@@ -94,6 +94,7 @@ written by code and its text is an ordinary assistant message.
 ```sql
 ALTER TABLE tasks ADD COLUMN due_date TEXT;              -- 'YYYY-MM-DD', apart from scheduled_for
 ALTER TABLE tasks ADD COLUMN minutes INTEGER;
+ALTER TABLE tasks ADD COLUMN short_title TEXT;           -- 2 to 4 word name of its calendar block
 ALTER TABLE sessions ADD COLUMN plan TEXT;               -- the saved proposal, JSON
 ALTER TABLE session_messages ADD COLUMN author TEXT NOT NULL DEFAULT 'model'
     CHECK (author IN ('model', 'code'));

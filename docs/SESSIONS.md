@@ -131,6 +131,27 @@ calendar only (`calendar_tools.get_miles_event`, `move_miles_event`,
 `calendar_event_id` is refused a new booking, the event is checked: if he
 deleted it (404, 410 or cancelled) the id is cleared and booking goes ahead.
 
+**Block format.** A MILES block's title is short, 2 to 4 words ("Linear
+algebra study", "Exam 3 prep"), made by `review_plan.block_title`: the task's
+own `short_title` if it has one, else derived the same way every time (the part
+before a colon, "Study for X test" as "X study", filler words dropped, four
+words at most). Everything else goes in the event description
+(`block_description`): the full task text, why it is on the plan (a due date or
+an exam), the task's notes, and for a study plan task its topic and source
+material folder. confirm_plan, schedule_block and move_block all use it.
+
+**Confirming is once.** `confirm_plan` writes the ids of the tasks it creates
+back into the saved plan and marks the plan confirmed, so a second call is
+refused and a retry after a Google error cannot insert a task twice. A block on
+another day is not tomorrow's time: the plan shows "not booked" and confirming
+books a new one. A must do he dropped from the plan stays on the day as an
+optional task and its MILES block is removed, so nothing is lost and it no
+longer holds a must do slot.
+
+**Untrusted titles.** Calendar titles reach the transcript inside messages code
+posts (the week view, the plan). They are untrusted text from other people's
+calendars; that is accepted for now and goes to the Phase S security audit.
+
 **Placement.** `review_plan.place_blocks(busy, day, items, earliest, latest)`
 puts each item in order in the first free gap, fixed starts first, never
 overlapping busy time or each other and never outside the window (10:00 to
@@ -163,8 +184,12 @@ attended one is blocking.
 conflict and all day events are ignored.
 
 Breaks: `UF_BREAKS` (verify any other dates against UF's calendar before
-adding them) plus any all day event on the holidays calendar. On a break day a
-class (an event whose whole title is in `CLASS_TITLES`) and any recurring club
+adding them) plus a holidays calendar day whose description says "Public
+holiday" and whose title is in `UF_HOLIDAYS` (the calendar also lists
+observances such as St. Patrick's Day, which are class days; Presidents' Day is
+a class day at UF). On a break day a class (an event whose whole title is in
+`CLASS_TITLES`: DSA and the course codes COP3530, CDA3101, MAS3114 and ENC2256,
+each with and without the space) and any recurring club
 event show `(likely cancelled, <break name>)`; they are not busy, never
 conflict, are never suggested, and a club event stays cancelled that day even
 if he attends the series.

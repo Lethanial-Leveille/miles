@@ -464,7 +464,8 @@ of the value itself.
 - `SESSION_BLOCK_EARLIEST = (10, 0)`, `SESSION_BLOCK_LATEST = (21, 0)` (where the review
   places blocks when he gives no time)
 - `CALENDAR_ROLES` (by calendar id: blocking, club, holiday; an unlisted calendar is blocking),
-  `UF_BREAKS`, `CLASS_TITLES = ["DSA"]`, `EXAM_WORDS`, `EXAM_EXCLUDE` (all in `config.py`)
+  `UF_BREAKS`, `UF_HOLIDAYS` (public holidays that are break days), `CLASS_TITLES` (DSA and
+  the course codes, both spellings), `EXAM_WORDS`, `EXAM_EXCLUDE` (all in `config.py`)
 - `MAX_ROUNDS = 6` per turn (in `sessions.py`, not `config.py`)
 
 ### Presence radar — why: [BACKEND_TODO.md](docs/BACKEND_TODO.md#presence-detection)

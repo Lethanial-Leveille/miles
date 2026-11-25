@@ -1135,6 +1135,8 @@ def _migration_044_review_v2(conn):
     tasks.due_date is when a backlog item is due, apart from scheduled_for,
     which is the day he plans to do it. A one time task with no scheduled_for
     is in the backlog. tasks.minutes is how long it takes, for placing it.
+    tasks.short_title is the 2 to 4 word name of its calendar block when he
+    gave one; otherwise code derives it from the text.
 
     sessions.plan holds the saved proposal as JSON, so "good" confirms exactly
     what he was shown. session_messages.author tells what the model wrote from
@@ -1145,6 +1147,7 @@ def _migration_044_review_v2(conn):
     count as busy; the rest of a club calendar is only context."""
     conn.execute("ALTER TABLE tasks ADD COLUMN due_date TEXT")
     conn.execute("ALTER TABLE tasks ADD COLUMN minutes INTEGER")
+    conn.execute("ALTER TABLE tasks ADD COLUMN short_title TEXT")
     conn.execute("ALTER TABLE sessions ADD COLUMN plan TEXT")
     conn.execute("ALTER TABLE session_messages ADD COLUMN author TEXT NOT NULL DEFAULT 'model' "
                  "CHECK (author IN ('model', 'code'))")
@@ -2515,7 +2518,8 @@ def task_day(now=None):
     return (now - timedelta(hours=DAY_STARTS_AT_HOUR)).date().isoformat()
 
 
-def add_task(text, recurrence=None, now=None, scheduled_for=None, due_date=None, minutes=None):
+def add_task(text, recurrence=None, now=None, scheduled_for=None, due_date=None, minutes=None,
+             short_title=None):
     """Save a task and return its id. recurrence is None for a one time task or
     'daily'; the table's CHECK refuses anything else.
 
@@ -2526,9 +2530,9 @@ def add_task(text, recurrence=None, now=None, scheduled_for=None, due_date=None,
     conn = sqlite3.connect(DB_PATH)
     try:
         cursor = conn.execute(
-            "INSERT INTO tasks (text, recurrence, created_at, scheduled_for, due_date, minutes) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (text, recurrence, now.isoformat(), scheduled_for, due_date, minutes))
+            "INSERT INTO tasks (text, recurrence, created_at, scheduled_for, due_date, minutes, "
+            "short_title) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (text, recurrence, now.isoformat(), scheduled_for, due_date, minutes, short_title))
         conn.commit()
         return cursor.lastrowid
     finally:
@@ -3000,7 +3004,7 @@ def latest_phone_presence():
 
 _TASK_COLUMNS = ("id, text, recurrence, status, scheduled_for, must_do, notes, source, "
                  "assignment_id, topic_id, calendar_event_id, created_at, updated_at, due_date, "
-                 "minutes")
+                 "minutes, short_title")
 
 
 def _task_dict(row, done_on=None):
@@ -3186,9 +3190,9 @@ def move_task(task_id, new_day, now=None):
             cursor = conn.execute("""
                 INSERT INTO tasks (text, recurrence, created_at, notes, scheduled_for,
                                    status, must_do, source, assignment_id, topic_id,
-                                   updated_at, due_date, minutes)
+                                   updated_at, due_date, minutes, short_title)
                 SELECT text, NULL, ?, notes, ?, 'pending', must_do, source,
-                       assignment_id, topic_id, ?, due_date, minutes
+                       assignment_id, topic_id, ?, due_date, minutes, short_title
                 FROM tasks WHERE id = ?
             """, (stamp, new_day, stamp, task_id))
             return cursor.lastrowid
@@ -3276,16 +3280,48 @@ def save_day_plan(day, items, now=None):
                 if item.get("task_id"):
                     conn.execute(
                         "UPDATE tasks SET scheduled_for = ?, must_do = ?, "
-                        "minutes = COALESCE(?, minutes), updated_at = ? WHERE id = ?",
-                        (day, must, item.get("minutes"), stamp, item["task_id"]))
+                        "minutes = COALESCE(?, minutes), short_title = COALESCE(?, short_title), "
+                        "updated_at = ? WHERE id = ?",
+                        (day, must, item.get("minutes"), item.get("short_title"), stamp,
+                         item["task_id"]))
                     ids.append(item["task_id"])
                 else:
                     cursor = conn.execute(
                         "INSERT INTO tasks (text, recurrence, created_at, scheduled_for, "
-                        "must_do, minutes, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?)",
-                        (item["text"], stamp, day, must, item.get("minutes"), stamp))
+                        "must_do, minutes, updated_at, short_title) "
+                        "VALUES (?, NULL, ?, ?, ?, ?, ?, ?)",
+                        (item["text"], stamp, day, must, item.get("minutes"), stamp,
+                         item.get("short_title")))
                     ids.append(cursor.lastrowid)
         return ids
+    finally:
+        conn.close()
+
+
+def topic_info(topic_id):
+    """(topic name, source material folder) for a study plan task's topic, or
+    None. The topics table arrives in Phase 2, so this reads it only if it
+    exists and takes the columns it finds (name or title; source_material,
+    source_path or folder), never failing a booking over a missing one."""
+    if not topic_id:
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(topics)")]
+        if not columns:
+            return None
+        name = next((c for c in ("name", "title") if c in columns), None)
+        path = next((c for c in ("source_material", "source_path", "folder") if c in columns), None)
+        wanted = ", ".join(c for c in (name, path) if c)
+        if not wanted:
+            return None
+        row = conn.execute(f"SELECT {wanted} FROM topics WHERE id = ?", (topic_id,)).fetchone()
+        if row is None:
+            return None
+        values = iter(row)
+        return (next(values) if name else None, next(values) if path else None)
+    except sqlite3.Error:
+        return None
     finally:
         conn.close()
 

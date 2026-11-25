@@ -23,7 +23,7 @@ to Google or the database.
 
 import datetime
 
-from config import CALENDAR_ROLES, CLASS_TITLES, UF_BREAKS
+from config import CALENDAR_ROLES, CLASS_TITLES, UF_BREAKS, UF_HOLIDAYS
 
 BLOCKING = "blocking"
 CLUB = "club"
@@ -53,12 +53,17 @@ def event_span(event):
 
 
 def holiday_days(events):
-    """{date: name} for each day covered by an all day event on a holidays
-    calendar. These count as break days, so a class on Thanksgiving Day is
-    known to be off even though UF_BREAKS says nothing about that date."""
+    """{date: name} for each day covered by a public holiday UF observes. The
+    holidays calendar also lists observances (St. Patrick's Day, Tax Day), which
+    are class days, so an event counts only when its description says "Public
+    holiday" and its title is in UF_HOLIDAYS. A class on Thanksgiving Day is
+    then known to be off even though UF_BREAKS says nothing about that date."""
     days = {}
     for e in events:
         if e.get("role") != HOLIDAY or not e["all_day"]:
+            continue
+        if ("public holiday" not in (e.get("description") or "").casefold()
+                or e["title"].strip() not in UF_HOLIDAYS):
             continue
         first, last = event_span(e)
         day = first.date()
