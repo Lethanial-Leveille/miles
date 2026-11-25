@@ -603,7 +603,8 @@ def task_to_backlog(task_id: int, user: str = Depends(get_current_user)):
     """Clears the day and must do, and removes the MILES block through the
     guarded MILES only delete (nightly_review._remove_block_of)."""
     try:
-        return {"task": tasks_view.to_backlog(task_id, nightly_review._remove_block_of)}
+        return {"task": tasks_view.to_backlog(task_id, nightly_review._remove_block_of,
+                                                      nightly_review.drop_from_open_reviews)}
     except tasks_view.TaskError as exc:
         raise _task_http(exc)
 

@@ -115,7 +115,7 @@ def reopen(task_id):
     return one(task_id)
 
 
-def to_backlog(task_id, remove_block):
+def to_backlog(task_id, remove_block, drop_from_reviews=None):
     """remove_block is nightly_review._remove_block_of, passed in by the route:
     it deletes the block only from the MILES calendar and forgets the id."""
     task = get_task(task_id)
@@ -132,4 +132,6 @@ def to_backlog(task_id, remove_block):
     except Exception as exc:
         raise TaskError(502, "The calendar block could not be removed") from exc
     unschedule_task(task_id, now())
+    if drop_from_reviews:
+        drop_from_reviews(task_id)
     return one(task_id)

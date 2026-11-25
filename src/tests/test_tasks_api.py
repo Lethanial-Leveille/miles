@@ -14,7 +14,11 @@ from fastapi.testclient import TestClient        # noqa: E402
 
 import server                                    # noqa: E402
 import tasks_view                                # noqa: E402
-import fake_google                               # noqa: E402
+import fake_google
+import nightly_review as nr
+import session_types
+from test_review_v2 import (world, fixed_night, _session, _in_turn,   # noqa: F401
+                            TOMORROW, NOW as REVIEW_NOW)
 
 TASK_KEYS = {"id", "title", "short_title", "notes", "daily", "status", "must_do",
              "scheduled_for", "due_date", "overdue", "has_block", "source"}
@@ -285,3 +289,76 @@ def test_backlog_google_failure_leaves_the_task_alone(client, db):
     r = client.post(f"/tasks/{task}/backlog")   # the autouse fixture refuses Google
     assert r.status_code == 502
     assert db.get_task(task)["scheduled_for"] == "2026-11-26"
+
+# ── review follow ups: backlog during an open review, done tasks, a 410 on delete ──
+
+def test_backlog_route_prunes_the_open_review_and_confirm_does_not_bring_it_back(client, db, world):
+    fixed_night(db, world)
+    session = _session()
+    study_id = db.session_plan(session["id"])["must_dos"][0]["task_id"]
+    db.save_day_plan(TOMORROW, [{"task_id": study_id, "text": "x", "must_do": True}], REVIEW_NOW)
+    r = client.post(f"/tasks/{study_id}/backlog")
+    assert r.status_code == 200
+    plan = db.session_plan(session["id"])
+    assert study_id not in [e.get("task_id") for e in plan["must_dos"] + plan["optional"]]
+    token, _ = _in_turn(session["id"])
+    try:
+        nr.confirm_plan(now=REVIEW_NOW)
+    finally:
+        session_types.end_turn(token)
+    task = db.get_task(study_id)
+    assert (task["scheduled_for"], task["calendar_event_id"]) == (None, None)
+    assert world.inserts == [] or all(b["summary"] != "Linear algebra study" for _, b in world.inserts)
+
+
+def test_confirm_skips_a_planned_task_that_is_already_done(db, world):
+    fixed_night(db, world)
+    session = _session()
+    study_id = db.session_plan(session["id"])["must_dos"][0]["task_id"]
+    db.complete_task(study_id, REVIEW_NOW)
+    token, _ = _in_turn(session["id"])
+    try:
+        nr.confirm_plan(now=REVIEW_NOW)
+    finally:
+        session_types.end_turn(token)
+    task = db.get_task(study_id)
+    assert (task["status"], task["calendar_event_id"]) == ("done", None)
+    assert all(b["summary"] != "Linear algebra study" for _, b in world.inserts)
+
+
+def test_a_410_on_delete_counts_as_already_gone(client, db, monkeypatch):
+    fake = fake_google.install(monkeypatch)
+    fake.add(fake_google.MILES, "milesblock", "Study", datetime(2026, 11, 26, 10),
+             datetime(2026, 11, 26, 11))
+    task = _add(db, "Study", scheduled_for="2026-11-26")
+    db.set_task_calendar_event(task, "milesblock", NOW)
+    real = fake.events_
+
+    def racing():
+        ev = real()
+        def delete(calendarId, eventId):
+            raise fake_google.http_error(410)
+        ev.delete = delete
+        return ev
+    monkeypatch.setattr(fake, "events_", racing)
+    r = client.post(f"/tasks/{task}/backlog")
+    assert r.status_code == 200
+    assert db.get_task(task)["scheduled_for"] is None
+
+
+def test_a_500_on_delete_is_still_502(client, db, monkeypatch):
+    fake = fake_google.install(monkeypatch)
+    fake.add(fake_google.MILES, "milesblock", "Study", datetime(2026, 11, 26, 10),
+             datetime(2026, 11, 26, 11))
+    task = _add(db, "Study", scheduled_for="2026-11-26")
+    db.set_task_calendar_event(task, "milesblock", NOW)
+    real = fake.events_
+
+    def failing():
+        ev = real()
+        def delete(calendarId, eventId):
+            raise fake_google.http_error(500)
+        ev.delete = delete
+        return ev
+    monkeypatch.setattr(fake, "events_", failing)
+    assert client.post(f"/tasks/{task}/backlog").status_code == 502
