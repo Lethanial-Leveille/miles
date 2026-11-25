@@ -89,6 +89,11 @@ def decide(now, schedule, session, wrote_in_it):
     created = datetime.datetime.fromisoformat(session["created_at"])
     if session["push_sent_at"] is None:
         return PUSH if created >= opens and now >= opens else None
-    if session["reminder_sent_at"] is None and now >= _on(_day(for_day), schedule.remind_at):
+    remind = _on(_day(for_day), schedule.remind_at)
+    # A first push that only went out at or after the reminder time (the Pi was
+    # down at 21:30) already is the reminder; a second buzz five minutes later
+    # would be noise.
+    pushed = datetime.datetime.fromisoformat(session["push_sent_at"])
+    if session["reminder_sent_at"] is None and now >= remind and pushed < remind:
         return REMIND
     return None

@@ -229,6 +229,9 @@ def update_task_status(task_id, status, move_to=None, now=None):
     if status != "moved":
         raise ToolNotice(f"{status!r} is not a status; use done, skipped, moved or pending.")
 
+    if task["status"] == "done":
+        # Moving finished work would bring it back as pending on the new day.
+        raise ToolNotice(f"{title} is already done; there is nothing to move.")
     if not move_to:
         raise ToolNotice(f"Moving {title} needs move_to, the new date.")
     new_day = _date_arg(move_to, "move_to")
@@ -243,6 +246,8 @@ def update_task_status(task_id, status, move_to=None, now=None):
             raise ToolNotice(f"{day_words(new_day)} already has {MUST_DO_CAP} must dos, so "
                              f"{title} cannot move there as one. Nothing was changed.")
     new_id = move_task(task_id, new_day.isoformat(), now)
+    if new_id is None:
+        raise ToolNotice(f"{title} could not be moved; it is no longer pending.")
     return f"Moved {title} to {day_words(new_day)} (the copy there is task {new_id})."
 
 

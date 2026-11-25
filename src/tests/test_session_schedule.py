@@ -130,3 +130,11 @@ def test_a_daylight_saving_night():
 def test_settle_moment_is_the_next_morning():
     assert sched.settles_at(NIGHTLY, "2026-11-24") == datetime(2026, 11, 25, 3, 0)
     assert sched.push_cutoff("2026-11-24") == datetime(2026, 11, 25, 0, 0)
+
+
+def test_a_late_first_push_is_not_followed_by_the_reminder():
+    # The Pi came back at 22:45: the first push went then. It already is the
+    # reminder, so the next tick must not buzz again five minutes later.
+    s = _session(created_at="2026-11-24T22:45:00", push_sent_at="2026-11-24T22:45:02")
+    assert sched.decide(datetime(2026, 11, 24, 22, 50), NIGHTLY, s, False) is None
+    assert sched.decide(datetime(2026, 11, 24, 23, 30), NIGHTLY, s, False) is None

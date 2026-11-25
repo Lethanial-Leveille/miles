@@ -2,6 +2,7 @@
 shape, the status codes, and the turn stream's events in order."""
 
 import json
+from datetime import datetime
 import os
 import tempfile
 
@@ -181,3 +182,26 @@ def test_close_answers_the_closed_session(client):
     assert client.post(f"/sessions/{session_id}/close").status_code == 409
     assert client.post("/sessions/999/close").status_code == 404
     assert [s["id"] for s in client.get("/sessions?status=closed").json()["sessions"]] == [session_id]
+
+
+def test_a_session_started_by_hand_is_never_pushed(client):
+    # Started at 21:30:10, not yet fetched: the timer must still leave it alone.
+    import session_schedule as sched
+    from session_types import get_type
+    _, body = _start(client)
+    row = sessions.get(body["session"]["id"])
+    assert row["push_sent_at"] is not None and row["reminder_sent_at"] is not None
+    schedule = get_type("nightly_review").schedule
+    for minute in (30, 35):
+        assert sched.decide(datetime(2026, 11, 24, 21, minute), schedule,
+                            {**row, "for_day": "2026-11-24", "opened_at": None}, False) is None
+
+
+def test_purpose_is_never_null_for_an_unregistered_type(client, db):
+    import sqlite3
+    conn = sqlite3.connect(db.DB_PATH)
+    conn.execute("INSERT INTO sessions (type, created_at) VALUES ('retired_type', '2026-11-24T20:00:00')")
+    conn.commit()
+    conn.close()
+    listed = client.get("/sessions").json()["sessions"]
+    assert [s["purpose"] for s in listed if s["type"] == "retired_type"] == ["retired_type"]

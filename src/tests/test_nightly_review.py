@@ -389,3 +389,57 @@ def test_the_review_tools_and_their_tiers():
         assert (spec.permission, spec.min_tier) == (permission, tier)
         assert name in nr.STAGES
     assert nr.registry.get("close_session").returns_to_model is False
+
+
+# ── found in review, Nov 24 2026 ──
+
+def test_a_moved_task_is_one_match_for_voice(db):
+    # Every move leaves the old row marked moved beside its copy. Voice must see
+    # only the copy, or "I finished the essay" is two rows with one name.
+    task_id = _add(db, "Essay", TODAY)
+    nr.update_task_status(task_id, "moved", move_to=TOMORROW, now=NOW)
+    assert [row[1] for row in db.active_tasks_matching("essay")] == ["Essay"]
+    assert db.active_tasks_matching("essay")[0][0] != task_id
+
+
+def test_a_done_one_time_task_no_longer_matches_for_voice(db):
+    task_id = _add(db, "Call the bank", TODAY)
+    nr.update_task_status(task_id, "done", now=NOW)
+    assert db.active_tasks_matching("call the bank") == []
+
+
+def test_undated_tasks_settled_today_stay_in_todays_list(db):
+    # Voice tasks are undated. Settling them in the review must not drop them
+    # from today, or the summary counts only what was left.
+    bank = db.add_task("Call the bank", now=datetime(2026, 11, 23, 9, 0))
+    essay = db.add_task("Essay", now=datetime(2026, 11, 23, 9, 0))
+    lab = _add(db, "Lab report", TODAY)
+    nr.update_task_status(bank, "done", now=NOW)
+    nr.update_task_status(lab, "skipped", now=NOW)
+    nr.update_task_status(essay, "moved", move_to=TOMORROW, now=NOW)
+    statuses = {t["text"]: t["status"] for t in db.tasks_for_day(TODAY, today=TODAY)}
+    assert statuses == {"Call the bank": "done", "Lab report": "skipped", "Essay": "moved"}
+    assert nr.summary_facts(TODAY).startswith(
+        "Today: 1 done, 1 skipped, 1 moved, 0 left open, of 3 tasks.")
+
+
+def test_an_undated_task_settled_on_an_earlier_day_does_not_come_back(db):
+    task_id = db.add_task("Laundry", now=datetime(2026, 11, 22, 9, 0))
+    nr.update_task_status(task_id, "skipped", now=datetime(2026, 11, 23, 21, 0))
+    assert [t["text"] for t in db.tasks_for_day(TODAY, today=TODAY)] == []
+
+
+def test_a_done_task_cannot_be_moved(db):
+    task_id = _add(db, "Lab report", TODAY)
+    nr.update_task_status(task_id, "done", now=NOW)
+    with pytest.raises(ToolNotice):
+        nr.update_task_status(task_id, "moved", move_to=TOMORROW, now=NOW)
+    assert db.get_task(task_id)["status"] == "done"
+    assert db.tasks_between(TOMORROW, TOMORROW) == []
+
+
+def test_a_skipped_task_can_still_be_moved(db):
+    task_id = _add(db, "Laundry", TODAY)
+    nr.update_task_status(task_id, "skipped", now=NOW)
+    nr.update_task_status(task_id, "moved", move_to=TOMORROW, now=NOW)
+    assert [t["text"] for t in db.tasks_between(TOMORROW, TOMORROW)] == ["Laundry"]

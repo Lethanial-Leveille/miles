@@ -38,6 +38,7 @@ import push
 import agent_watchdog
 import approvals
 import tts
+import database
 import sessions
 # Imported for its side effect: registering the nightly_review session type.
 # Without it POST /sessions answers 400 for it and the timer has nothing to
@@ -573,7 +574,13 @@ def start_session(body: SessionStart, response: Response,
         raise _session_http(exc)
     if not created:
         response.status_code = 200
-    return sessions.body(session)
+        return sessions.body(session)
+    # He started it, so the timer must never announce it: mark both pushes as
+    # done. Without this, a review started by hand just after 21:30 and not yet
+    # fetched by the app could buzz his phone with a session already on screen.
+    database.mark_session_pushed(session["id"], "push")
+    database.mark_session_pushed(session["id"], "reminder")
+    return sessions.body(sessions.get(session["id"]))
 
 
 @app.post("/sessions/{session_id}/turns")

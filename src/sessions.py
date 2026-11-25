@@ -112,7 +112,9 @@ def public(session):
         "id": session["id"],
         "type": session["type"],
         "title": session["title"],
-        "purpose": session_type.purpose if session_type else None,
+        # Never null, per the contract: a row whose type was later renamed
+        # or removed still shows, labelled by its type name.
+        "purpose": session_type.purpose if session_type else session["type"],
         "status": session["status"],
         "for_day": session["for_day"],
         "created_at": session["created_at"],
@@ -378,7 +380,13 @@ def run_turn(session_id, message, on_text=None, now=None):
             end_turn(token)
 
         if state.close_requested:
-            closed = _close_locked(session_id, now)
+            # The timer runs in its own process, so this lock does not cover
+            # it. If it settled the session during this turn, the reply is
+            # already stored; say closed with what it saved, not an error.
+            try:
+                closed = _close_locked(session_id, now)
+            except NotOpen:
+                closed = get(session_id)
             _emit(on_text, "closed", closed["summary"] or "Closed.")
         return reply.strip()
 

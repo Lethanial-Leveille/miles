@@ -2538,8 +2538,12 @@ def active_tasks_matching(words):
     conn = sqlite3.connect(DB_PATH)
     try:
         rows = conn.execute(
+            # A settled one time task (done, skipped, or moved, whose copy is
+            # the live row) must not match, or every moved task is two rows
+            # with one name and "I finished the essay" can never be answered.
             "SELECT id, text, recurrence FROM tasks "
-            "WHERE archived_at IS NULL AND text LIKE ? ORDER BY id",
+            "WHERE archived_at IS NULL AND text LIKE ? "
+            "AND (recurrence IS NOT NULL OR status = 'pending') ORDER BY id",
             (f"%{words.strip()}%",)).fetchall()
     finally:
         conn.close()
@@ -2932,7 +2936,12 @@ def tasks_for_day(day, today=None):
 
     When `day` is today (the 4am day), pending one time tasks that are undated
     or dated earlier are included too, because they are still on today's list
-    (tasks_today shows them) and the review has to ask about them."""
+    (tasks_today shows them) and the review has to ask about them.
+
+    And on any day, an undated or earlier task that was settled that day stays
+    in that day's list: done (a completion dated that day), or skipped or moved
+    (updated on that 4am day). Without it, marking an undated task done made it
+    vanish from today, and the closing summary counted only what was left."""
     today = today or task_day()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -2946,9 +2955,16 @@ def tasks_for_day(day, today=None):
               AND (recurrence IS NOT NULL
                    OR scheduled_for = :day
                    OR (:day = :today AND status = 'pending'
-                       AND (scheduled_for IS NULL OR scheduled_for < :day)))
+                       AND (scheduled_for IS NULL OR scheduled_for < :day))
+                   OR ((scheduled_for IS NULL OR scheduled_for < :day)
+                       AND ((status = 'done' AND EXISTS (
+                                SELECT 1 FROM task_completions c
+                                WHERE c.task_id = tasks.id AND c.date = :day))
+                            OR (status IN ('skipped', 'moved')
+                                AND date(updated_at, :shift) = :day))))
             ORDER BY id
-        """, {"day": day, "today": today}).fetchall()
+        """, {"day": day, "today": today,
+              "shift": f"-{DAY_STARTS_AT_HOUR} hours"}).fetchall()
     finally:
         conn.close()
     tasks = []
@@ -3059,8 +3075,11 @@ def move_task(task_id, new_day, now=None):
     try:
         with conn:
             moved = conn.execute(
+                # Only pending or skipped: moving a done task would bring
+                # finished work back as pending on the new day.
                 "UPDATE tasks SET status = 'moved', updated_at = ? "
-                "WHERE id = ? AND recurrence IS NULL AND archived_at IS NULL",
+                "WHERE id = ? AND recurrence IS NULL AND archived_at IS NULL "
+                "AND status IN ('pending', 'skipped')",
                 (stamp, task_id))
             if not moved.rowcount:
                 return None
