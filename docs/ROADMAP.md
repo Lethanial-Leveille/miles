@@ -239,6 +239,21 @@ Existing planner and calendar bugs found by the Codex review of the Evallo filte
 * Unreadable calendars: `_fetch_events` drops a calendar that fails on any page, and `busy_blocks` raises only when every calendar failed. `place_plan` and `read_events` discard the list of unreadable calendars, so a failed primary calendar can make a whole day look free and the plan can place a task over a real lesson. A failed blocking calendar must stop planning or be stated plainly.
 * One answer, one read: the nightly opening and voice answers load calendar state several times (suggestions, slot placement, rendering, the past and upcoming lists), so one answer can mix different decisions or clocks. Read once per answer.
 
+### Evallo filter follow ups (queued Nov 25 2026, after the Planner fixes)
+
+Found by the Codex adversarial reviews of the Evallo session id filter and deliberately not fixed in that phase (he closed the review rounds). Planned only, not built.
+
+* Mac pin flow (High): `evallo_pin.py` can print a response's `tutorName` verbatim, and the confirm step writes it into the pin file. If a token, cookie value or the supplied tutor id appears in that name it would be displayed and persisted. Refuse a name that contains the saved login's token, any cookie value or the supplied id, before displaying or writing it, and test it.
+* Name rule: the slash form (`<student> / Lethanial Leveille`) ignores everything after a `|`, so `Algebra / Lethanial Leveille | Taylor <> Jordan Price` matches his name. End the match after his name, as the documented form does.
+* Same second snapshots: the Pi truncates `fetched_at` before converting an offset form to UTC, so two snapshots in the same UTC second can replace one another. Convert to UTC first, then truncate; accept only `Z` or reject offsets.
+* Mac pin file: opening a FIFO at the pin path blocks the hourly job and the load check. Open non blocking, then check the type.
+* Mac timeouts: a response that keeps delivering chunks can hold one request past the 60 second budget (httpx timeouts are per wait, not total), and pin requests lost their default timeout. Enforce a total deadline and restore the pin timeout. Elapsed time should be captured when the last response arrives, not after validation.
+* Retry button: the Pi's Retry for the hourly Evallo job is marked delivered at the Mac's check in, which now discards it silently. Make the Mac run the push job when told to retry, or remove the button for this job.
+* Watchdog status for the hourly job: a success followed by a failure the same day leaves `agent_jobs.ok = 1`, and a success after midnight leaves the previous night's alert open. The report `detail` is also stored and sent in a push body as free text; cap and sanitize it.
+* Count mismatch: an `unreadable` state from a count mismatch loses the known `verified_at`.
+* Survivors report: sub second precision of Google `updated` is lost at the cutoff, and its header text about stale runs is wrong.
+* Lows: a `Date` header with year 0026 is accepted, and the `--id-file` path check and `getpass` fall back are loose (details in the review output).
+
 ### Model audit: local models for background jobs (planned Nov 25 2026, after the Tasks follow ups)
 
 Planned only, not built. The phase starts with a plan and contract shown to him, as every phase does.
