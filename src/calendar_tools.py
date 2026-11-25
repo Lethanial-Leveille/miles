@@ -836,6 +836,38 @@ def _already_over(calendars, asked_from, now):
             + [line for _, line in over] + [""])
 
 
+def busy_blocks(start, end):
+    """(merged busy blocks, names of calendars that could not be read) across
+    every selected calendar between two local times. The blocks are aware
+    datetimes, as Google returns them. Raises when no calendar could be read,
+    because an empty answer would read as a free day.
+
+    Shared by check_calendar_freebusy and the nightly review's schedule_block,
+    so the two can never disagree about when he is busy."""
+    service = _service()
+    # Public holiday calendars cannot be asked for busy time (Google answers
+    # notFound), and a holiday is not busy time anyway. Left in, every answer
+    # carried a failure Nova would feel obliged to mention.
+    calendars = {cid: name for cid, name in _selected(service).items()
+                 if "#holiday@" not in cid}
+
+    body = {"timeMin": _utc(start), "timeMax": _utc(end),
+            "items": [{"id": cid} for cid in calendars]}
+    answer = service.freebusy().query(body=body).execute().get("calendars", {})
+
+    blocks, unreadable = [], []
+    for cid, data in answer.items():
+        if data.get("errors"):
+            unreadable.append(calendars.get(cid, cid))
+            continue
+        blocks += [(datetime.datetime.fromisoformat(b["start"]),
+                    datetime.datetime.fromisoformat(b["end"])) for b in data.get("busy", [])]
+
+    if calendars and len(unreadable) == len(calendars):
+        raise RuntimeError("could not read any calendar")
+    return merge_busy(blocks), unreadable
+
+
 @tool(
     name="check_calendar_freebusy",
     description=(
@@ -859,29 +891,7 @@ def _already_over(calendars, asked_from, now):
 )
 def check_calendar_freebusy(time_min, time_max):
     start, end = resolve_window(time_min, time_max)
-    service = _service()
-    # Public holiday calendars cannot be asked for busy time (Google answers
-    # notFound), and a holiday is not busy time anyway. Left in, every answer
-    # carried a failure Nova would feel obliged to mention.
-    calendars = {cid: name for cid, name in _selected(service).items()
-                 if "#holiday@" not in cid}
-
-    body = {"timeMin": _utc(start), "timeMax": _utc(end),
-            "items": [{"id": cid} for cid in calendars]}
-    answer = service.freebusy().query(body=body).execute().get("calendars", {})
-
-    blocks, unreadable = [], []
-    for cid, data in answer.items():
-        if data.get("errors"):
-            unreadable.append(calendars.get(cid, cid))
-            continue
-        blocks += [(datetime.datetime.fromisoformat(b["start"]),
-                    datetime.datetime.fromisoformat(b["end"])) for b in data.get("busy", [])]
-
-    if calendars and len(unreadable) == len(calendars):
-        raise RuntimeError("could not read any calendar")
-
-    busy = merge_busy(blocks)
+    busy, unreadable = busy_blocks(start, end)
     free = free_gaps(busy, start.astimezone(), end.astimezone())
     result = {
         "range": f"{_spoken(start)} to {_spoken(end)}",
@@ -966,15 +976,25 @@ _RESTORABLE = ("summary", "description", "location", "start", "end",
                "colorId", "reminders", "transparency", "visibility")
 
 
-def _insert_event(summary, start, end):
-    """The actual write, remembered so it can be undone."""
+def add_miles_event(summary, start, end):
+    """Insert an event on the MILES calendar and return (calendar id, event id).
+
+    The only write path for anything outside a voice turn, such as the nightly
+    review's blocks. It is not added to the spoken undo, which groups changes
+    by voice turn. The calendar id comes from _write_calendar_id and nowhere
+    else, so this cannot write to any calendar but MILES."""
     service = _service()
     body = {"summary": summary,
             "start": {"dateTime": start.astimezone().isoformat()},
             "end": {"dateTime": end.astimezone().isoformat()}}
     calendar_id = _write_calendar_id(service)
     created = service.events().insert(calendarId=calendar_id, body=body).execute()
-    event_id = created.get("id")
+    return calendar_id, created.get("id")
+
+
+def _insert_event(summary, start, end):
+    """The actual write, remembered so it can be undone."""
+    calendar_id, event_id = add_miles_event(summary, start, end)
     _record_change("Removed", summary, lambda: _service().events().delete(
         calendarId=calendar_id, eventId=event_id).execute())
     return f"Added {summary}."

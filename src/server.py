@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 from datetime import date, datetime, timedelta
@@ -38,6 +38,12 @@ import push
 import agent_watchdog
 import approvals
 import tts
+import sessions
+# Imported for its side effect: registering the nightly_review session type.
+# Without it POST /sessions answers 400 for it and the timer has nothing to
+# open. Kept explicit, with this comment, because an unused looking import is
+# exactly what a later cleanup deletes.
+import nightly_review  # noqa: F401
 
 app = FastAPI(title="M.I.L.E.S. API", version="0.7")
 init_db()
@@ -524,6 +530,103 @@ def finish_task(task_id: int, user: str = Depends(get_current_user)):
     if not complete_task(task_id):
         raise HTTPException(status_code=404, detail="No active task with that id")
     return {"completed": True, "day": task_day()}
+
+
+# ── Sessions ──
+# Dedicated chats with their own purpose, prompt and tools; the shapes are in
+# docs/SESSIONS_CONTRACT.md and the engine is sessions.py.
+
+class SessionStart(BaseModel):
+    type: str
+
+class SessionTurn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+def _session_http(exc: sessions.SessionError):
+    return HTTPException(status_code=exc.status, detail=str(exc))
+
+
+@app.get("/sessions")
+def list_sessions(status: Literal["open", "closed", "missed", "all"] = "open",
+                  user: str = Depends(get_current_user)):
+    return {"sessions": sessions.listing(status)}
+
+
+@app.get("/sessions/{session_id}")
+def get_session(session_id: int, user: str = Depends(get_current_user)):
+    """Opening it here is what stops the reminder push."""
+    try:
+        return sessions.view(session_id)
+    except sessions.SessionError as exc:
+        raise _session_http(exc)
+
+
+@app.post("/sessions", status_code=201)
+def start_session(body: SessionStart, response: Response,
+                  user: str = Depends(get_current_user)):
+    """201 with a new one; 200 with the one already there for a once a day type.
+    Never pushes: he is the one who started it."""
+    try:
+        session, created = sessions.create(body.type)
+    except sessions.SessionError as exc:
+        raise _session_http(exc)
+    if not created:
+        response.status_code = 200
+    return sessions.body(session)
+
+
+@app.post("/sessions/{session_id}/turns")
+async def session_turn(session_id: int, body: SessionTurn,
+                       user: str = Depends(get_current_user)):
+    """One turn, streamed like /chat/stream so the app reuses its reader.
+
+    404 and 409 are answered before the stream starts, while a status code can
+    still be sent. The turn runs on a worker thread and finishes whatever
+    happens to this response, since it is storing every message as it goes."""
+    try:
+        session = sessions.get(session_id)
+    except sessions.SessionError as exc:
+        raise _session_http(exc)
+    if session["status"] != "open":
+        raise HTTPException(status_code=409, detail="That session is not open")
+
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def on_text(kind: str, text: str):
+        loop.call_soon_threadsafe(queue.put_nowait, (kind, text))
+
+    def run_turn():
+        try:
+            on_text("done", sessions.run_turn(session_id, body.message, on_text=on_text))
+        except Exception as exc:
+            on_text("error", str(exc))
+
+    threading.Thread(target=run_turn, daemon=True).start()
+
+    async def events():
+        while True:
+            try:
+                kind, text = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            yield _sse(kind, text)
+            if kind in ("done", "error"):
+                return
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+@app.post("/sessions/{session_id}/close")
+def close_session(session_id: int, user: str = Depends(get_current_user)):
+    try:
+        return {"session": sessions.public(sessions.close(session_id))}
+    except sessions.SessionError as exc:
+        raise _session_http(exc)
 
 
 # ── Push notifications ──

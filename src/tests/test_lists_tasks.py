@@ -149,6 +149,33 @@ def test_finished_one_time_task_never_comes_back(db):
     assert db.tasks_today(now=datetime(2026, 11, 12, 9, 0)) == []
 
 
+def test_a_dated_one_time_task_shows_from_its_day_while_pending(db):
+    """Migration 41: a task planned for Wednesday is not on Tuesday's list, one
+    left from Monday still is, and a skipped or moved one is settled."""
+    tuesday = datetime(2026, 11, 24, 12, 0)
+    ids = database.add_planned_tasks([
+        {"text": "Wednesday lab", "scheduled_for": "2026-11-25"},
+        {"text": "Monday leftover", "scheduled_for": "2026-11-23"},
+        {"text": "Tuesday reading", "scheduled_for": "2026-11-24"},
+        {"text": "Skipped laundry", "scheduled_for": "2026-11-24"},
+        {"text": "Moved essay", "scheduled_for": "2026-11-24"},
+    ], tuesday)
+    undated = database.add_task("Call the bank", now=tuesday)
+    database.set_task_status(ids[3], "skipped", tuesday)
+    database.move_task(ids[4], "2026-11-26", tuesday)
+    shown = [t[1] for t in database.tasks_today(tuesday)]
+    assert shown == ["Monday leftover", "Tuesday reading", "Call the bank"]
+    assert "Wednesday lab" in [t[1] for t in database.tasks_today(datetime(2026, 11, 25, 9, 0))]
+    assert undated
+
+
+def test_a_one_time_task_done_by_voice_is_done_in_the_review(db):
+    task_id = database.add_task("Return the book")
+    database.complete_task(task_id)
+    assert database.get_task(task_id)["status"] == "done"
+    assert task_id not in [t[0] for t in database.tasks_today()]
+
+
 def test_archived_daily_task_does_not_show_up(db):
     tid = db.add_task("take vitamins", "daily")
     db.complete_task(tid, now=datetime(2026, 11, 11, 9, 0))

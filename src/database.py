@@ -2891,3 +2891,404 @@ def latest_phone_presence():
             "SELECT state, at FROM phone_presence ORDER BY at DESC, id DESC LIMIT 1").fetchone()
     finally:
         conn.close()
+
+
+# ── Planned tasks ──
+# The nightly review's view of the tasks table: dates, statuses and must dos,
+# added by migration 41. Rows come back as dicts because the review reads a
+# dozen columns, and positions would be the bug waiting in every caller.
+
+_TASK_COLUMNS = ("id, text, recurrence, status, scheduled_for, must_do, notes, source, "
+                 "assignment_id, topic_id, calendar_event_id, created_at, updated_at")
+
+
+def _task_dict(row, done_on=None):
+    task = dict(row)
+    task["must_do"] = bool(task["must_do"])
+    if task["recurrence"] is not None:
+        # A daily task's status column stays pending forever; whether it is done
+        # is whether it has a completion on the day asked about.
+        task["status"] = "done" if done_on else "pending"
+    return task
+
+
+def get_task(task_id):
+    """One task as a dict, archived or not, or None."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            f"SELECT {_TASK_COLUMNS}, archived_at FROM tasks WHERE id = ?",
+            (task_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def tasks_for_day(day, today=None):
+    """Every active task that belongs to `day`, in the order added: one time
+    tasks dated that day whatever their status, and daily tasks with status
+    done when they have a completion on it.
+
+    When `day` is today (the 4am day), pending one time tasks that are undated
+    or dated earlier are included too, because they are still on today's list
+    (tasks_today shows them) and the review has to ask about them."""
+    today = today or task_day()
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(f"""
+            SELECT {_TASK_COLUMNS},
+                   EXISTS (SELECT 1 FROM task_completions c
+                           WHERE c.task_id = tasks.id AND c.date = :day) AS done_on
+            FROM tasks
+            WHERE archived_at IS NULL
+              AND (recurrence IS NOT NULL
+                   OR scheduled_for = :day
+                   OR (:day = :today AND status = 'pending'
+                       AND (scheduled_for IS NULL OR scheduled_for < :day)))
+            ORDER BY id
+        """, {"day": day, "today": today}).fetchall()
+    finally:
+        conn.close()
+    tasks = []
+    for row in rows:
+        task = dict(row)
+        done_on = task.pop("done_on")
+        tasks.append(_task_dict(task, done_on))
+    return tasks
+
+
+def tasks_between(first_day, last_day):
+    """One time tasks dated first_day through last_day inclusive, not moved
+    away, ordered by date then id. Daily tasks are left out: they are the same
+    every day and would bury what is actually planned."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(f"""
+            SELECT {_TASK_COLUMNS} FROM tasks
+            WHERE archived_at IS NULL AND recurrence IS NULL
+              AND status != 'moved'
+              AND scheduled_for BETWEEN ? AND ?
+            ORDER BY scheduled_for, id
+        """, (first_day, last_day)).fetchall()
+    finally:
+        conn.close()
+    return [_task_dict(row) for row in rows]
+
+
+def must_do_counts(days):
+    """{day: how many must dos it holds} for each day asked about. A moved row
+    no longer holds its slot; its copy holds one on the new day."""
+    days = list(days)
+    counts = {day: 0 for day in days}
+    if not days:
+        return counts
+    marks = ",".join("?" for _ in days)
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        for day, count in conn.execute(f"""
+            SELECT scheduled_for, COUNT(*) FROM tasks
+            WHERE archived_at IS NULL AND must_do = 1 AND status != 'moved'
+              AND scheduled_for IN ({marks})
+            GROUP BY scheduled_for
+        """, days):
+            counts[day] = count
+    finally:
+        conn.close()
+    return counts
+
+
+def add_planned_tasks(tasks, now=None):
+    """Insert dated one time tasks in one transaction and return their ids.
+
+    Each task is a dict with text, scheduled_for, must_do and notes. All or
+    nothing, so a plan the review confirmed is never half saved."""
+    stamp = (now or datetime.now()).isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        ids = []
+        with conn:
+            for task in tasks:
+                cursor = conn.execute(
+                    "INSERT INTO tasks (text, recurrence, created_at, scheduled_for, "
+                    "must_do, notes, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?)",
+                    (task["text"], stamp, task["scheduled_for"], int(bool(task.get("must_do"))),
+                     task.get("notes"), stamp))
+                ids.append(cursor.lastrowid)
+        return ids
+    finally:
+        conn.close()
+
+
+def set_task_status(task_id, status, now=None):
+    """Set a one time task to skipped or pending. done goes through
+    complete_task, so the completion row voice reads is written too, and moved
+    goes through move_task, which makes the copy.
+
+    Back to pending also deletes its completion rows: tasks_today treats any
+    completion of a one time task as done, and the two must not disagree.
+    False when there is no active one time task with that id."""
+    if status not in ("skipped", "pending"):
+        raise ValueError(f"set_task_status takes skipped or pending, not {status!r}")
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? "
+                "WHERE id = ? AND recurrence IS NULL AND archived_at IS NULL",
+                (status, (now or datetime.now()).isoformat(), task_id))
+            if cursor.rowcount and status == "pending":
+                conn.execute("DELETE FROM task_completions WHERE task_id = ?", (task_id,))
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def move_task(task_id, new_day, now=None):
+    """Mark a one time task moved and insert its copy on new_day, pending, in
+    one transaction. Returns the copy's id, or None when there is no active one
+    time task with that id.
+
+    The copy keeps the title, notes, must do flag, source and links, so a
+    Canvas assignment moved to Thursday is still that assignment. Not the
+    calendar event: that block is for the old day and stays with the old row."""
+    stamp = (now or datetime.now()).isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            moved = conn.execute(
+                "UPDATE tasks SET status = 'moved', updated_at = ? "
+                "WHERE id = ? AND recurrence IS NULL AND archived_at IS NULL",
+                (stamp, task_id))
+            if not moved.rowcount:
+                return None
+            cursor = conn.execute("""
+                INSERT INTO tasks (text, recurrence, created_at, notes, scheduled_for,
+                                   status, must_do, source, assignment_id, topic_id,
+                                   updated_at)
+                SELECT text, NULL, ?, notes, ?, 'pending', must_do, source,
+                       assignment_id, topic_id, ?
+                FROM tasks WHERE id = ?
+            """, (stamp, new_day, stamp, task_id))
+            return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def set_task_calendar_event(task_id, event_id, now=None):
+    """Remember the calendar block made for a task. Only fills an empty slot,
+    so a task can never point at two blocks; False if it already had one."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE tasks SET calendar_event_id = ?, updated_at = ? "
+                "WHERE id = ? AND calendar_event_id IS NULL",
+                (event_id, (now or datetime.now()).isoformat(), task_id))
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ── Sessions ──
+# A session is a chat with its own purpose, prompt and tools (session_types.py),
+# run by sessions.py. Messages are stored whole, as the API's content blocks.
+
+_SESSION_COLUMNS = ("id, type, status, title, for_day, model, created_at, opened_at, "
+                    "last_message_at, closed_at, summary, push_sent_at, reminder_sent_at")
+
+
+def _insert_session_messages(conn, session_id, messages, stamp):
+    for message in messages:
+        conn.execute(
+            "INSERT INTO session_messages (session_id, role, content, model, input_tokens, "
+            "output_tokens, cache_read_tokens, cache_write_tokens, ms, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, message["role"], json.dumps(message["content"]),
+             message.get("model"), message.get("input_tokens"), message.get("output_tokens"),
+             message.get("cache_read_tokens"), message.get("cache_write_tokens"),
+             message.get("ms"), stamp))
+    if messages:
+        conn.execute("UPDATE sessions SET last_message_at = ? WHERE id = ?",
+                     (stamp, session_id))
+
+
+def create_session(session_type, for_day, model, opening=None, now=None):
+    """Insert a session, and its opening message when there is one, in one
+    transaction. Returns the new id, or None when UNIQUE (type, for_day)
+    refused it because that day already has one; the caller fetches that one.
+
+    opening is a list of content blocks, stored as the first assistant row."""
+    stamp = (now or datetime.now()).isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            cursor = conn.execute(
+                "INSERT INTO sessions (type, for_day, model, created_at) VALUES (?, ?, ?, ?)",
+                (session_type, for_day, model, stamp))
+            session_id = cursor.lastrowid
+            if opening:
+                _insert_session_messages(
+                    conn, session_id, [{"role": "assistant", "content": opening}], stamp)
+        return session_id
+    except sqlite3.IntegrityError:
+        return None
+    finally:
+        conn.close()
+
+
+def get_session(session_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(f"SELECT {_SESSION_COLUMNS} FROM sessions WHERE id = ?",
+                           (session_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def session_for_day(session_type, for_day):
+    """The one session of a once a day type for that day, or None."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(f"SELECT {_SESSION_COLUMNS} FROM sessions "
+                           "WHERE type = ? AND for_day = ?",
+                           (session_type, for_day)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_sessions(status="open", types=None):
+    """Sessions with that status ('all' for every one), newest activity first:
+    the last message, or the creation time for one with none. types, when
+    given, narrows it to those session types."""
+    where, params = [], []
+    if status != "all":
+        where.append("status = ?")
+        params.append(status)
+    if types is not None:
+        types = list(types)
+        if not types:
+            return []
+        where.append(f"type IN ({','.join('?' for _ in types)})")
+        params += types
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            f"SELECT {_SESSION_COLUMNS} FROM sessions {clause} "
+            "ORDER BY COALESCE(last_message_at, created_at) DESC, id DESC", params).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def mark_session_opened(session_id, now=None):
+    """Set opened_at the first time only. True when this call set it."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE sessions SET opened_at = ? WHERE id = ? AND opened_at IS NULL",
+                ((now or datetime.now()).isoformat(), session_id))
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def mark_session_pushed(session_id, which, now=None):
+    """Record that the first push ('push') or the reminder ('reminder') went."""
+    column = {"push": "push_sent_at", "reminder": "reminder_sent_at"}[which]
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            conn.execute(f"UPDATE sessions SET {column} = ? WHERE id = ?",
+                         ((now or datetime.now()).isoformat(), session_id))
+    finally:
+        conn.close()
+
+
+def add_session_messages(session_id, messages, now=None):
+    """Append messages to a session in one transaction and move its
+    last_message_at. Each is a dict: role, content (a list of content blocks),
+    and on assistant rows model, the token counts and ms.
+
+    One transaction so an assistant tool call and the user row holding its
+    result are stored together or not at all. A tool call stored without its
+    result would make every later request for that session fail."""
+    stamp = (now or datetime.now()).isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            _insert_session_messages(conn, session_id, messages, stamp)
+    finally:
+        conn.close()
+
+
+def session_messages(session_id):
+    """Every message of a session in order, content parsed back into blocks."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT id, role, content, model, input_tokens, output_tokens, cache_read_tokens, "
+            "cache_write_tokens, ms, created_at FROM session_messages "
+            "WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
+    finally:
+        conn.close()
+    messages = []
+    for row in rows:
+        message = dict(row)
+        message["content"] = json.loads(message["content"])
+        messages.append(message)
+    return messages
+
+
+def session_has_user_message(session_id):
+    """Whether he ever wrote in it. The opening is an assistant row and the
+    line that leads it to the API is never stored, so any user row is his (or
+    a tool result, which only follows something he wrote)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT 1 FROM session_messages WHERE session_id = ? AND role = 'user' LIMIT 1",
+            (session_id,)).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def finish_session(session_id, status, summary=None, now=None):
+    """Settle an open session as closed (with its summary) or missed. Only an
+    open one changes, so a close racing the timer settles it once. closed_at is
+    when it was settled, for a missed one too. True when this call settled it."""
+    if status not in ("closed", "missed"):
+        raise ValueError(f"a session finishes closed or missed, not {status!r}")
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE sessions SET status = ?, summary = ?, closed_at = ? "
+                "WHERE id = ? AND status = 'open'",
+                (status, summary, (now or datetime.now()).isoformat(), session_id))
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def last_session_summary(session_type, before_day):
+    """The summary of the latest closed session of a type for a day before
+    before_day, as (for_day, summary), or None."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT for_day, summary FROM sessions WHERE type = ? AND status = 'closed' "
+            "AND summary IS NOT NULL AND for_day < ? ORDER BY for_day DESC LIMIT 1",
+            (session_type, before_day)).fetchone()
+    finally:
+        conn.close()

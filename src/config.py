@@ -1131,7 +1131,28 @@ PUSH_KINDS         = ("reminder", "timer")
 # reminder is worth reading late; a timer that finished an hour ago is not.
 # An approval is worth delivering only while it can still be approved.
 # A watchdog alert is still worth seeing the next morning.
+# A session push is worth seeing for the evening it belongs to, and no push is
+# sent after midnight anyway, so three hours covers 21:30 to past it.
 PUSH_TTL_S         = {"reminder": 6 * 3600, "timer": 300, "approval": 2 * 3600,
-                      "watchdog": 12 * 3600, "login": 24 * 3600}
+                      "watchdog": 12 * 3600, "login": 24 * 3600,
+                      "session": 3 * 3600}
 PUSH_DEFAULT_TTL_S = 3600
 APNS_TIMEOUT_S     = 10.0
+
+
+# ── Sessions (session_types.py, sessions.py) ──
+# The model each session type runs on. Haiku for the nightly review because it
+# is the cheapest model that does the job: the tool calls are simple (a status,
+# a date, a title) and every count, cap and free slot is worked out in code, so
+# nothing is left that needs a stronger model to reason through. A stronger one
+# earns its price later, for learn sessions that teach and for browsing. A type
+# missing here runs on MODEL_A.
+SESSION_MODELS = {"nightly_review": "claude-haiku-4-5"}
+
+# Where schedule_block looks for a free slot when he gives no start time, as
+# (hour, minute) on the task's day. Not before nine, because he does not plan
+# focused work before class, and ending by nine at night, because a block that
+# starts at ten is one he will move. He can name earliest and latest to go
+# outside it.
+SESSION_BLOCK_EARLIEST = (9, 0)
+SESSION_BLOCK_LATEST   = (21, 0)

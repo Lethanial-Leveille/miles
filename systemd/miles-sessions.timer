@@ -1,0 +1,14 @@
+[Unit]
+Description=Open, push and settle scheduled sessions every 5 minutes
+
+[Timer]
+# On the clock's five minute marks rather than five minutes after the last run,
+# so the 21:30 open and the 22:30 reminder land on their minute. Persistent
+# runs a missed fire at boot, and the tick settles any old open session
+# whenever it next runs, so a night the Pi was off is still caught up.
+OnCalendar=*:0/5
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

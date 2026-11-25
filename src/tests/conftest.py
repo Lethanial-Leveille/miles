@@ -39,3 +39,84 @@ def fake_embeddings(monkeypatch):
 
     monkeypatch.setattr(embeddings, "encode", encode)
     return encode
+
+
+# ── a stand in for the Anthropic client, for the session engine ──
+
+def text_block(text):
+    from types import SimpleNamespace
+    return SimpleNamespace(type="text", text=text)
+
+
+def tool_block(name, arguments=None, block_id=None):
+    from types import SimpleNamespace
+    return SimpleNamespace(type="tool_use", id=block_id or f"toolu_{name}",
+                           name=name, input=dict(arguments or {}))
+
+
+class _FakeSessionStream:
+    """messages.stream as the engine uses it: a context manager that yields a
+    block start for each block, the text in two pieces, then the final message."""
+
+    def __init__(self, blocks):
+        from types import SimpleNamespace
+        self._blocks = blocks
+        self._final = SimpleNamespace(
+            content=list(blocks),
+            usage=SimpleNamespace(input_tokens=120, output_tokens=30,
+                                  cache_read_input_tokens=100, cache_creation_input_tokens=0))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        from types import SimpleNamespace
+        for block in self._blocks:
+            yield SimpleNamespace(type="content_block_start", content_block=block)
+            if block.type == "text":
+                half = len(block.text) // 2
+                for piece in (block.text[:half], block.text[half:]):
+                    yield SimpleNamespace(type="content_block_delta",
+                                          delta=SimpleNamespace(type="text_delta", text=piece))
+
+    def get_final_message(self):
+        return self._final
+
+
+class FakeSessionClaude:
+    """Plays back one list of blocks per round and records every request."""
+
+    def __init__(self, rounds, summary="He finished the lab and planned tomorrow."):
+        import copy
+        self._copy = copy.deepcopy
+        self.rounds = list(rounds)
+        self.summary = summary
+        self.calls = []
+        self.summary_calls = []
+        self.messages = self
+
+    def stream(self, **kwargs):
+        self.calls.append(self._copy(kwargs))
+        return _FakeSessionStream(self.rounds.pop(0))
+
+    def create(self, **kwargs):
+        from types import SimpleNamespace
+        self.summary_calls.append(self._copy(kwargs))
+        return SimpleNamespace(content=[text_block(self.summary)])
+
+
+@pytest.fixture
+def fake_claude(monkeypatch):
+    """fake_claude(round, round, ...) installs a fake client for sessions.py,
+    each round a list of text_block and tool_block, and returns it."""
+    import sessions
+
+    def install(*rounds, summary="He finished the lab and planned tomorrow."):
+        fake = FakeSessionClaude(rounds, summary)
+        monkeypatch.setattr(sessions, "_client", lambda: fake)
+        return fake
+
+    return install

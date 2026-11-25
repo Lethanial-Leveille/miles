@@ -1,0 +1,15 @@
+[Unit]
+Description=M.I.L.E.S. sessions: open, push, remind and settle the nightly review
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=theycallmelee
+WorkingDirectory=/home/theycallmelee/miles
+# The APNs key settings and ANTHROPIC_API_KEY (the closing summary) live in .env.
+EnvironmentFile=/home/theycallmelee/miles/.env
+ExecStart=/usr/bin/python3 /home/theycallmelee/miles/scripts/sessions_tick.py
+
+# No Restart. Every decision is made from the session's own day, so the next
+# timer fire picks up whatever a failed run left undone.
