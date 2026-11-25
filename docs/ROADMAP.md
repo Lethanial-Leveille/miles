@@ -181,7 +181,7 @@ Begin by reading the repo and giving me the summary and Phase 1 plan. Do not wri
 
 ### Order and working rules
 
-* Order: nightly review v2, then the Evallo session id filter, then Phases 2, 3, 4, 5 and 6 in that order, then Phase 6.5, then Phase S before any errand runs unattended, then Phase 7.
+* Order: nightly review v2, then the Evallo session id filter, then the Tasks tab fix (see Tasks tab follow ups), then Phases 2, 3, 4, 5 and 6 in that order, then Phase 6.5, then Phase S before any errand runs unattended, then Phase 7.
 * Each phase: plan shown before building, tests, one builder subagent at a time, an independent review at the end, a fresh database backup before its own separate deploy, and a warning before anything touches production. If a usage limit hits, stop at the end of the current phase, never half built.
 * Phase 2 and 3 use the MAS3114 Exam 3 (Monday Nov 30 2026) as their first real data: syllabus import, study plan, first learn and quiz sessions. Source material lives in `~/MILES/source_material/MAS3114/Exam3/`. Every Lesson 19 to 27 topic starts as new; determinants and null space are the prerequisites to check first.
 
@@ -209,6 +209,17 @@ Begin by reading the repo and giving me the summary and Phase 1 plan. Do not wri
 * An Evallo event counts as his only when its session id is in his verified set: the Mac agent reads his sessions from Evallo's API, keeps those whose `tutorId` equals the id in his own Evallo token, and sends only the session ids and their date range to the Pi. Every other Evallo event is ignored everywhere: busy time, week view, conflicts, suggestions, voice.
 * If the set is older than 24 hours, keep using the last verified set; an Evallo event not in it counts as his only when his full name is in the tutor position of the title (never a first name alone), and it counts as busy. The review warns "Evallo sessions not verified since ...".
 * The Evallo token stays on the Mac: never printed, logged or sent to the Pi.
+
+* Exception to the stale set fallback (decided Nov 25 2026): with a fresh set, an Evallo event that is not in the set but falls outside the set's window, or has an unusable start, is still kept when his full name is in the tutor position of the title. This is wider than the rule above, which grants the fallback only for a stale set; it errs toward busy.
+* A kept Evallo event still follows the ordinary availability flags: one marked transparent or declined is not busy time.
+* Every deploy plan that restarts the Pi includes an immediate Mac session push right after the restart, instead of waiting for the hourly run. After any Pi restart the filter stays off until a push is accepted.
+
+### Tasks tab follow ups (queued Nov 25 2026, right after the Evallo filter)
+
+* Found by the Codex contract review and checked against the live code. Not fixed yet.
+* Real bug, low severity: `POST /tasks/{id}/complete` has no day parameter. A tap at 4:01 a.m. on an overview loaded before 4:00 ticks the new day's occurrence of a daily task, and the previous day's tick is lost. Fix: Nova sends the overview's `today`; the Pi answers 409 with the current day on a mismatch and Nova refreshes.
+* Contract wording only: in docs/TASKS_CONTRACT.md the reopen route says it removes "today's completion", but for a one time task the code removes all of its completion rows, and a daily task removes today's. Fix the wording to match the code.
+* Checked and not bugs: moving a task to the backlog after Google already deleted the block (the retry finishes the move), and reopening a one time task that was completed on an earlier day.
 
 ### Quick capture (built Nov 25 2026)
 
