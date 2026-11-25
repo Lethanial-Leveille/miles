@@ -901,9 +901,25 @@ async def _validation_error(request, exc):
     error type only. Every other route keeps the default answer."""
     if request.url.path != "/agent/evallo/sessions":
         return await request_validation_exception_handler(request, exc)
-    errors = [{"loc": [str(part) for part in err.get("loc", ()) if part != "body"],
+    declared = set(EvalloSessions.model_fields)
+
+    def safe(part):
+        # Only the model's own field names and list indexes may appear. Anything
+        # else came from the request (an unknown property's name) and is replaced.
+        if isinstance(part, int):
+            return part
+        return part if part in declared else "extra field"
+
+    errors = [{"loc": [safe(part) for part in err.get("loc", ()) if part != "body"],
                "type": str(err.get("type", "invalid"))} for err in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": errors})
+
+
+def _evallo_422(problems):
+    """The route's own 422s, in the same shape as the validation ones: fixed
+    field names and fixed type strings, never any submitted text."""
+    return JSONResponse(status_code=422, content={"detail": [
+        {"loc": [field], "type": kind} for field, kind in problems]})
 
 
 @app.on_event("startup")
@@ -934,27 +950,27 @@ def agent_evallo_sessions(body: EvalloSessions, user: str = Depends(get_agent_us
     fetched = evallo_filter.parse_moment(body.fetched_at)
     problems = []
     if fetched is None:
-        problems.append("fetched_at must be a UTC timestamp")
+        problems.append(("fetched_at", "invalid_timestamp"))
     else:
         fetched = fetched.replace(microsecond=0)      # whole seconds, everywhere
         if fetched > now + timedelta(minutes=5):
-            problems.append("fetched_at is ahead of the clock")
+            problems.append(("fetched_at", "ahead_of_clock"))
         if fetched < now - timedelta(hours=24):
-            problems.append("fetched_at is more than 24 hours old")
+            problems.append(("fetched_at", "more_than_24_hours_old"))
     ids = body.session_ids
     if any(not _EVALLO_ID.match(i) for i in ids):
-        problems.append("session_ids must be 24 hex characters")
+        problems.append(("session_ids", "invalid_session_id"))
     if len(set(ids)) != len(ids):
-        problems.append("session_ids has duplicates")
+        problems.append(("session_ids", "duplicate_session_ids"))
     today = now.astimezone(evallo_filter.NY).date()
     if not body.window_start < body.window_end:
-        problems.append("window_start must be before window_end")
+        problems.append(("window_start", "window_not_ordered"))
     elif body.window_end - body.window_start > timedelta(days=120):
-        problems.append("window is longer than 120 days")
+        problems.append(("window_end", "window_too_long"))
     elif not body.window_start <= today < body.window_end:
-        problems.append("window must include today")
+        problems.append(("window_start", "window_excludes_today"))
     if problems:
-        raise HTTPException(status_code=422, detail="; ".join(problems))
+        return _evallo_422(problems)
     try:
         count, fetched_text, pushed_text = evallo_filter.store_snapshot(
             fetched, body.window_start, body.window_end, ids, now)

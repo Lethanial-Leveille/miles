@@ -1228,3 +1228,40 @@ def test_a_rename_confirmed_after_the_filter_turned_on_never_quotes_the_captured
     conn.close()
     _clean(rows)
     assert lookups.written() == []                        # the guard refused every write
+
+
+# ── round 3, group 6: nothing from the request in a 422, not even a property name ──
+
+def test_an_unknown_property_name_never_appears_in_a_422(client, agent, caplog, capsys):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    marker = "MARKER-propname-4c1d9"
+    capsys.readouterr()
+    payloads = [
+        dict(body(), **{marker: 1}),
+        dict(body(), **{marker: {"nested": marker, marker + "2": [marker]}}),
+        dict(body(), session_ids=[{marker: 1}]),
+        dict(body(), session_ids={marker: marker}),
+        dict(body(), fetched_at={marker: marker}),
+    ]
+    for payload in payloads:
+        r = client.put("/agent/evallo/sessions", json=payload, headers=_h(agent))
+        assert r.status_code == 422
+        assert marker not in r.text
+        detail = r.json()["detail"]
+        assert all(set(e) == {"loc", "type"} for e in detail)
+        for e in detail:
+            assert all(isinstance(p, int) or p in server.EvalloSessions.model_fields
+                       or p == "extra field" for p in e["loc"])
+    first = client.put("/agent/evallo/sessions", json=dict(body(), **{marker: 1}), headers=_h(agent))
+    assert first.json()["detail"][0]["loc"] == ["extra field"]
+    out = capsys.readouterr()
+    assert marker not in out.out and marker not in out.err and marker not in caplog.text
+
+
+def test_the_routes_own_422s_are_fixed_strings_in_the_same_shape(client, agent):
+    r = put(client, agent, session_ids=[MINE, MINE])
+    assert r.status_code == 422
+    assert r.json() == {"detail": [{"loc": ["session_ids"], "type": "duplicate_session_ids"}]}
+    r = put(client, agent, fetched_at="2000-01-01T00:00:00Z")
+    assert r.json() == {"detail": [{"loc": ["fetched_at"], "type": "more_than_24_hours_old"}]}
