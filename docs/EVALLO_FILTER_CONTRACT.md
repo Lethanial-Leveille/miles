@@ -1,4 +1,4 @@
-# Evallo session id filter: plan and contract (revision 4)
+# Evallo session id filter: plan and contract (revision 5)
 
 ## Context
 
@@ -42,7 +42,7 @@ after the last snapshot, and the title fallback). The exceptions are recorded in
 
 An event is an Evallo event when its `extendedProperties.private` holds any of `evalloEvent`,
 `evalloSessionId` or `orgId`. Its session id is `private.evalloSessionId` when that is a string
-matching `^[0-9a-f]{24}$`. Anything else (missing, empty, wrong shape) means the event has **no
+matching `^[0-9a-f]{24}\Z` (full match, a trailing newline is invalid). Anything else (missing, empty, wrong shape) means the event has **no
 usable session id**.
 
 ### C2. Verified set on the Pi
@@ -52,7 +52,7 @@ Migration 045 adds two tables:
 - `evallo_verified_sessions(session_id TEXT PRIMARY KEY)`
 - `evallo_verification(id INTEGER PRIMARY KEY CHECK (id = 1), fetched_at TEXT NOT NULL,
   pushed_at TEXT NOT NULL, window_start TEXT NOT NULL, window_end TEXT NOT NULL,
-  count INTEGER NOT NULL)`
+  count INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 0)`
 
 `fetched_at` is **Evallo's own server time of the earliest moment the data could have been read**: the
 `Date` header of the response to the run's first summary request, minus the elapsed time on the Mac
@@ -64,13 +64,17 @@ start, exclusive end) in America/New_York: the range the Mac asked Evallo for **
 complete (C6). A push replaces the whole set and the status row in one transaction. A failed push
 leaves the previous set untouched.
 
-**The filter is on only when all of these hold: there is a status row, the state was read, and this
-Pi process has accepted a push since it started.** "Accepted" means the route answered 200, which
-includes an idempotent retry of the stored snapshot (C3). It is a flag in the process's memory, set
-by the route, and never derived from comparing timestamps (a clock correction cannot turn it on).
-Otherwise the filter is off: every Evallo event is kept exactly as today (safe: busy, never free). So
-the filter is off after any Pi restart, including a redeploy that finds an old status row, until the
-first push accepted after the restart. Nothing else turns it on.
+**The filter is on only when all of these hold: there is a status row, the state was read, and
+`active = 1`.** `active` is **stored in the database, so every process that reads the calendar (the
+server, room voice, the nightly review) sees the same value.** An accepted push (the route answered
+200, which includes an idempotent retry of the stored snapshot, C3) sets `active = 1` in the same
+transaction as the replacement or retry. **`miles-server` sets `active = 0` once, at startup, before
+it serves requests.** It is never derived from comparing timestamps (a clock correction cannot turn it
+on), and the other processes never write it. Otherwise the filter is off: every Evallo event is kept
+exactly as today (safe: busy, never free). So the filter is off after any `miles-server` restart,
+including a redeploy that finds an old status row, until the first push accepted after the restart.
+A restart of only voice or the review changes nothing. Nothing else turns it on. `count` must equal
+the number of stored ids; if it does not, the state is `unreadable` (C4).
 
 ### C3. `PUT /agent/evallo/sessions`
 
@@ -85,16 +89,20 @@ first push accepted after the restart. Nothing else turns it on.
     makes the push a 422.
   - `window_start < window_end`, the window is at most 120 days, and it includes today
     (America/New_York). Otherwise 422.
-  - `fetched_at` must parse as a UTC timestamp. **422 if it is more than 5 minutes ahead of the Pi's
+  - `fetched_at` must parse as a UTC timestamp. It is truncated to whole seconds on receipt, and every
+    comparison (ordering, equal, window checks) uses the truncated value. **422 if it is more than 5 minutes ahead of the Pi's
     clock** (exactly 5 minutes is accepted). 422 if it is more than 24 hours behind the Pi's clock.
     This is a sanity check at receipt; the bound that matters is enforced by the Mac when the snapshot
     is taken (C6).
-  - **Ordering, checked inside the replacement transaction (`BEGIN IMMEDIATE`)**: 409 with
+  - **Ordering, checked inside the replacement transaction (`BEGIN IMMEDIATE`)**: 409 with the top level body
     `{"reason": "older_snapshot"}` if `fetched_at` is older than the stored one. If it is **equal**, the
-    push is an idempotent retry and is accepted (200, nothing changes in the tables, and the process
-    flag of C2 is set) only when its window and its id set are identical to the stored ones; otherwise
-    409 with `{"reason": "conflicting_snapshot"}`. A newer `fetched_at` replaces everything.
+    push is an idempotent retry and is accepted (200, nothing changes in the tables except that `active` becomes 1, C2) only when its window and its id set are identical to the stored ones; otherwise
+    409 with the top level body `{"reason": "conflicting_snapshot"}`. A newer `fetched_at` replaces everything.
   - An empty `session_ids` list is valid. It means he has no sessions in the window.
+  - **Validation errors never echo submitted values**: a 422 carries only the field path and the error
+    type. A session id must match `^[0-9a-f]{24}\Z` (a trailing newline is invalid).
+- A failed response never activates the filter: `active` becomes 1 only after the transaction
+  committed and the 200 is about to be returned, and logging happens after.
 - 200: `{"stored": <count>, "fetched_at": "<iso>", "pushed_at": "<iso>"}`.
 - The Pi never logs the body. It logs only the count, the window and `fetched_at`.
 
@@ -106,7 +114,10 @@ database transaction that reads the ids and the status row together, and it carr
 (`active`, `stale`, `off` or `unreadable`, see C5). Each top level read uses the state it loaded for
 its events and reports that same state's outcome. Non Evallo events are always kept. If the filter is
 off or the state is unreadable (the failure is logged, and non Evallo events are unaffected), every
-event is kept. Otherwise, for an Evallo event, in this order:
+event is kept. The state is unreadable also when the stored `count` differs from the number of stored ids.
+**The filter itself never raises and never drops a whole calendar:** if evaluating any one event
+fails, that event is kept (and the failure is logged without its contents). Otherwise, for an Evallo
+event, in this order:
 
 | # | Case | Result |
 |---|---|---|
@@ -129,14 +140,16 @@ successful snapshot (normally within the hour). Only the Mac's own clock is comp
 made between the data read and the stamp is covered by C6's elapsed time subtraction, within the
 60 second limit.
 
-The event's start date: a timed event uses the America/New_York date of `start.dateTime`; an all day
+The event's start date: a timed event uses the America/New_York date of `start.dateTime`, converted
+from its own offset or `start.timeZone` (the event's zone, not its wall clock date); an all day
 event uses `start.date`. A missing or unparseable start is "unusable" and takes row 5 (never row 4).
 
 Row 5 applies to a fresh set too, for an event outside the window or with an unusable start. That is
 an exception the owner decided on Nov 25 2026, wider than the permanent rule (which grants the
 fallback only for a stale set), and it is recorded in docs/ROADMAP.md under the Evallo rules.
 
-The full name rule matches, case insensitive, with `Lethanial Leveille` in full:
+The full name rule matches, case insensitive, treating any run of whitespace (including a
+non breaking space) as one space, with `Lethanial Leveille` in full:
 `<student> <> Lethanial Leveille | ...` and `<student> / Lethanial Leveille`. A first name alone never
 matches (`Test Prep | Lethanial <> X` does not count). A name in the student position does not count.
 
@@ -146,6 +159,17 @@ dropped by the next one). As long as pushes keep failing it lasts that long, and
 `updated` is missing or unparseable stays kept for good. Evallo's own sync touching another tutor's event bumps its
 `updated`, so such an event can reappear until the next successful push. All of these err toward
 busy, never free, and are accepted costs.
+
+**Uncertain events are returned anonymized.** An event kept only because of uncertainty (row 1: no
+usable session id; row 3: updated after the snapshot, or `updated` missing or unparseable) **and whose
+title does not match the full name rule** is returned by every read path, including direct calendar
+lookups, as an anonymous busy block: title `Evallo session (unverified)`, and no description, location,
+attendees, organizer, conference data or any name. It keeps only its id, start, end, `transparency`,
+recurrence ids, its Evallo private extended properties (the write guard needs them), and a reduced
+attendee list holding nothing but the owner's own response status (so declined still works). Events
+kept by row 2 (id in the verified set) or row 5 (full name) keep their titles and details: they are
+his. Nothing from an anonymized event is ever saved in `tool_call_log` or any other table, because it
+never carries a name.
 
 **Kept does not override availability.** A kept event still goes through the ordinary flags
 downstream: an event marked transparent, or one he declined, is not busy time on any path (week view,
@@ -161,8 +185,7 @@ event.
 
 - `evallo_filter.status` comes from the same state as C4 and returns
   `{"outcome": "active"|"stale"|"off"|"unreadable", "verified_at": iso|None}`. `verified_at` is
-  `fetched_at` when there is a status row. `unreadable` is a failed state read. `off` is no row, or no
-  push accepted by this process yet (C2). `stale` is a row older than 24h while the filter is on.
+  `fetched_at` when there is a status row. `unreadable` is a failed state read. `off` is no row, or `active = 0` (C2). `stale` is a row older than 24h while the filter is on.
   **Precedence: `unreadable`, then `off`, then the freshness check.** So a restart with a 25 hour old
   row and the Mac offline is `off`: every event is kept, never run through the title fallback.
 - Anything other than `active` shows one code generated line: "Evallo sessions not verified since
@@ -188,6 +211,16 @@ event.
   differ. If the token has no `id` claim, or its `id` differs from the pin, the job pushes nothing,
   even when the response is empty, and reports a failure (a different tutor's login must never replace
   his set). The plist cannot be loaded while the pin file is missing (the deploy step checks it).
+- **HTTP client.** One client per run with **cookies never stored or resent** and redirects off. The
+  Evallo token is sent only in the `authorization` header on requests to `api.evallo.org`.
+- **Pin file.** Written with an exclusively created, unique, mode 600 temporary file in the same
+  directory, then atomically renamed over the pin (no symlink is followed, no `O_TRUNC` of an existing
+  file). Every run opens the pin without following symlinks and refuses it unless it is a regular file
+  owned by the current user with mode 600. The pin script reads the id with hidden input on a
+  terminal, or from stdin or a mode 600 file when piped, and no documented command puts the id in a
+  shell command line or echoes it.
+- **Loading the job.** `scripts/evallo_load_job.sh` runs `scripts/evallo_check_pin.py` and loads the
+  plist only if it passes. The plist is never loaded any other way.
 - **Second check on every run.** Every row that is pushed must also have `tutorName` equal to the
   pinned full name (trimmed, case folded; the probe records Evallo's exact form). If any pushed row
   does not, push nothing and report it.
@@ -203,18 +236,32 @@ event.
   **`fetched_at` is the first response's `Date` header minus the elapsed time** on the Mac's monotonic
   clock from sending the first request to receiving the last response of the run (all pages). **If the
   elapsed time is over 60 seconds, push nothing and report it.** If the header is missing or does not
-  parse, push nothing and report it (the Mac's wall clock is never the stamp). **Clock witness:** the
+  parse as one complete HTTP date (`Wed, 25 Nov 2026 19:10:37 GMT` and nothing after it), push
+  nothing and report it (the Mac's wall clock is never the stamp). **Elapsed time uses a clock that
+  keeps counting while the Mac sleeps, and the 60 second budget is enforced during the run** (each
+  request's timeout is the remaining budget; a run over budget stops and reports). **Clock witness:** the
   Mac compares that `Date` with its own clock when the response arrives, and if they differ by more
   than 5 minutes it pushes nothing and reports it. Validate, in this order:
-  0. Completeness (see the probe results): the one request and the weekly requests must return the
-     same id sets, and no response may have 200 rows or more. Otherwise push nothing and report it.
-  1. Shape: `data.allEvents[]` exists, and every row has a string `_id` and `tutorId`. Any row that
+  0. Envelope: every response (the list and each weekly one) must have exactly the keys `success`,
+     `data`, `message`, with `success` equal to `true` and `data` holding exactly `allEvents`. Any other
+     key (a `hasMore`, `nextPage`, `total`, a cursor), `success` not true, or an unrecognized shape is
+     a possible cut off: push nothing and report it.
+  0b. Completeness: **every row of every response is validated like step 1 (not only the list
+     response)**, then each response is reduced the same way (owner, then not canceled), and the
+     reduced id set of the list response must equal the union of the reduced id sets of the weekly
+     responses. A disagreement in any id, owner or status means push nothing and report it. No
+     response may have 200 rows or more.
+  1. Shape: `data.allEvents[]` exists, and every row has `_id` matching `^[0-9a-f]{24}\Z` and a
+     non blank string `tutorId`. Any row that
      does not is a shape error: no push.
   2. Owner: keep rows whose `tutorId` equals the pinned id. If the response has rows but none are his,
      it is a shape error: no push. If the response has no rows at all, the result is an empty set.
   3. Canceled: drop rows with `sessionStatus == "CANCEL"`. If all his rows were canceled,
      the result is an empty set (a valid push).
-  4. Push the `_id`s with `Miles._call("PUT", ...)`, with `fetched_at` and the window.
+  4. Push the `_id`s with `Miles._call("PUT", ...)`, with `fetched_at` and the window. **The job
+     reports success only if the Pi's answer has `stored` equal to the number of ids sent and the same
+     `fetched_at`; anything else is a failure.** The window sent is `window_end` exclusive, and the
+     requests ask through the last day before it.
 - Failure rules:
   - Token missing or expired, or Evallo answers 401: send `/agent/login-expired` (the existing once a
     day note) and stop with no push and no retry.
@@ -266,6 +313,16 @@ Pi (`src/tests/test_evallo_filter.py`):
    wording, absent for `active`, and a voice answer whose events came from a failed read carries the
    `unreadable` note even if a second read would succeed.
 10. The existing Evallo guard tests still pass, and the full suite stays green.
+11. **Revision 5:** `active` is read from the database by separate connections or processes (a
+    second process sees the server's accepted push, and `miles-server` startup clears it, and a
+    voice or review restart does not); a `count` mismatch is `unreadable`; the filter raising on one
+    event keeps that event and the rest of the calendar survives; anonymized events (row 1, row 3, not
+    full name) carry no title, description, attendees or names on every read path including direct
+    lookups, and a row 5 or row 2 event keeps its title; nothing from an anonymized event reaches
+    `tool_call_log`; ids with a trailing newline are row 1 and a 422 on the PUT; an event in another
+    time zone uses its New York date; a non breaking space in the name matches; a 409 body is
+    top level; fractional `fetched_at` ordering uses whole seconds; a failed log write after the
+    commit does not leave the filter on for a failed response; migration 045 is atomic.
 
 Mac (`src/tests/test_evallo_sessions.py`):
 1. The payload keys are exactly `fetched_at, window_start, window_end, session_ids`, and the token
@@ -284,6 +341,14 @@ Mac (`src/tests/test_evallo_sessions.py`):
    check fails) while the pin file is missing.
 8. **If any row that would be pushed has a `tutorName` other than the pinned full name, nothing is
    pushed** (and a single row with a different name among his rows is enough).
+10. **Revision 5:** exactly one Evallo request on a 401 (no retry); rows with a bad `_id` (not 24
+    lowercase hex, a trailing newline, a token string) or a blank `tutorId` push nothing, in the list
+    and in a weekly response; `success: false` pushes nothing; any extra envelope key (`hasMore`)
+    pushes nothing; a status disagreement between the list and the weekly responses pushes nothing;
+    a token inside a response row never reaches the PUT body, the logs or the report; a Pi answer with
+    the wrong `stored` or `fetched_at` is a failure; a `Date` with trailing text is refused; a cookie
+    set by a response is never sent back; the pin write refuses to follow a symlink and is atomic;
+    the elapsed clock keeps counting during a simulated sleep; the load script refuses without a pin.
 9. **`fetched_at` is the response's `Date` header minus the elapsed time**, not the Mac's clock: a Mac
    clock 10 minutes wrong with a correct `Date` pushes nothing (witness), a missing or unparseable
    `Date` pushes nothing, an elapsed time of 61 seconds (first request to last response, with a fake
@@ -352,7 +417,7 @@ These settle the C6 gate, items (a) to (f). Builders work from them.
 - A read only comparison, not the audit file (it has no session ids and the Google event `id` is not
   the Evallo `_id`): a Pi script writes, to a mode 600 file, one line per surviving Evallo event with
   its `evalloSessionId` (or "none"), its Google `updated` time and **the C4 row that kept it**, and a
-  Mac script compares the ids with Evallo's list for him. Every one of his is present; every other
+  Mac script (`scripts/evallo_compare_survivors.py`, built in revision 5) compares the ids with Evallo's list for him. Every one of his is present; every other
   survivor has a row of 1, 3 or 5 as its reason, and an event with no id appears as row 1. A survivor
   with row 4 as its reason is a failure.
 - Busy or free for known slots from his real sessions and from another tutor's, allowing events kept
