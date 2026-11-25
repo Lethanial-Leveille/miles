@@ -1,0 +1,12 @@
+[Unit]
+Description=M.I.L.E.S. Mac watchdog: push when the Mac missed a scheduled job
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=theycallmelee
+WorkingDirectory=/home/theycallmelee/miles
+# APNS_* for the push.
+EnvironmentFile=/home/theycallmelee/miles/.env
+ExecStart=/usr/bin/python3 /home/theycallmelee/miles/scripts/agent_watchdog.py

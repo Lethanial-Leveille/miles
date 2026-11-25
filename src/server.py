@@ -35,6 +35,7 @@ import embeddings
 import memory_merge
 import calendar_tools
 import push
+import agent_watchdog
 import approvals
 import tts
 
@@ -673,6 +674,54 @@ def agent_notify(body: AgentNote, user: str = Depends(get_agent_user)):
     if body.approval_id is not None:
         data["approval_id"] = body.approval_id
     return {"sent": push.notify(body.title, body.body, kind="agent", data=data)}
+
+
+class Heartbeat(BaseModel):
+    source: Literal["poll", "draft", "summaries", "login_check", "retry"]
+
+
+class JobReport(BaseModel):
+    job: Literal["draft", "summaries"]
+    day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    ok: bool
+    detail: str = Field(default="", max_length=2000)
+
+
+class LoginExpiredNote(BaseModel):
+    service: Literal["zoom", "google", "evallo"]
+    job: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/agent/heartbeat")
+def agent_heartbeat(body: Heartbeat, user: str = Depends(get_agent_user)):
+    """The Mac checking in. The answer lists missed jobs he asked to retry."""
+    return {"retry": agent_watchdog.heartbeat(body.source)}
+
+
+@app.post("/agent/jobs/report")
+def agent_job_report(body: JobReport, user: str = Depends(get_agent_user)):
+    agent_watchdog.job_report(body.job, body.day, body.ok, body.detail)
+    return {"recorded": True}
+
+
+@app.post("/agent/login-expired")
+def agent_login_expired(body: LoginExpiredNote, user: str = Depends(get_agent_user)):
+    """Once per service per day; the text and the command are fixed here."""
+    return {"pushed": agent_watchdog.login_expired(body.service, body.job)}
+
+
+@app.get("/watchdog")
+def watchdog_alerts(user: str = Depends(get_current_user)):
+    return {"alerts": agent_watchdog.open_alerts()}
+
+
+@app.post("/watchdog/{alert_id}/{decision}")
+def watchdog_decide(alert_id: int, decision: Literal["retry", "remind", "skip"],
+                    user: str = Depends(get_current_user)):
+    try:
+        return agent_watchdog.decide(alert_id, decision)
+    except agent_watchdog.AlertError as exc:
+        raise HTTPException(status_code=exc.code, detail=str(exc))
 
 
 @app.put("/agent/contacts")

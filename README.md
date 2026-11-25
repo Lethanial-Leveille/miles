@@ -109,7 +109,7 @@ Evallo is the scheduling site the tutoring company uses, and it has no API. So N
 | `src/evallo_session.py` | The saved login, its expiry, and push |
 | `src/evallo_tools.py` | The Nova tool. It runs the script as a separate process, in `.venv-evallo` |
 | `scripts/evallo_status.py` | By hand. Dry run unless `--real`; `--unlogged` lists the waiting sessions |
-| `scripts/evallo_canary.py` | Nightly at 2 AM (`miles-evallo-canary.timer`) |
+| `scripts/evallo_canary.py` | Nightly at 2 AM (`miles-evallo-canary.timer`); `--login-only` at 8 AM (`miles-evallo-logincheck.timer`) |
 | `scripts/evallo_login.py` | One-time login, run on the Mac |
 
 ```bash
@@ -151,6 +151,18 @@ Some actions leave the Pi entirely: texting a student's family a reminder with t
 * The Mac drafts nothing within 30 minutes of a session's start, and checks again at the moment of sending. An approved text that hits the cutoff is not sent; he gets "Missed reminder for <Name> <time>, text them yourself if needed."
 
 `/agent/notify` takes `title`, `body` (the lock screen's 500 characters), an optional `detail` (up to 1800), `approval_id` and `error`. They ride in the push, so a tap opens Nova's error screen with the whole message, or Approvals on that request.
+
+### The Mac Watchdog and Expired Logins
+
+The Mac checks in with `/agent/heartbeat` on every launchd run and every 30 second poll, and each scheduled job reports with `/agent/jobs/report` for the day it belongs to. `scripts/agent_watchdog.py` runs every 5 minutes (`miles-agent-watchdog.timer`) and pushes "Mac missed a job" when there is no check-in by 7:15 PM, or when the 7 PM drafts or the 9 PM summaries have not reported success 30 minutes after their time. Each alert is pushed once, with three buttons:
+
+* **Retry when awake.** The missed job comes back in the answer to the Mac's next heartbeat, and the Mac runs it. A draft retried after midnight says "today", and no session within 30 minutes of its start is ever drafted.
+* **Remind me at 7 AM.** The same alert is pushed again at 7 AM.
+* **Skip tonight.** It is closed.
+
+A job that later succeeds on its own closes its alert.
+
+UF Zoom, Google and Evallo logins die when he changes his UF password. A job that lands on a sign in page, gets a 401 or `invalid_grant`, or finds a login screen in place of the page stops at once. Nothing types a password or retries a login. The Mac (`/agent/login-expired`) or the Pi's Evallo code pushes "<Service> login expired (password change?). On the Mac run: <exact command>", with the failed job, once per service per day. The Mac queues the failed drafts or summaries and runs them once that login has been redone. At 8 AM each saved login is tested read only: on the Mac by its own launchd job, and on the Pi by `evallo_canary.py --login-only`. Only a broken one pushes.
 
 ---
 
@@ -235,6 +247,9 @@ Live at `https://miles.lethanial.com`.
 | `/auth/agent` | POST | Yes, issues the Mac's agent token |
 | `/agent/approvals`, `/agent/approvals/claim`, `/agent/approvals/{approval_id}/result`, `/agent/notify` | POST | Agent token |
 | `/agent/contacts` | PUT | Agent token |
+| `/agent/heartbeat`, `/agent/jobs/report`, `/agent/login-expired` | POST | Agent token |
+| `/watchdog` | GET | Yes |
+| `/watchdog/{alert_id}/retry`, `/watchdog/{alert_id}/remind`, `/watchdog/{alert_id}/skip` | POST | Yes, full login only |
 | `/history` | GET | Yes |
 | `/status`, `/status/details` | GET | Yes |
 | `/ws` | WebSocket | Yes, token checked in the socket |

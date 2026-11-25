@@ -29,12 +29,32 @@ import evallo_runner    # noqa: E402
 import evallo_session   # noqa: E402
 
 
+def login_only():
+    """The 8 AM check: is the saved login still good? Read only, and silent
+    unless it is broken. Loads the calendar and nothing else."""
+    try:
+        evallo_session.load_state()
+    except evallo_session.LoginExpired:
+        evallo_session.login_expired("the 8 AM login check")
+        return 1
+    found = evallo_runner.next_session()
+    if isinstance(found, evallo_runner.Result) and found.outcome == "login_expired":
+        evallo_session.login_expired("the 8 AM login check")
+        print("login check: Evallo login expired")
+        return 1
+    # Script trouble other than the login is the 2 AM canary's to report.
+    print("login check: Evallo login OK")
+    return 0
+
+
 def main():
+    if "--login-only" in sys.argv[1:]:
+        return login_only()
     evallo_failures.prune()
     try:
         state = evallo_session.load_state()
     except evallo_session.LoginExpired:
-        evallo_session.notify("Evallo login expired, log in again")
+        evallo_session.login_expired("the nightly Evallo canary")
         return 1
     left = evallo_session.days_left(state)
     if left is not None and left <= evallo_session.WARN_DAYS:
@@ -43,8 +63,10 @@ def main():
 
     found = evallo_runner.next_session()
     if isinstance(found, evallo_runner.Result):
-        evallo_session.notify(found.message if found.outcome == "login_expired"
-                              else f"Evallo script broke at step {found.step}")
+        if found.outcome == "login_expired":
+            evallo_session.login_expired("the nightly Evallo canary")
+        else:
+            evallo_session.notify(f"Evallo script broke at step {found.step}")
         print(f"canary FAIL [{found.outcome}] {found.message} {found.failure_dir or ''}")
         return 1
     if found is None:

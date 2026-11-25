@@ -1,0 +1,13 @@
+[Unit]
+Description=M.I.L.E.S. 8 AM check that the saved Evallo login still works, read only
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=theycallmelee
+WorkingDirectory=/home/theycallmelee/miles
+EnvironmentFile=/home/theycallmelee/miles/.env
+ExecStart=/home/theycallmelee/miles/.venv-evallo/bin/python /home/theycallmelee/miles/scripts/evallo_canary.py --login-only
+TimeoutStartSec=5min
+# No Restart: a login that is broken stays broken until he logs in again.

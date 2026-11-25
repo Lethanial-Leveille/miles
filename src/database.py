@@ -948,6 +948,49 @@ def _migration_039_approvals(conn):
     """)
 
 
+def _migration_040_watchdog(conn):
+    """The Mac's check ins and scheduled job reports, the alerts raised when it
+    misses one (agent_watchdog.py), and one login-expired push per service per
+    day."""
+    conn.execute("CREATE TABLE agent_heartbeats (source TEXT PRIMARY KEY, at TEXT NOT NULL)")
+    conn.execute("""
+        CREATE TABLE agent_jobs (
+            job TEXT NOT NULL,
+            day TEXT NOT NULL,
+            reported_at TEXT NOT NULL,
+            ok INTEGER NOT NULL,
+            detail TEXT,
+            PRIMARY KEY (job, day)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE watchdog_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job TEXT NOT NULL,
+            day TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            pushed_at TEXT,
+            decision TEXT,
+            decided_at TEXT,
+            remind_at TEXT,
+            reminded_at TEXT,
+            retry_sent_at TEXT,
+            resolved_at TEXT,
+            UNIQUE (job, day)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE login_alerts (
+            service TEXT NOT NULL,
+            day TEXT NOT NULL,
+            job TEXT,
+            at TEXT NOT NULL,
+            PRIMARY KEY (service, day)
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -988,6 +1031,7 @@ MIGRATIONS = [
     (37, _migration_037_phone_presence),
     (38, _migration_038_health_hours),
     (39, _migration_039_approvals),
+    (40, _migration_040_watchdog),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago

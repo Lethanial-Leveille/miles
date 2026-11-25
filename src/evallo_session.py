@@ -54,6 +54,20 @@ def days_left(state, now=None):
     return (exp - (now or datetime.now(timezone.utc))).total_seconds() / 86400
 
 
+def login_expired(job):
+    """The saved login stopped working: one push a day, through the watchdog,
+    with the login command and the job that failed. Returns whether it pushed."""
+    try:
+        import agent_watchdog
+        pushed = agent_watchdog.login_expired("evallo", job)
+    except Exception as exc:
+        print(f"(login alert unavailable: {type(exc).__name__}: {exc})", flush=True)
+        pushed = False
+    print(f"LOGIN EXPIRED: Evallo, during {job}{'' if pushed else ' (already pushed today)'}",
+          flush=True)
+    return pushed
+
+
 def notify(body, title="Evallo"):
     """A push to Nova, or a printed line where push is unavailable. Returns
     whether a phone accepted it."""

@@ -1130,6 +1130,8 @@ PUSH_KINDS         = ("reminder", "timer")
 # How long APNs holds a push for a phone that is off or has no signal. A
 # reminder is worth reading late; a timer that finished an hour ago is not.
 # An approval is worth delivering only while it can still be approved.
-PUSH_TTL_S         = {"reminder": 6 * 3600, "timer": 300, "approval": 2 * 3600}
+# A watchdog alert is still worth seeing the next morning.
+PUSH_TTL_S         = {"reminder": 6 * 3600, "timer": 300, "approval": 2 * 3600,
+                      "watchdog": 12 * 3600, "login": 24 * 3600}
 PUSH_DEFAULT_TTL_S = 3600
 APNS_TIMEOUT_S     = 10.0

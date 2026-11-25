@@ -296,9 +296,12 @@ def set_session_status(student_first_name, start_datetime, status, dry_run=True,
         fcntl.flock(lock, fcntl.LOCK_EX)
         result = _run(student_first_name.strip(), start, status, dry_run, minutes,
                       check_only, headless, slow_mo, request)
-    if result.outcome in ("not_mapped", "no_session", "ambiguous", "failed",
-                          "login_expired") and not (dry_run and result.outcome in
-                                                    ("not_mapped", "no_session")):
+    if result.outcome == "login_expired":
+        # Once a day, with the command that fixes it. Nothing retries the login.
+        evallo_session.login_expired(f"marking {student_first_name.strip()}'s session "
+                                     f"{status}" + (" (dry run)" if dry_run else ""))
+    elif result.outcome in ("not_mapped", "no_session", "ambiguous", "failed") and not (
+            dry_run and result.outcome in ("not_mapped", "no_session")):
         evallo_session.notify(result.message)
     return result
 
