@@ -21,6 +21,7 @@ import datetime
 
 import calendar_roles
 import calendar_tools
+import evallo_filter
 import sessions
 from config import SESSION_BLOCK_EARLIEST, SESSION_BLOCK_LATEST
 from database import (add_attending, add_task, attending_set, backlog_tasks, complete_task,
@@ -908,6 +909,14 @@ def opening(now):
     was shown. If anything in the build fails, a plain opening still goes out,
     so a calendar outage at 21:30 never means no review."""
     day = task_day(now)
+    with evallo_filter.collecting() as seen:
+        text, plan = _opening_body(day, now)
+    # The outcome of the reads that produced this plan, never a second read.
+    line = evallo_filter.note(evallo_filter.worst(seen))
+    return (f"{line}.\n\n{text}" if line else text), plan
+
+
+def _opening_body(day, now):
     try:
         plan = build_proposal(day, now)
         return plan_text(day, plan, now), plan

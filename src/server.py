@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -12,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from jose import JWTError
 
 from auth import (verify_password, create_token, decode_token, DEVICE_SCOPE,
@@ -34,6 +35,7 @@ from system_state import get_system_state
 import embeddings
 import memory_merge
 import calendar_tools
+import evallo_filter
 import push
 import agent_watchdog
 import approvals
@@ -888,6 +890,57 @@ def agent_heartbeat(body: Heartbeat, user: str = Depends(get_agent_user)):
 def agent_job_report(body: JobReport, user: str = Depends(get_agent_user)):
     agent_watchdog.job_report(body.job, body.day, body.ok, body.detail)
     return {"recorded": True}
+
+
+class EvalloSessions(BaseModel):
+    """The ids of his own Evallo sessions, as the Mac read them (contract C3).
+    Anything else, a token included, is a 422."""
+    model_config = ConfigDict(extra="forbid")
+    fetched_at: str
+    window_start: date
+    window_end: date
+    session_ids: list[str] = Field(max_length=2000)
+
+
+_EVALLO_ID = re.compile(r"^[0-9a-f]{24}$")
+
+
+@app.put("/agent/evallo/sessions")
+def agent_evallo_sessions(body: EvalloSessions, user: str = Depends(get_agent_user)):
+    """Replace the verified set. The body is never logged: only the count, the
+    window and fetched_at."""
+    now = evallo_filter.now_utc()
+    fetched = evallo_filter.parse_moment(body.fetched_at)
+    problems = []
+    if fetched is None:
+        problems.append("fetched_at must be a UTC timestamp")
+    else:
+        if fetched > now + timedelta(minutes=5):
+            problems.append("fetched_at is ahead of the clock")
+        if fetched < now - timedelta(hours=24):
+            problems.append("fetched_at is more than 24 hours old")
+    ids = body.session_ids
+    if any(not _EVALLO_ID.match(i) for i in ids):
+        problems.append("session_ids must be 24 hex characters")
+    if len(set(ids)) != len(ids):
+        problems.append("session_ids has duplicates")
+    today = now.astimezone(evallo_filter.NY).date()
+    if not body.window_start < body.window_end:
+        problems.append("window_start must be before window_end")
+    elif body.window_end - body.window_start > timedelta(days=120):
+        problems.append("window is longer than 120 days")
+    elif not body.window_start <= today < body.window_end:
+        problems.append("window must include today")
+    if problems:
+        raise HTTPException(status_code=422, detail="; ".join(problems))
+    try:
+        count, fetched_text, pushed_text = evallo_filter.store_snapshot(
+            fetched, body.window_start, body.window_end, ids, now)
+    except evallo_filter.Conflict as conflict:
+        raise HTTPException(status_code=409, detail={"reason": conflict.reason})
+    print(f"Evallo sessions accepted: count={count} window={body.window_start}..{body.window_end} "
+          f"fetched_at={fetched_text}", flush=True)
+    return {"stored": count, "fetched_at": fetched_text, "pushed_at": pushed_text}
 
 
 @app.post("/agent/login-expired")
