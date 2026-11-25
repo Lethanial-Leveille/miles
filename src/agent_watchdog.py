@@ -35,6 +35,12 @@ JOBS = {
     "draft": (time(19, 0), "The 7 PM reminder drafts"),
     "summaries": (time(21, 0), "The 9 PM Zoom summary grab"),
 }
+# Jobs that run on an interval, not at a time of day. They have no run time, so
+# check() never raises a "missed" alert for them; they are alerted only when the
+# job itself reports a failure, once per day, and a success closes the alert.
+HOURLY_JOBS = {
+    "evallo_sessions": "The hourly Evallo sessions push",
+}
 GRACE = timedelta(minutes=30)
 HEARTBEAT_BY = time(19, 15)       # and since HEARTBEAT_SINCE
 HEARTBEAT_SINCE = time(19, 0)
@@ -113,10 +119,11 @@ def last_heartbeat(conn):
 def job_report(job, day, ok, detail="", now=None):
     """A scheduled job finished (ok) or could not (not ok, with why). Success
     closes that day's alert, whoever caused the run."""
-    if job not in JOBS:
+    if job not in JOBS and job not in HOURLY_JOBS:
         raise ValueError(f"Unknown job {job!r}.")
     datetime.strptime(day, "%Y-%m-%d")
     now = _now(now)
+    alert_id = None
     conn = _conn()
     try:
         conn.execute(
@@ -128,7 +135,15 @@ def job_report(job, day, ok, detail="", now=None):
             conn.execute("UPDATE watchdog_alerts SET resolved_at = ? "
                          "WHERE job = ? AND day = ? AND resolved_at IS NULL",
                          (_iso(now), job, day))
+        elif job in HOURLY_JOBS and not conn.execute(
+                "SELECT 1 FROM watchdog_alerts WHERE job = ? AND day = ?", (job, day)).fetchone():
+            # A failure of an hourly job is alerted at once, the first time each day.
+            alert_id = conn.execute(
+                "INSERT INTO watchdog_alerts (job, day, reason, created_at) VALUES (?, ?, ?, ?)",
+                (job, day, (detail or "no reason given")[:500], _iso(now))).lastrowid
         conn.commit()
+        if alert_id is not None:
+            _alert_push(conn, alert_id)
     finally:
         conn.close()
 
@@ -196,9 +211,11 @@ def check(now=None):
 
 def _alert_push(conn, alert_id):
     a = conn.execute("SELECT * FROM watchdog_alerts WHERE id = ?", (alert_id,)).fetchone()
-    _, label = JOBS[a["job"]]
     day = datetime.strptime(a["day"], "%Y-%m-%d").strftime("%a %b %-d")
-    body = f"{label} for {day} did not run. {a['reason']}"
+    if a["job"] in HOURLY_JOBS:
+        body = f"{HOURLY_JOBS[a['job']]} failed on {day}. {a['reason']}"
+    else:
+        body = f"{JOBS[a['job']][1]} for {day} did not run. {a['reason']}"
     _push("Mac missed a job", body, data={"watchdog_id": a["id"]}, category=CATEGORY,
           collapse_id=f"watchdog-{a['id']}")
     conn.execute("UPDATE watchdog_alerts SET pushed_at = ? WHERE id = ?",

@@ -237,3 +237,58 @@ def test_he_can_decide_with_his_login(client):
         r = client.post(f"/watchdog/{alerts[0]['id']}/skip", headers=_h(full))
         assert r.status_code == 200 and r.json()["status"] == "skip"
     assert client.post("/watchdog/1/approve", headers=_h(full)).status_code == 422
+
+
+# ── the hourly Evallo sessions push ──
+
+def test_a_failed_evallo_sessions_report_alerts_like_a_failed_draft(db, pushes):
+    W.job_report("evallo_sessions", DAY, False, "Evallo answered with an unexpected shape",
+                 now=t(10, 5))
+    (title, body, k), = pushes
+    assert title == "Mac missed a job" and k["category"] == W.CATEGORY
+    assert "The hourly Evallo sessions push failed on Tue Nov 24" in body
+    assert "unexpected shape" in body
+    (alert,) = W.open_alerts()
+    assert alert["job"] == "evallo_sessions" and k["data"]["watchdog_id"] == alert["id"]
+
+
+def test_a_second_failure_the_same_day_does_not_push_twice(db, pushes):
+    W.job_report("evallo_sessions", DAY, False, "one", now=t(10, 5))
+    W.job_report("evallo_sessions", DAY, False, "two", now=t(11, 5))
+    assert len(pushes) == 1 and len(W.open_alerts()) == 1
+    W.job_report("evallo_sessions", "2026-11-25", False, "next day", now=t(10, 5, day=25))
+    assert len(pushes) == 2
+
+
+def test_an_ok_report_closes_the_alert(db, pushes):
+    W.job_report("evallo_sessions", DAY, False, "down", now=t(10, 5))
+    W.job_report("evallo_sessions", DAY, True, "stored 3", now=t(12, 5))
+    assert W.open_alerts() == []
+
+
+def test_no_missed_job_alert_is_ever_raised_for_it(db, pushes):
+    assert "evallo_sessions" not in W.JOBS
+    W.heartbeat("poll", now=t(21, 20))
+    W.job_report("draft", DAY, True, now=t(19, 1))
+    W.job_report("summaries", DAY, True, now=t(21, 1))
+    assert W.check(now=t(23, 0)) == [] and W.check(now=t(2, 0, day=25)) == []
+    assert pushes == [] and W.open_alerts() == []
+
+
+def test_other_job_names_are_still_rejected(db):
+    with pytest.raises(ValueError):
+        W.job_report("lunch", DAY, True)
+
+
+def test_the_route_accepts_evallo_sessions_and_rejects_other_names(db, pushes, monkeypatch):
+    monkeypatch.setenv("MILES_JWT_SECRET", "test secret")
+    server.app.dependency_overrides.clear()
+    client = TestClient(server.app)
+    login = auth.create_token("Lethanial")
+    agent = client.post("/auth/agent", headers=_h(login)).json()["access_token"]
+    ok = client.post("/agent/jobs/report", headers=_h(agent),
+                     json={"job": "evallo_sessions", "day": DAY, "ok": False, "detail": "down"})
+    assert ok.status_code == 200 and len(pushes) == 1
+    bad = client.post("/agent/jobs/report", headers=_h(agent),
+                      json={"job": "lunch", "day": DAY, "ok": True})
+    assert bad.status_code == 422

@@ -869,7 +869,7 @@ class Heartbeat(BaseModel):
 
 
 class JobReport(BaseModel):
-    job: Literal["draft", "summaries"]
+    job: Literal["draft", "summaries", "evallo_sessions"]
     day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     ok: bool
     detail: str = Field(default="", max_length=2000)
