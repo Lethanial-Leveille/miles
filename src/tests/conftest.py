@@ -5,8 +5,18 @@ import sys
 # directory up. Insert it so plain `import database` etc. resolve.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import tempfile
+
 import pytest
 import database
+
+# Before any test module is imported. server.py (and modules it pulls in) call
+# init_db() at import, and a test file that imports them at its top runs that
+# before the db fixture can point anywhere else. Without this, the suite applied
+# a branch's new migrations to the live ~/miles/data/miles.db (found Nov 24
+# 2026: test_agent_watchdog.py and test_voice_pipeline.py). Every test that
+# needs a database still gets its own file from the db fixture.
+database.DB_PATH = os.path.join(tempfile.mkdtemp(prefix="miles_tests_"), "import_time.db")
 
 
 @pytest.fixture
