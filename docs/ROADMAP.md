@@ -222,6 +222,13 @@ Begin by reading the repo and giving me the summary and Phase 1 plan. Do not wri
 * Browser control: Playwright `connect_over_cdp` to the dedicated profile. A model driven browser (Agent SDK) waits for errands that need judgment, such as `job_apply`.
 * `canvas_download` and `grade_check` use no model at all: Canvas's REST API through the logged in browser session (UF blocks personal access tokens). The first step verifies one read only call (the course list). Any endpoint blocked through the session falls back to reading the page with Playwright, still with no model, and the report says which path each piece used. The grade math is done in code and shown step by step.
 
+* Canvas login friction (Nov 25 2026):
+  * Daily Canvas needs (due dates, new assignments) come only from the Canvas calendar feed, which needs no login.
+  * Logged in Canvas errands (grade_check, canvas_download) run as one weekly batch plus on demand, so one login covers all of them.
+  * Keepalive: one tiny read only request every 30 to 60 minutes while the dedicated window is open; it stops for good on a login redirect or a 401. A first version runs on the Mac now (~/MILES/agent/canvas_keepalive.py, launchd every 45 minutes, resumed by hand with --resume).
+  * Never store or type his UF password. Any 401 or redirect to the UF login or Duo page stops the errand at once with no retries (no lockouts) and marks it needs_login. Nova gets a push whose tap brings the dedicated Chrome window to the front on the login page; he logs in with his password manager and Duo, and the waiting errands resume automatically.
+  * The per assignment endpoint (/courses/:id/assignments/:id) is not used; assignment group listings, modules, pages and files cover what is needed.
+
 ### Phase 6.5: Nova Chrome extension
 
 * A Nova extension installed in the agent's dedicated browser profile only, never in his main browser profile. Scope and design to be planned when the phase starts.
