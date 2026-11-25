@@ -229,6 +229,16 @@ One contract change to docs/TASKS_CONTRACT.md, planned, reviewed and deployed as
   * To settle in the contract: what the complete and reopen routes answer for a daily task before its start date, how the voice reads of today's tasks and the nightly review treat one, and what `GET /tasks/overview` shows for the days before the start.
 * Guard for dropped details, for the voice tools and the create route (found the same day): when a request includes something a tool cannot store, the tool result must say so plainly ("Saved X. NOT saved: Y. Tell him this."), so the model tells him what was dropped and never confirms it. Because the model can only pass fields the tool defines, each task tool gets an optional text field for the part of the request it could not fit into any field, and its description tells the model to fill it; a non empty value always produces the "NOT saved" line. Start with the task and list tools, then audit the other write tools for the same gap. Tests: a request with an unstorable detail returns the NOT saved line; a fully stored request returns none.
 
+### Planner fixes (queued Nov 25 2026, after the Tasks follow ups)
+
+Existing planner and calendar bugs found by the Codex review of the Evallo filter. Not caused by the filter and not fixed in that phase. Planned only, not built; the phase starts with a plan and contract shown to him.
+
+* Break day classification: a verified, opaque primary calendar lesson whose title is a UF class code (for example `DSA`) during a UF break is treated as a likely cancelled class and removed from busy time (`calendar_roles.annotate`, `is_class`). A tutoring session must never be classified as a class.
+* `plan_sessions` ignores all day events on owned calendars, so it can book a session during an opaque all day event.
+* Transparent (marked free) and declined events still create conflicts in `find_schedule_conflicts`, consume slots in the session planner and are listed in voice answers without an availability marker, while `busy_blocks` correctly skips them.
+* Unreadable calendars: `_fetch_events` drops a calendar that fails on any page, and `busy_blocks` raises only when every calendar failed. `place_plan` and `read_events` discard the list of unreadable calendars, so a failed primary calendar can make a whole day look free and the plan can place a task over a real lesson. A failed blocking calendar must stop planning or be stated plainly.
+* One answer, one read: the nightly opening and voice answers load calendar state several times (suggestions, slot placement, rendering, the past and upcoming lists), so one answer can mix different decisions or clocks. Read once per answer.
+
 ### Model audit: local models for background jobs (planned Nov 25 2026, after the Tasks follow ups)
 
 Planned only, not built. The phase starts with a plan and contract shown to him, as every phase does.
