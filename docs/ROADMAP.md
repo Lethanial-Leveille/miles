@@ -271,6 +271,14 @@ Planned only, not built. The phase starts with a plan and contract shown to him,
   * Never store or type his UF password. Any 401 or redirect to the UF login or Duo page stops the errand at once with no retries (no lockouts) and marks it needs_login. Nova gets a push whose tap brings the dedicated Chrome window to the front on the login page; he logs in with his password manager and Duo, and the waiting errands resume automatically.
   * The per assignment endpoint (/courses/:id/assignments/:id) is not used; assignment group listings, modules, pages and files cover what is needed.
 
+### Login failsafe and the Evallo token (planned Nov 25 2026)
+
+Planned only, not built; there was no separate login failsafe item, so this one holds the Canvas login friction rules above (needs_login, one login per weekly batch, the keepalive) together with the Evallo token move below. The order against the other phases is set with him when it is planned.
+
+* The Pi stops holding the Evallo token. Today it holds a copy, `~/miles/data/evallo_state.json` (copied Nov 23 2026, mode 600), read by the voice tool `set_session_status`, the nightly canary (`miles-evallo-canary.timer`) and the morning login check (`miles-evallo-logincheck.timer`). That copy is a known temporary exception to the Evallo token rule, kept for now so nothing breaks.
+* Steps, in this order: (1) a voice session status change is queued on the Pi (an approval style request, nothing saved but the student, the time and the status) and carried out by the Mac agent, which already holds the login and the Evallo runner; (2) the nightly canary and the morning login check move to the Mac as launchd jobs; (3) once nothing on the Pi reads the file, the Pi copy is deleted and the Pi's readers of `evallo_state.json` are removed from the code; (4) the login expired message, README and `scripts/evallo_login.py` never mention copying the file (already fixed in the Evallo filter phase).
+* Done means: no file on the Pi holds an Evallo token or cookies, with a test that fails if code on the Pi reads `evallo_state.json`.
+
 ### Phase 6.5: Nova Chrome extension
 
 * A Nova extension installed in the agent's dedicated browser profile only, never in his main browser profile. Scope and design to be planned when the phase starts.

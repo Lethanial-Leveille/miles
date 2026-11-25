@@ -19,6 +19,7 @@ Rules for coding agents (Codex, Claude Code and their subagents) that apply to t
 - NEVER delete, move or edit any calendar event carrying Evallo's fields (`evalloEvent`, `evalloSessionId`, `orgId`) from any code, script or agent, not even a one off script. The calendar layer must refuse such writes, with a test.
 - An Evallo event counts as his only if its session id is in the verified set from the Mac. If the set is stale, only his full name in the tutor position of the title counts, never "Lethanial" alone. Unknown means busy, never free.
 - The Evallo token stays on the Mac: never printed, logged or sent to the Pi. Only session ids go to the Pi.
+- Known temporary exception: the Pi currently holds a copy of the Evallo login, `~/miles/data/evallo_state.json` (copied Nov 23 2026, mode 600), used by the voice tool `set_session_status`, the nightly canary and the morning login check. Do not copy it again, do not add readers of it, and never print it. The plan to remove it is the roadmap item "Login failsafe and the Evallo token" in docs/ROADMAP.md.
 
 ## Contracts
 - The shapes the backend and the app share live in `docs/*_CONTRACT.md` (`SESSIONS_CONTRACT.md`, `TASKS_CONTRACT.md`). Change them only with his approval.
