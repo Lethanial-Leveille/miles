@@ -612,11 +612,11 @@ def test_malformed_extended_properties_do_not_raise(extended):
     assert ef.decide(event, state(), NOW) == (True, 0)
 
 
-def test_an_event_that_cannot_be_evaluated_is_kept(monkeypatch, capsys):
+def test_an_event_that_cannot_be_evaluated_is_kept_but_flagged(monkeypatch, capsys):
     def boom(event):
         raise RuntimeError("secret title " + event.get("summary", ""))
     monkeypatch.setattr(ef, "start_date", boom)
-    assert ef.decide(ev(title="Private name"), state(), NOW) == (True, 0)
+    assert ef.decide(ev(title="Private name"), state(), NOW) == (True, ef.ERROR_ROW)
     out = capsys.readouterr().out
     assert "RuntimeError" in out and "Private name" not in out and "secret" not in out
 
@@ -1146,3 +1146,57 @@ def test_the_tool_description_tells_the_model_not_to_offer_free_times():
     from tools import registry
     text = registry.get("check_calendar_freebusy").description
     assert "never offer or guess free times" in text
+
+
+# ── round 3, group 4: a filter failure must not reveal an event ──
+
+def test_an_event_the_filter_fails_on_comes_back_anonymized(monkeypatch, capsys):
+    def boom(event):
+        raise RuntimeError("bad")
+    monkeypatch.setattr(ef, "start_date", boom)
+    event = ev(title=f"{SECRET_NAME} <> Other | Chem", **_secret_kwargs())
+    shown, row = ef.view(event, state(), NOW)
+    assert row == ef.ERROR_ROW and shown["summary"] == ef.ANONYMOUS_TITLE
+    _clean(str(shown))
+    assert "description" not in shown and "organizer" not in shown
+    assert shown["attendees"] == [{"self": True, "responseStatus": "accepted"}]
+    _clean(capsys.readouterr().out)
+
+
+def test_a_failed_event_that_is_positively_his_keeps_its_data(monkeypatch):
+    monkeypatch.setattr(ef, "start_date", lambda e: (_ for _ in ()).throw(RuntimeError("bad")))
+    listed = ev(sid=MINE, title="Maribel <> Other | Chem")
+    # row 2 returns before start_date is needed, so force the failure at the top
+    monkeypatch.setattr(ef, "_decide", lambda *a: (_ for _ in ()).throw(RuntimeError("bad")))
+    assert ef.view(listed, state(), NOW) == (listed, ef.ERROR_ROW)       # id is in the set
+    named = ev(title="Kid <> Lethanial Leveille | Math")
+    assert ef.view(named, state(), NOW) == (named, ef.ERROR_ROW)         # full name
+    stranger = ev(title="Maribel <> Other | Chem")
+    assert ef.view(stranger, state(), NOW)[0]["summary"] == ef.ANONYMOUS_TITLE
+
+
+def test_view_never_raises_even_when_anonymizing_fails(monkeypatch, capsys):
+    monkeypatch.setattr(ef, "_decide", lambda *a: (_ for _ in ()).throw(RuntimeError("bad")))
+    monkeypatch.setattr(ef, "anonymize", lambda e: (_ for _ in ()).throw(RuntimeError("worse")))
+    event = ev(title=SECRET_NAME, **_secret_kwargs())
+    shown, _ = ef.view(event, state(), NOW)
+    assert set(shown) <= {"id", "start", "end", "transparency"} and "id" in shown
+    _clean(str(shown))
+    monkeypatch.setattr(ef, "decide", lambda *a: (_ for _ in ()).throw(RuntimeError("worst")))
+    shown, _ = ef.view(event, state(), NOW)
+    assert set(shown) <= {"id", "start", "end", "transparency"}
+    assert SECRET_NAME not in capsys.readouterr().out
+
+
+def test_an_anonymous_block_copies_only_valid_evallo_properties():
+    event = ev(sid=None, **_secret_kwargs())
+    event["extendedProperties"]["private"] = {
+        "evalloEvent": "true", "evalloSessionId": SECRET_NAME, "orgId": "Maribel Quintero org",
+        "note": SECRET_NAME}
+    block = ef.anonymize(event)
+    private = block["extendedProperties"]["private"]
+    assert set(private) == {"evalloEvent", "evalloSessionId", "orgId"}
+    assert private == {"evalloEvent": "true", "evalloSessionId": "", "orgId": ""}
+    _clean(str(block))
+    good = ev(sid=MINE)
+    assert ef.anonymize(good)["extendedProperties"]["private"]["evalloSessionId"] == MINE

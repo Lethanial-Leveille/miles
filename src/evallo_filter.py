@@ -274,8 +274,8 @@ def decide(event, state, now):
         return _decide(event, state, now)
     except Exception as exc:
         print(f"Evallo filter: could not evaluate one event ({type(exc).__name__}); "
-              "keeping it.", flush=True)
-        return True, 0
+              "keeping it, anonymized.", flush=True)
+        return True, ERROR_ROW
 
 
 def _decide(event, state, now):
@@ -303,10 +303,31 @@ def keep(event, state, now):
 
 
 ANONYMOUS_TITLE = "Evallo session (unverified)"
+ERROR_ROW = -1            # the row of an event the filter could not evaluate
 # Everything an anonymous block keeps, besides the reduced attendee list and the
 # Evallo private properties: when it is, whether it blocks time, which series.
 _ANONYMOUS_KEEPS = ("id", "start", "end", "transparency", "status", "recurringEventId",
                     "originalStartTime")
+
+
+_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_-]{0,64}\Z")
+
+
+def _safe_private(private):
+    """Only the three Evallo keys, each with a value that cannot hold a name: a
+    session id must be 24 hex; anything else is blanked (the key stays, so the
+    block is still recognized as Evallo's)."""
+    safe = {}
+    for key in EVALLO_KEYS:
+        if key not in private:
+            continue
+        value = private[key]
+        if key == "evalloSessionId":
+            ok = isinstance(value, str) and SESSION_ID.match(value)
+        else:
+            ok = isinstance(value, (bool, int)) or (isinstance(value, str) and _SAFE_VALUE.match(value))
+        safe[key] = value if ok else ""
+    return safe
 
 
 def anonymize(event):
@@ -317,7 +338,7 @@ def anonymize(event):
     block = {key: event[key] for key in _ANONYMOUS_KEEPS if key in event}
     block["summary"] = ANONYMOUS_TITLE
     private = private_props(event)
-    block["extendedProperties"] = {"private": {k: private[k] for k in EVALLO_KEYS if k in private}}
+    block["extendedProperties"] = {"private": _safe_private(private)}
     attendees = event.get("attendees")
     if isinstance(attendees, list):
         for who in attendees:
@@ -327,10 +348,27 @@ def anonymize(event):
     return block
 
 
+def _bare_block(event):
+    """The least that can still hold a slot: id, start, end, transparency."""
+    keep_keys = ("id", "start", "end", "transparency")
+    return {key: event[key] for key in keep_keys if isinstance(event, dict) and key in event}
+
+
 def view(event, state, now):
     """(event as MILES may see it, or None when dropped; C4 row). A kept event
     that is only uncertain (row 1 or 3) and does not carry his full name comes
-    back anonymized. Never raises."""
+    back anonymized. So does an event the filter failed to evaluate, unless it
+    can be positively identified as his. Never raises: if even anonymizing
+    fails, a bare busy block comes back. Nothing about an event is logged."""
+    try:
+        return _view(event, state, now)
+    except Exception as exc:
+        print(f"Evallo filter: could not view one event ({type(exc).__name__}); "
+              "returning a bare block.", flush=True)
+        return _bare_block(event), ERROR_ROW
+
+
+def _view(event, state, now):
     kept, row = decide(event, state, now)
     if not kept:
         return None, row
@@ -338,16 +376,16 @@ def view(event, state, now):
         event = place_in_time(event)
     except Exception:
         pass
-    if row in (1, 3):
+    if row == ERROR_ROW:
         try:
-            if not has_tutor_name(event):
-                return anonymize(event), row
-        except Exception as exc:
-            print(f"Evallo filter: could not anonymize one event ({type(exc).__name__}); "
-                  "returning a bare block.", flush=True)
-            return {"id": event.get("id"), "start": event.get("start"), "end": event.get("end"),
-                    "summary": ANONYMOUS_TITLE,
-                    "extendedProperties": {"private": {}}}, row
+            his = session_id(event) in state.ids or has_tutor_name(event)
+        except Exception:
+            his = False
+        if his:
+            return event, row
+        return anonymize(event), row
+    if row in (1, 3) and not has_tutor_name(event):
+        return anonymize(event), row
     return event, row
 
 
