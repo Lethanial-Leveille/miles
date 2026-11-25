@@ -155,7 +155,8 @@ def status(state, now=None):
 # ── the rule ──
 
 def private_props(event):
-    props = (event.get("extendedProperties") or {}).get("private") if isinstance(event, dict) else None
+    extended = event.get("extendedProperties") if isinstance(event, dict) else None
+    props = extended.get("private") if isinstance(extended, dict) else None
     return props if isinstance(props, dict) else {}
 
 
@@ -194,7 +195,18 @@ def has_tutor_name(event):
 
 def decide(event, state, now):
     """(keep, row). row is the C4 row that decided, 0 when the event is not
-    Evallo's or the filter is off."""
+    Evallo's or the filter is off. Never raises: an event that cannot be
+    evaluated is kept (busy, never free), and the failure is logged without any
+    of the event's contents."""
+    try:
+        return _decide(event, state, now)
+    except Exception as exc:
+        print(f"Evallo filter: could not evaluate one event ({type(exc).__name__}); "
+              "keeping it.", flush=True)
+        return True, 0
+
+
+def _decide(event, state, now):
     if not state.on or not is_evallo(event):
         return True, 0
     sid = session_id(event)

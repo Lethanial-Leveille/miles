@@ -652,3 +652,33 @@ def test_migration_045_is_atomic(tmp_path, monkeypatch):
     assert conn.execute("SELECT version FROM schema_version").fetchone() == (45,)
     assert "active" in [r[1] for r in conn.execute("PRAGMA table_info(evallo_verification)")]
     conn.close()
+
+
+# ── revision 5, group 2: the filter never raises and never drops a calendar ──
+
+@pytest.mark.parametrize("extended", ["x", 7, ["private"], {"private": "x"}, {"private": [1]},
+                                      {"private": None}])
+def test_malformed_extended_properties_do_not_raise(extended):
+    event = {"id": "m", "summary": "Class", "extendedProperties": extended}
+    assert ef.decide(event, state(), NOW) == (True, 0)
+
+
+def test_an_event_that_cannot_be_evaluated_is_kept(monkeypatch, capsys):
+    def boom(event):
+        raise RuntimeError("secret title " + event.get("summary", ""))
+    monkeypatch.setattr(ef, "start_date", boom)
+    assert ef.decide(ev(title="Private name"), state(), NOW) == (True, 0)
+    out = capsys.readouterr().out
+    assert "RuntimeError" in out and "Private name" not in out and "secret" not in out
+
+
+def test_the_filter_cannot_make_a_calendar_disappear(calendar, monkeypatch):
+    def boom(event):
+        raise ValueError("bad event")
+    monkeypatch.setattr(ef, "has_tutor_name", boom)
+    monkeypatch.setattr(ef, "start_date", boom)
+    queries = [{"calendarId": fake_google.PRIMARY, "timeMin": DAY.astimezone().isoformat(),
+                "timeMax": (DAY + datetime.timedelta(days=1)).astimezone().isoformat()}]
+    (cid, items, error), = cal._fetch_events(queries)
+    assert error is None
+    assert {e["id"] for e in items} == {"mine", "theirs", "overlap", "booked", "free", "declined"}
