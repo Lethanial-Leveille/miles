@@ -1200,3 +1200,31 @@ def test_an_anonymous_block_copies_only_valid_evallo_properties():
     _clean(str(block))
     good = ev(sid=MINE)
     assert ef.anonymize(good)["extendedProperties"]["private"]["evalloSessionId"] == MINE
+
+
+# ── round 3, group 5: a rename proposed with the filter off ──
+
+def test_a_rename_confirmed_after_the_filter_turned_on_never_quotes_the_captured_title(
+        lookups, monkeypatch):
+    import sqlite3
+    import pending_action as pa
+    state_then = ef.load_state()
+    ef.clear_active()                                    # proposed while the filter is off
+    now = datetime.datetime(2026, 12, 1, 8)
+    pa.begin_turn()
+    question = cal.rename_calendar_events("Chem", "Physics", "2026-12-02", "2026-12-03", now=now)
+    assert "Rename Chem to Physics" in question
+    ef.store_snapshot(state_then.fetched_at, datetime.date(2026, 11, 1), datetime.date(2027, 3, 1),
+                      [MINE])                            # an idempotent retry: the filter is on
+    assert ef.load_state().on
+    pa.begin_turn()
+    result = pa.resolve(True)
+    assert "Renamed 0 events" in result and "Failed, not renamed" in result
+    _clean(result)
+    assert ef.ANONYMOUS_TITLE in result
+    database.log_tool_call("confirm_pending_action", {"approved": True}, result)
+    conn = sqlite3.connect(database.DB_PATH)
+    rows = " ".join(" ".join(map(str, r)) for r in conn.execute("SELECT * FROM tool_call_log"))
+    conn.close()
+    _clean(rows)
+    assert lookups.written() == []                        # the guard refused every write

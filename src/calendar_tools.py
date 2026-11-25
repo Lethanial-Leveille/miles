@@ -1944,7 +1944,9 @@ def rename_calendar_events(find, replace_with, time_min=None, time_max=None, now
                 _write_patch(calendar_id, event["id"], {"summary": new_title}, event)
                 done += 1
             except Exception as exc:
-                failed.append(f"{event.get('summary')} ({exc})")
+                # The title was captured when he was asked; the filter may have
+                # turned on since, so it is judged again now, never quoted raw.
+                failed.append(f"{_safe_title(event)} ({exc})")
         reply = f"Renamed {done} event{'' if done == 1 else 's'}."
         return reply + (f" Failed, not renamed: {'; '.join(failed)}." if failed else "")
 
