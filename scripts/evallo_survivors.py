@@ -13,9 +13,13 @@ It reads the calendars (events.list only) and the verified set, and writes
 nothing but the output file. It prints no event titles and no secrets.
 
 The state is the real one: the `active` flag in the database, as the server and
-the voice process see it. The file's first line says `outcome=<active, stale, off
-or unreadable>`; when it is not active the filter was not applied, so the file
-lists every Evallo event and must not be read as a verification. The file is
+the voice process see it. The file's first line is
+`outcome=<active, stale, off or unreadable> window=<first>..<last> fetched_at=<iso or none>`:
+the filter's outcome, the export window asked for (both days included), and the
+`fetched_at` of the snapshot the filter used, so the Mac compares the same
+window and knows which snapshot it is checking. When the outcome is not active
+the filter was not applied, so the file lists every Evallo event and must not be
+read as a verification. The file is
 written to a unique mode 600 temporary file in the same directory and renamed
 into place, so a reader never sees half a file and an existing file is never
 truncated first (a symlink at the path is replaced, never followed).
@@ -41,6 +45,12 @@ def _updated_text(event):
         return "none"
     moment = evallo_filter.parse_moment(raw)
     return evallo_filter.iso_z(moment) if moment is not None else "unparseable"
+
+
+def header_line(outcome, first, last, state):
+    """The first line of the file: outcome=, then the window and the snapshot."""
+    fetched = state.fetched_raw if getattr(state, "fetched_raw", None) else "none"
+    return f"outcome={outcome} window={first.isoformat()}..{last.isoformat()} fetched_at={fetched}"
 
 
 def survivor_lines(events, state, now):
@@ -119,7 +129,7 @@ def main(argv=None):
     now = evallo_filter.now_utc()
     outcome = evallo_filter.status(state, now)["outcome"]
     lines = survivor_lines(raw_events(first, last + datetime.timedelta(days=1)), state, now)
-    write_private(args.out, [f"outcome={outcome}"] + lines)
+    write_private(args.out, [header_line(outcome, first, last, state)] + lines)
     print(f"outcome={outcome}: {len(lines)} Evallo events listed in {args.out}")
     return 0
 

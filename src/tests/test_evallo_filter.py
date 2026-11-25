@@ -948,7 +948,7 @@ def test_survivors_main_reads_the_real_flag_and_labels_the_outcome(db, monkeypat
     out = tmp_path / "s.txt"
     assert mod.main(["2026-11-23", "2026-12-07", "--out", str(out)]) == 0
     lines = out.read_text().splitlines()
-    assert lines[0] == "outcome=off" and len(lines) == 3          # nothing was filtered
+    assert lines[0].startswith("outcome=off ") and len(lines) == 3          # nothing was filtered
     push(db)                                              # accepted again
     mod.main(["2026-11-23", "2026-12-07", "--out", str(out)])
     lines = out.read_text().splitlines()
@@ -1355,3 +1355,27 @@ def test_two_starters_at_44_both_succeed_and_the_migration_runs_once(tmp_path, m
     conn = sqlite3.connect(path)
     assert conn.execute("SELECT version FROM schema_version").fetchone() == (45,)
     conn.close()
+
+
+# ── round 3, group 8: the survivors header ──
+
+def test_the_survivors_header_carries_the_window_and_the_snapshot(db, monkeypatch, tmp_path):
+    mod = _survivors()
+    monkeypatch.setattr(mod, "raw_events", lambda a, b: [ev()])
+    out = tmp_path / "s.txt"
+    mod.main(["2026-11-23", "2026-12-07", "--out", str(out)])           # no status row at all
+    assert out.read_text().splitlines()[0] == \
+        "outcome=off window=2026-11-23..2026-12-07 fetched_at=none"
+    push(db)
+    mod.main(["2026-11-23", "2026-12-07", "--out", str(out)])
+    first = out.read_text().splitlines()[0]
+    outcome = ef.status(ef.load_state())["outcome"]          # active or stale, by the real clock
+    assert outcome in ("active", "stale")
+    assert first == f"outcome={outcome} window=2026-11-23..2026-12-07 fetched_at={iso(F)}"
+    ef.clear_active()
+    mod.main(["2026-11-23", "2026-12-07", "--out", str(out)])
+    assert out.read_text().splitlines()[0] == \
+        f"outcome=off window=2026-11-23..2026-12-07 fetched_at={iso(F)}"
+    assert mod.header_line("unreadable", datetime.date(2026, 11, 23), datetime.date(2026, 12, 7),
+                           ef.State(readable=False)) == \
+        "outcome=unreadable window=2026-11-23..2026-12-07 fetched_at=none"
