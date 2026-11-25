@@ -216,10 +216,18 @@ Begin by reading the repo and giving me the summary and Phase 1 plan. Do not wri
 
 ### Tasks tab follow ups (queued Nov 25 2026, right after the Evallo filter)
 
-* Found by the Codex contract review and checked against the live code. Not fixed yet.
-* Real bug, low severity: `POST /tasks/{id}/complete` has no day parameter. A tap at 4:01 a.m. on an overview loaded before 4:00 ticks the new day's occurrence of a daily task, and the previous day's tick is lost. Fix: Nova sends the overview's `today`; the Pi answers 409 with the current day on a mismatch and Nova refreshes.
-* Contract wording only: in docs/TASKS_CONTRACT.md the reopen route says it removes "today's completion", but for a one time task the code removes all of its completion rows, and a daily task removes today's. Fix the wording to match the code.
-* Checked and not bugs: moving a task to the backlog after Google already deleted the block (the retry finishes the move), and reopening a one time task that was completed on an earlier day.
+One contract change to docs/TASKS_CONTRACT.md, planned, reviewed and deployed as one phase. Plan and contract first, Codex contract review, no building until approved. Not built.
+
+* Found by the Codex contract review and checked against the live code:
+  * Real bug, low severity: `POST /tasks/{id}/complete` has no day parameter. A tap at 4:01 a.m. on an overview loaded before 4:00 ticks the new day's occurrence of a daily task, and the previous day's tick is lost. Fix: Nova sends the overview's `today`; the Pi answers 409 with the current day on a mismatch and Nova refreshes.
+  * Contract wording only: the reopen route says it removes "today's completion", but for a one time task the code removes all of its completion rows, and a daily task removes today's. Fix the wording to match the code.
+  * Checked and not bugs: moving a task to the backlog after Google already deleted the block (the retry finishes the move), and reopening a one time task that was completed on an earlier day.
+* Start date for daily tasks (found Nov 25 2026: "add reading as a daily task starting Monday" drops the date today, because the voice tool, the create route and `tasks_for_day` have no start date, and the tool then confirms the task as if it were saved in full):
+  * A nullable `start_date` (YYYY-MM-DD) on daily tasks, by migration. `tasks_for_day` includes a daily task only on days on or after its `start_date`; no start date means every day, as now.
+  * The voice tool `task_add` takes an optional `start_date` for a daily task and rejects one on a one time task with a plain message. Dates are the 4 a.m. days.
+  * `POST /tasks` can create a daily task with an optional `start_date` (today or later). The Task object gains `start_date`. Nova's add sheet gets a daily option with a start date picker.
+  * To settle in the contract: what the complete and reopen routes answer for a daily task before its start date, how the voice reads of today's tasks and the nightly review treat one, and what `GET /tasks/overview` shows for the days before the start.
+* Guard for dropped details, for the voice tools and the create route (found the same day): when a request includes something a tool cannot store, the tool result must say so plainly ("Saved X. NOT saved: Y. Tell him this."), so the model tells him what was dropped and never confirms it. Because the model can only pass fields the tool defines, each task tool gets an optional text field for the part of the request it could not fit into any field, and its description tells the model to fill it; a non empty value always produces the "NOT saved" line. Start with the task and list tools, then audit the other write tools for the same gap. Tests: a request with an unstorable detail returns the NOT saved line; a fully stored request returns none.
 
 ### Quick capture (built Nov 25 2026)
 
