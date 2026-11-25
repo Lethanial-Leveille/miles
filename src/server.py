@@ -936,6 +936,7 @@ def agent_evallo_sessions(body: EvalloSessions, user: str = Depends(get_agent_us
     if fetched is None:
         problems.append("fetched_at must be a UTC timestamp")
     else:
+        fetched = fetched.replace(microsecond=0)      # whole seconds, everywhere
         if fetched > now + timedelta(minutes=5):
             problems.append("fetched_at is ahead of the clock")
         if fetched < now - timedelta(hours=24):
@@ -958,9 +959,15 @@ def agent_evallo_sessions(body: EvalloSessions, user: str = Depends(get_agent_us
         count, fetched_text, pushed_text = evallo_filter.store_snapshot(
             fetched, body.window_start, body.window_end, ids, now)
     except evallo_filter.Conflict as conflict:
-        raise HTTPException(status_code=409, detail={"reason": conflict.reason})
-    print(f"Evallo sessions accepted: count={count} window={body.window_start}..{body.window_end} "
-          f"fetched_at={fetched_text}", flush=True)
+        return JSONResponse(status_code=409, content={"reason": conflict.reason})
+    # The push is committed (and active) by now. The log line comes after, and
+    # a failure of it must not turn a stored push into an error.
+    try:
+        print(f"Evallo sessions accepted: count={count} "
+              f"window={body.window_start}..{body.window_end} fetched_at={fetched_text}",
+              flush=True)
+    except Exception:
+        pass
     return {"stored": count, "fetched_at": fetched_text, "pushed_at": pushed_text}
 
 

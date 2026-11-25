@@ -284,6 +284,7 @@ def store_snapshot(fetched_at, window_start, window_end, session_ids, now=None):
     Returns (count, fetched_at text, pushed_at text). Raises Conflict. Sets the
     active flag in the same transaction as the replacement."""
     now = now or now_utc()
+    fetched_at = fetched_at.replace(microsecond=0)    # whole seconds, compared and stored
     fetched_text, pushed_text = iso_z(fetched_at), iso_z(now)
     ids = sorted(set(session_ids))
     conn = sqlite3.connect(database.DB_PATH, timeout=10, isolation_level=None)

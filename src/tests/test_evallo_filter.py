@@ -448,12 +448,12 @@ def test_ordering_and_the_response(client, agent):
     assert r.status_code == 200
     assert set(r.json()) == {"stored", "fetched_at", "pushed_at"} and r.json()["stored"] == 1
     late = put(client, agent, fetched_at=a, session_ids=[MINE])           # delayed retry of A
-    assert late.status_code == 409 and late.json()["detail"] == {"reason": "older_snapshot"}
+    assert late.status_code == 409 and late.json() == {"reason": "older_snapshot"}
     assert ef.load_state().ids == {NEW}
     same = put(client, agent, fetched_at=b, session_ids=[NEW])
     assert same.status_code == 200 and same.json()["fetched_at"] == b
     other = put(client, agent, fetched_at=b, session_ids=[NEW, MINE])
-    assert other.status_code == 409 and other.json()["detail"] == {"reason": "conflicting_snapshot"}
+    assert other.status_code == 409 and other.json() == {"reason": "conflicting_snapshot"}
     assert ef.load_state().ids == {NEW}
 
 
@@ -682,3 +682,38 @@ def test_the_filter_cannot_make_a_calendar_disappear(calendar, monkeypatch):
     (cid, items, error), = cal._fetch_events(queries)
     assert error is None
     assert {e["id"] for e in items} == {"mine", "theirs", "overlap", "booked", "free", "declined"}
+
+
+# ── revision 5, group 3: whole seconds, a top level 409, a harmless log ──
+
+def test_fractional_fetched_at_is_ordered_by_whole_seconds(client, agent):
+    r = put(client, agent, fetched_at=iso(ef.now_utc() - datetime.timedelta(minutes=2))[:-1]
+            + ".900Z", session_ids=[MINE])
+    assert r.status_code == 200
+    stored = r.json()["fetched_at"]
+    assert "." not in stored
+    later_in_text_earlier_in_fraction = stored[:-1] + ".100Z"
+    r2 = put(client, agent, fetched_at=later_in_text_earlier_in_fraction, session_ids=[])
+    assert r2.status_code == 409 and r2.json() == {"reason": "conflicting_snapshot"}
+    assert ef.load_state().ids == {MINE}                  # never replaced
+    r3 = put(client, agent, fetched_at=later_in_text_earlier_in_fraction, session_ids=[MINE])
+    assert r3.status_code == 200 and r3.json()["fetched_at"] == stored
+
+
+def test_a_failing_log_write_after_the_commit_changes_nothing(client, agent, monkeypatch):
+    def broken(*a, **k):
+        raise OSError("log disk full")
+    monkeypatch.setattr(server, "print", broken, raising=False)
+    r = put(client, agent)
+    assert r.status_code == 200 and r.json()["stored"] == 1
+    assert ef.load_state().on                              # the answer and the state agree
+
+
+def test_a_refused_push_never_turns_the_filter_on(client, agent):
+    assert put(client, agent, session_ids=["bad"]).status_code == 422
+    assert not ef.load_state().on
+    assert put(client, agent).status_code == 200
+    ef.clear_active()
+    older = iso(ef.now_utc() - datetime.timedelta(hours=3))
+    assert put(client, agent, fetched_at=older).status_code == 409
+    assert not ef.load_state().on                          # a 409 does not activate
