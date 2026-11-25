@@ -229,6 +229,19 @@ One contract change to docs/TASKS_CONTRACT.md, planned, reviewed and deployed as
   * To settle in the contract: what the complete and reopen routes answer for a daily task before its start date, how the voice reads of today's tasks and the nightly review treat one, and what `GET /tasks/overview` shows for the days before the start.
 * Guard for dropped details, for the voice tools and the create route (found the same day): when a request includes something a tool cannot store, the tool result must say so plainly ("Saved X. NOT saved: Y. Tell him this."), so the model tells him what was dropped and never confirms it. Because the model can only pass fields the tool defines, each task tool gets an optional text field for the part of the request it could not fit into any field, and its description tells the model to fill it; a non empty value always produces the "NOT saved" line. Start with the task and list tools, then audit the other write tools for the same gap. Tests: a request with an unstorable detail returns the NOT saved line; a fully stored request returns none.
 
+### Model audit: local models for background jobs (planned Nov 25 2026, after the Tasks follow ups)
+
+Planned only, not built. The phase starts with a plan and contract shown to him, as every phase does.
+
+* Audit first: list every Claude API call in MILES and classify each one by (1) whether it needs low latency, (2) whether it uses tools, and (3) how much answer quality matters. The result is a table in the contract, one row per call site, with the model it uses today and its logged cost and latency.
+* Stays on Claude: the voice loop and anything with heavy tool use.
+* Candidates for Ollama on the Pi: memory candidate extraction, the Gmail recruiting watcher's email sorting, session summaries and chat auto titles, plus anything else the audit shows is background, tool free and tolerant of an occasional miss.
+* Pick a local model that fits the Pi's memory alongside the services already running (measure free memory with the services up before choosing). Local jobs run at night, under the same CPU and memory limits as the errand worker, so they never compete with the voice loop.
+* Every local result is validated (structured output checked against a schema, plus a sanity check per job). A failed validation falls back to Claude for that item, and the fallback is logged.
+* Benchmark before switching anything: run the local model and Claude on the same real logged inputs, and show him accuracy, time and cost side by side. A job moves only after he approves its numbers, one job at a time.
+* Folds in the open Haiku 5.5 versus Haiku 4.5 comparison for the voice loop, from the logged cost and latency of real turns. That comparison covers the voice loop only; nothing else changes model without its own numbers.
+* The audit also defines the provider interface (one call shape for text, structured output and tools, with the model, timeout, validation and fallback chosen per call site) that later fallback providers would plug into. The phase defines the interface; it does not add other providers.
+
 ### Quick capture (built Nov 25 2026)
 
 * `POST /capture` turns one line into a task or list item, authenticated by a hashed capture key that can do nothing else and reads nothing. Every capture is logged with its source. Keys are created with `scripts/capture_key.py`, written to a mode 600 file, never printed.
