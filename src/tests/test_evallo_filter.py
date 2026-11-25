@@ -1265,3 +1265,93 @@ def test_the_routes_own_422s_are_fixed_strings_in_the_same_shape(client, agent):
     assert r.json() == {"detail": [{"loc": ["session_ids"], "type": "duplicate_session_ids"}]}
     r = put(client, agent, fetched_at="2000-01-01T00:00:00Z")
     assert r.json() == {"detail": [{"loc": ["fetched_at"], "type": "more_than_24_hours_old"}]}
+
+
+# ── round 3, group 7: concurrent starters and an atomic migration 045 ──
+
+def _at_44(tmp_path, monkeypatch):
+    path = str(tmp_path / "m.db")
+    monkeypatch.setattr(database, "DB_PATH", path)
+    real = list(database.MIGRATIONS)
+    monkeypatch.setattr(database, "MIGRATIONS", real[:44])
+    database.init_db()
+    return path, real
+
+
+def test_a_failure_between_the_tables_leaves_version_44_and_a_retry_succeeds(tmp_path, monkeypatch):
+    import sqlite3
+    path, real = _at_44(tmp_path, monkeypatch)
+
+    def half(conn):
+        conn.execute("CREATE TABLE evallo_verified_sessions (session_id TEXT PRIMARY KEY)")
+        raise RuntimeError("between the CREATE TABLEs and the version update")
+    monkeypatch.setattr(database, "MIGRATIONS", real[:44] + [(45, half)])
+    with pytest.raises(RuntimeError):
+        database.init_db()
+    conn = sqlite3.connect(path)
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert not names & {"evallo_verified_sessions", "evallo_verification"}
+    assert conn.execute("SELECT version FROM schema_version").fetchone() == (44,)
+    conn.close()
+    monkeypatch.setattr(database, "MIGRATIONS", real)
+    database.init_db()
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT version FROM schema_version").fetchone() == (45,)
+    conn.close()
+
+
+def test_a_failure_after_the_ddl_before_the_version_update_rolls_back_the_ddl(tmp_path, monkeypatch):
+    import sqlite3
+    path, real = _at_44(tmp_path, monkeypatch)
+
+    class Flaky(sqlite3.Connection):
+        def execute(self, sql, *args):
+            if sql.startswith("UPDATE schema_version SET version") and args and args[0] == (45,):
+                raise sqlite3.OperationalError("disk I/O error")
+            return super().execute(sql, *args)
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(database.sqlite3, "connect",
+                        lambda p, *a, **k: real_connect(p, *a, factory=Flaky, **k))
+    monkeypatch.setattr(database, "MIGRATIONS", real)
+    with pytest.raises(sqlite3.OperationalError):
+        database.init_db()
+    monkeypatch.undo()
+    conn = sqlite3.connect(path)
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "evallo_verification" not in names and "evallo_verified_sessions" not in names
+    assert conn.execute("SELECT version FROM schema_version").fetchone() == (44,)
+    conn.close()
+
+
+def test_two_starters_at_44_both_succeed_and_the_migration_runs_once(tmp_path, monkeypatch):
+    import sqlite3
+    import threading
+    import time as _time
+    path, real = _at_44(tmp_path, monkeypatch)
+    calls = []
+
+    def slow(conn):
+        calls.append(1)
+        _time.sleep(0.4)                       # the second starter arrives while this holds the lock
+        database._migration_045_evallo_filter(conn)
+    monkeypatch.setattr(database, "MIGRATIONS", real[:44] + [(45, slow)])
+    errors = []
+
+    def starter():
+        try:
+            conn = sqlite3.connect(path, timeout=10)
+            database._run_migrations(conn)
+            conn.close()
+        except Exception as exc:               # noqa: BLE001
+            errors.append(exc)
+    first = threading.Thread(target=starter)
+    second = threading.Thread(target=starter)
+    first.start()
+    _time.sleep(0.1)
+    second.start()
+    first.join()
+    second.join()
+    assert errors == [] and len(calls) == 1
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT version FROM schema_version").fetchone() == (45,)
+    conn.close()

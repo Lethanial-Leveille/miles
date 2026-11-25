@@ -1259,17 +1259,28 @@ def _run_migrations(conn):
                 # DDL and the version update commit together or not at all, so a
                 # failure between two CREATE TABLEs cannot leave half a migration
                 # behind with the version unchanged.
+                #
+                # The version is read only after taking the writer lock, so a
+                # second starter (the server, voice and the review timer all call
+                # init_db) that waited for the first sees the new version and
+                # skips instead of running the migration again.
                 conn.commit()
-                conn.execute("BEGIN")
+                conn.execute("BEGIN IMMEDIATE")
                 try:
-                    migration_fn(conn)
-                    conn.execute("UPDATE schema_version SET version = ?", (version,))
+                    now_at = conn.execute("SELECT version FROM schema_version").fetchone()[0]
+                    if version > now_at:
+                        migration_fn(conn)
+                        conn.execute("UPDATE schema_version SET version = ?", (version,))
+                        applied = True
+                    else:
+                        applied = False
                     conn.commit()
                 except BaseException:
                     conn.rollback()
                     raise
-                print(f"Applied migration {version}: {migration_fn.__name__}", flush=True)
-                current = version
+                if applied:
+                    print(f"Applied migration {version}: {migration_fn.__name__}", flush=True)
+                current = max(current, version)
                 continue
             migration_fn(conn)
             conn.execute("UPDATE schema_version SET version = ?", (version,))
