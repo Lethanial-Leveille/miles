@@ -923,7 +923,7 @@ class EvalloSessions(BaseModel):
     session_ids: list[str] = Field(max_length=2000)
 
 
-_EVALLO_ID = re.compile(r"^[0-9a-f]{24}$")
+_EVALLO_ID = re.compile(r"^[0-9a-f]{24}\Z")
 
 
 @app.put("/agent/evallo/sessions")

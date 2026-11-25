@@ -18,6 +18,7 @@ import contextvars
 import datetime
 import re
 import sqlite3
+import unicodedata
 from zoneinfo import ZoneInfo
 
 import database
@@ -26,7 +27,7 @@ NY = ZoneInfo("America/New_York")
 UTC = datetime.timezone.utc
 
 EVALLO_KEYS = ("evalloEvent", "evalloSessionId", "orgId")
-SESSION_ID = re.compile(r"^[0-9a-f]{24}$")
+SESSION_ID = re.compile(r"^[0-9a-f]{24}\Z")
 # Evallo stamps the push time, Google stamps `updated`; the two clocks may
 # disagree, so an event updated this close to the snapshot, or later, may have
 # been booked after it and is kept (row 3).
@@ -35,7 +36,7 @@ FRESH_FOR = datetime.timedelta(hours=24)
 TUTOR_NAME = "Lethanial Leveille"
 # <student> <> <tutor> | ...   and   <student> / <tutor>
 _NAME_RULE = re.compile(
-    r"^\s*[^<>/]+?\s*(?:<>|/)\s*" + re.escape(TUTOR_NAME) + r"\s*(?:\||$)", re.IGNORECASE)
+    r"^[^<>/]+?\s*(?:<>|/)\s*" + re.escape(TUTOR_NAME.casefold()) + r"\s*(?:\||$)")
 
 OUTCOMES = ("active", "stale", "off", "unreadable")
 _RANK = {"active": 0, "stale": 1, "off": 2, "unreadable": 3}
@@ -179,7 +180,14 @@ def start_date(event):
         if start.get("dateTime"):
             moment = datetime.datetime.fromisoformat(str(start["dateTime"]).replace("Z", "+00:00"))
             if moment.tzinfo is None:
-                return moment.date()
+                # No offset in the string: the event's own zone, else New York.
+                zone = NY
+                if start.get("timeZone"):
+                    try:
+                        zone = ZoneInfo(str(start["timeZone"]))
+                    except Exception:
+                        zone = NY
+                moment = moment.replace(tzinfo=zone)
             return moment.astimezone(NY).date()
         if start.get("date"):
             return datetime.date.fromisoformat(str(start["date"]))
@@ -188,9 +196,16 @@ def start_date(event):
     return None
 
 
+def _squash(text):
+    """Any run of whitespace, a non breaking space included, as one space, the
+    way evallo_matching reads a title."""
+    text = unicodedata.normalize("NFKD", text.replace("\u00a0", " "))
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
 def has_tutor_name(event):
     title = event.get("summary") if isinstance(event, dict) else None
-    return isinstance(title, str) and bool(_NAME_RULE.match(title))
+    return isinstance(title, str) and bool(_NAME_RULE.match(_squash(title)))
 
 
 def decide(event, state, now):

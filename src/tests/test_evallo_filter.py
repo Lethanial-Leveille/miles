@@ -839,3 +839,44 @@ def test_a_filter_that_is_off_does_not_anonymize(uncertain):
     ef.clear_active()
     window = cal.events_for_app(D2, D2 + datetime.timedelta(days=1))
     assert {e["title"] for e in window["events"]} >= {f"{SECRET_NAME} <> Other Tutor | Organic Chem"}
+
+
+# ── revision 5, group 5: three inputs that used to drop a real session ──
+
+@pytest.mark.parametrize("sid", [MINE + "\n", "\n" + MINE, MINE + " "])
+def test_an_id_with_a_trailing_newline_is_not_usable(sid):
+    event = ev(sid=None)
+    event["extendedProperties"]["private"]["evalloSessionId"] = sid
+    assert ef.session_id(event) is None
+    assert ef.decide(event, state(), NOW) == (True, 1)
+
+
+def test_the_push_refuses_an_id_with_a_trailing_newline(client, agent):
+    r = put(client, agent, session_ids=[MINE + "\n"])
+    assert r.status_code == 422 and MINE not in r.text
+
+
+def test_an_event_in_another_zone_uses_its_new_york_date():
+    # 00:30 in Tokyo on Nov 18 is 10:30 AM on Nov 17 in New York: outside the window.
+    tokyo = ev(start="2026-11-18T00:30:00+09:00")
+    assert ef.start_date(tokyo) == datetime.date(2026, 11, 17)
+    assert ef.decide(tokyo, state(), NOW) == (False, 6)
+    naive = ev()
+    naive["start"] = {"dateTime": "2026-11-18T00:30:00", "timeZone": "Asia/Tokyo"}
+    assert ef.start_date(naive) == datetime.date(2026, 11, 17)
+    naive["start"] = {"dateTime": "2026-11-18T00:30:00", "timeZone": "America/New_York"}
+    assert ef.start_date(naive) == datetime.date(2026, 11, 18)
+    naive["start"] = {"dateTime": "2026-11-18T00:30:00", "timeZone": "Not/AZone"}
+    assert ef.start_date(naive) == datetime.date(2026, 11, 18)       # falls back to New York
+
+
+@pytest.mark.parametrize("title", [
+    "Taylor <> Lethanial\u00a0Leveille | Calculus",
+    "Taylor <>  Lethanial \t Leveille | Calculus",
+    "Taylor\u00a0/\u00a0Lethanial\u00a0\u00a0Leveille",
+    "  Taylor <> LETHANIAL LEVEILLE",
+])
+def test_whitespace_runs_and_non_breaking_spaces_match_the_name(title):
+    event = ev(title=title)
+    assert ef.has_tutor_name(event)
+    assert ef.decide(event, state(), NOW + datetime.timedelta(days=2)) == (True, 5)
