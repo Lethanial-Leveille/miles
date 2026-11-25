@@ -40,6 +40,7 @@ import approvals
 import tts
 import database
 import sessions
+import capture
 # Imported for its side effect: registering the nightly_review session type.
 # Without it POST /sessions answers 400 for it and the timer has nothing to
 # open. Kept explicit, with this comment, because an unused looking import is
@@ -155,6 +156,11 @@ class HealthSync(BaseModel):
     workouts: list[HealthWorkout] = Field(default_factory=list, max_length=100)
     # Hourly steps for the last two days, from app builds of Nov 21 2026 on
     hours: list[HealthHour] = Field(default_factory=list, max_length=72)
+
+class CaptureRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+    # Where it came from, for the log: mac_hotkey, action_button, ...
+    source: str = Field(pattern=r"^[a-z0-9_]{1,32}$")
 
 class PhonePresence(BaseModel):
     state: Literal["home", "away"]
@@ -524,6 +530,25 @@ def get_tasks_today(user: str = Depends(get_current_user)):
     return {"day": task_day(),
             "tasks": [{"id": t[0], "text": t[1], "recurrence": t[2]}
                       for t in tasks_today()]}
+
+
+# ── Quick capture ──
+
+def get_capture_key(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> int:
+    """A capture key, and only a capture key: a login JWT is refused here just
+    as a capture key is refused everywhere else. See capture.py."""
+    key_id = capture.key_id_for(credentials.credentials)
+    if key_id is None:
+        raise _unauthorized()
+    return key_id
+
+
+@app.post("/capture")
+def quick_capture(body: CaptureRequest, key_id: int = Depends(get_capture_key)):
+    """One line in, a task or list item out, and a line to show in a
+    notification. Never reads anything back."""
+    kind, message = capture.capture(body.text, body.source, key_id)
+    return {"ok": True, "kind": kind, "message": message}
 
 
 @app.post("/tasks/{task_id}/complete")

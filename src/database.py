@@ -1094,6 +1094,40 @@ def _migration_042_session_metrics(conn):
     conn.execute("ALTER TABLE sessions ADD COLUMN summary_output_tokens INTEGER")
 
 
+def _migration_043_capture(conn):
+    """Quick capture from outside the app (a Mac hotkey, the iPhone Action
+    Button): the keys that may do it, and a log of every capture.
+
+    A key is stored only as its SHA 256, so a copy of the database cannot be
+    used to capture anything. revoked_at retires a key without deleting the
+    log rows that name it. capture_log keeps the text, its source and what it
+    became, so the classifier planned for later can be judged against what v1
+    did with real captures."""
+    conn.execute("""
+        CREATE TABLE capture_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            key_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT,
+            revoked_at TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE capture_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            key_id INTEGER REFERENCES capture_keys(id),
+            source TEXT NOT NULL,
+            text TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('task', 'list_item', 'duplicate')),
+            list_name TEXT,
+            ref_id INTEGER,
+            message TEXT NOT NULL
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -1137,6 +1171,7 @@ MIGRATIONS = [
     (40, _migration_040_watchdog),
     (41, _migration_041_sessions_and_planned_tasks),
     (42, _migration_042_session_metrics),
+    (43, _migration_043_capture),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -3384,5 +3419,70 @@ def last_session_summary(session_type, before_day):
             "SELECT for_day, summary FROM sessions WHERE type = ? AND status = 'closed' "
             "AND summary IS NOT NULL AND for_day < ? ORDER BY for_day DESC LIMIT 1",
             (session_type, before_day)).fetchone()
+    finally:
+        conn.close()
+
+
+# ── Quick capture ──
+
+def add_capture_key(name, key_hash, now=None):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            return conn.execute(
+                "INSERT INTO capture_keys (name, key_hash, created_at) VALUES (?, ?, ?)",
+                (name, key_hash, (now or datetime.now()).isoformat())).lastrowid
+    finally:
+        conn.close()
+
+
+def capture_key_id(key_hash, now=None):
+    """The id of the active key with this hash, marking it used, or None."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            row = conn.execute(
+                "SELECT id FROM capture_keys WHERE key_hash = ? AND revoked_at IS NULL",
+                (key_hash,)).fetchone()
+            if row is None:
+                return None
+            conn.execute("UPDATE capture_keys SET last_used_at = ? WHERE id = ?",
+                         ((now or datetime.now()).isoformat(), row[0]))
+            return row[0]
+    finally:
+        conn.close()
+
+
+def capture_keys():
+    """Every key as (id, name, created_at, last_used_at, revoked_at), never the hash."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT id, name, created_at, last_used_at, revoked_at FROM capture_keys "
+            "ORDER BY id").fetchall()
+    finally:
+        conn.close()
+
+
+def revoke_capture_key(key_id, now=None):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            return conn.execute(
+                "UPDATE capture_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                ((now or datetime.now()).isoformat(), key_id)).rowcount > 0
+    finally:
+        conn.close()
+
+
+def log_capture(key_id, source, text, kind, message, list_name=None, ref_id=None, now=None):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO capture_log (created_at, key_id, source, text, kind, "
+                "list_name, ref_id, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                ((now or datetime.now()).isoformat(), key_id, source, text, kind,
+                 list_name, ref_id, message))
     finally:
         conn.close()

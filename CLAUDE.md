@@ -128,6 +128,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── hevy_edit.py           # routine changes by voice: swap, add, remove, adjust; asked first
 │   ├── prowl_tools.py         # Prowl job search reads; accept a discovery, asked first
 │   ├── lists_tasks.py         # lists and tasks by voice: add, check off, read; days start at 4am
+│   ├── capture.py             # POST /capture: one line to a task or list item, by a key that can do nothing else
 │   ├── health_tools.py        # get_health_summary: the phone's Health data as the app last sent it
 │   ├── push.py                # Reminders and timers to his phone through Apple's push service
 │   ├── session_types.py       # session type registry: purpose, prompt, own tools, model, schedule
@@ -190,6 +191,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── check_gain.py          # mic gain verification
 │   ├── profile_turn.py        # times the turn stages no stopwatch covers
 │   ├── seed_memories.py       # seed corpus loader
+│   ├── capture_key.py         # new, list, revoke quick capture keys; a key is shown once
 │   └── setup_auth.py          # one time password and JWT secret setup
 ├── assets/                    # wake_chime.wav
 ├── systemd/                   # every unit, versioned. Installed by copying

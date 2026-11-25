@@ -245,6 +245,7 @@ Live at `https://miles.lethanial.com`.
 | `/sessions`, `/sessions/{session_id}` | GET, POST | Yes |
 | `/sessions/{session_id}/turns` | POST, server sent events | Yes |
 | `/sessions/{session_id}/close` | POST | Yes |
+| `/capture` | POST, a capture key instead of a login: adds one task or list item, reads nothing | Key |
 | `/approvals`, `/approvals/{approval_id}` | GET | Yes |
 | `/approvals/{approval_id}/approve`, `/approvals/{approval_id}/skip` | POST | Yes, full login only |
 | `/auth/agent` | POST | Yes, issues the Mac's agent token |
