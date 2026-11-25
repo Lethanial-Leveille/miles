@@ -138,7 +138,7 @@ def test_task_done_at_one_am_counts_toward_the_previous_day(db):
 
 
 def test_open_one_time_task_shows_up(db):
-    tid = db.add_task("call the bank")
+    tid = db.add_task("call the bank", scheduled_for="2026-11-12")
     assert db.tasks_today(now=datetime(2026, 11, 12, 9, 0)) == [
         (tid, "call the bank", None)]
 
@@ -160,13 +160,13 @@ def test_a_dated_one_time_task_shows_from_its_day_while_pending(db):
         {"text": "Skipped laundry", "scheduled_for": "2026-11-24"},
         {"text": "Moved essay", "scheduled_for": "2026-11-24"},
     ], tuesday)
-    undated = database.add_task("Call the bank", now=tuesday)
+    undated = database.add_task("Call the bank", now=tuesday)   # no day: the backlog
     database.set_task_status(ids[3], "skipped", tuesday)
     database.move_task(ids[4], "2026-11-26", tuesday)
     shown = [t[1] for t in database.tasks_today(tuesday)]
-    assert shown == ["Monday leftover", "Tuesday reading", "Call the bank"]
+    assert shown == ["Monday leftover", "Tuesday reading"]
     assert "Wednesday lab" in [t[1] for t in database.tasks_today(datetime(2026, 11, 25, 9, 0))]
-    assert undated
+    assert [t["id"] for t in database.backlog_tasks()] == [undated]
 
 
 def test_a_one_time_task_done_by_voice_is_done_in_the_review(db):
@@ -213,7 +213,7 @@ def test_done_twice_in_one_day_is_one_row(db):
 
 def test_tasks_today_lists_both_kinds_in_the_order_added(db):
     a = db.add_task("take vitamins", "daily")
-    b = db.add_task("call the bank")
+    b = db.add_task("call the bank", scheduled_for="2026-11-12")
     c = db.add_task("stretch", "daily")
     db.complete_task(c, now=datetime(2026, 11, 12, 7, 0))
     assert db.tasks_today(now=datetime(2026, 11, 12, 9, 0)) == [

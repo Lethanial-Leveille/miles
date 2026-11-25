@@ -1128,6 +1128,38 @@ def _migration_043_capture(conn):
     """)
 
 
+def _migration_044_review_v2(conn):
+    """The nightly review proposes a plan instead of asking for one, and keeps a
+    backlog and a list of club events he attends.
+
+    tasks.due_date is when a backlog item is due, apart from scheduled_for,
+    which is the day he plans to do it. A one time task with no scheduled_for
+    is in the backlog. tasks.minutes is how long it takes, for placing it.
+
+    sessions.plan holds the saved proposal as JSON, so "good" confirms exactly
+    what he was shown. session_messages.author tells what the model wrote from
+    what code posted (the plan, the week), so a reload can tell them apart and
+    the model's own words about times can be held back.
+
+    calendar_attending says which club events or series he attends. Those
+    count as busy; the rest of a club calendar is only context."""
+    conn.execute("ALTER TABLE tasks ADD COLUMN due_date TEXT")
+    conn.execute("ALTER TABLE tasks ADD COLUMN minutes INTEGER")
+    conn.execute("ALTER TABLE sessions ADD COLUMN plan TEXT")
+    conn.execute("ALTER TABLE session_messages ADD COLUMN author TEXT NOT NULL DEFAULT 'model' "
+                 "CHECK (author IN ('model', 'code'))")
+    conn.execute("""
+        CREATE TABLE calendar_attending (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            calendar_id TEXT NOT NULL,
+            series_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (calendar_id, series_id)
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -1172,6 +1204,7 @@ MIGRATIONS = [
     (41, _migration_041_sessions_and_planned_tasks),
     (42, _migration_042_session_metrics),
     (43, _migration_043_capture),
+    (44, _migration_044_review_v2),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -2482,15 +2515,20 @@ def task_day(now=None):
     return (now - timedelta(hours=DAY_STARTS_AT_HOUR)).date().isoformat()
 
 
-def add_task(text, recurrence=None, now=None):
+def add_task(text, recurrence=None, now=None, scheduled_for=None, due_date=None, minutes=None):
     """Save a task and return its id. recurrence is None for a one time task or
-    'daily'; the table's CHECK refuses anything else."""
+    'daily'; the table's CHECK refuses anything else.
+
+    A one time task with no scheduled_for is in the backlog (not on today's
+    list). Voice adds pass today's day, so "add call the bank" still lands on
+    today; capture passes nothing, so a capture waits in the backlog."""
     now = now or datetime.now()
     conn = sqlite3.connect(DB_PATH)
     try:
         cursor = conn.execute(
-            "INSERT INTO tasks (text, recurrence, created_at) VALUES (?, ?, ?)",
-            (text, recurrence, now.isoformat()))
+            "INSERT INTO tasks (text, recurrence, created_at, scheduled_for, due_date, minutes) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (text, recurrence, now.isoformat(), scheduled_for, due_date, minutes))
         conn.commit()
         return cursor.lastrowid
     finally:
@@ -2537,9 +2575,10 @@ def tasks_today(now=None):
     left out before any of that is asked.
 
     Since migration 41 a one time task can carry a date and a status. It is on
-    today's list while it is pending and its date is today or earlier (or it
-    has none): a task planned for Friday does not show on Tuesday, and one
-    skipped, moved or done is settled."""
+    today's list while it is pending and its date is today or earlier. Since
+    migration 44 a task with no date is in the backlog and is not on today's
+    list. A task planned for Friday does not show on Tuesday, and one skipped,
+    moved or done is settled."""
     today = task_day(now)
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -2548,7 +2587,7 @@ def tasks_today(now=None):
             WHERE t.archived_at IS NULL
               AND (t.recurrence IS NOT NULL
                    OR (t.status = 'pending'
-                       AND (t.scheduled_for IS NULL OR t.scheduled_for <= ?)))
+                       AND t.scheduled_for IS NOT NULL AND t.scheduled_for <= ?))
               AND NOT EXISTS (
                   SELECT 1 FROM task_completions c
                   WHERE c.task_id = t.id
@@ -2960,7 +2999,8 @@ def latest_phone_presence():
 # dozen columns, and positions would be the bug waiting in every caller.
 
 _TASK_COLUMNS = ("id, text, recurrence, status, scheduled_for, must_do, notes, source, "
-                 "assignment_id, topic_id, calendar_event_id, created_at, updated_at")
+                 "assignment_id, topic_id, calendar_event_id, created_at, updated_at, due_date, "
+                 "minutes")
 
 
 def _task_dict(row, done_on=None):
@@ -2991,9 +3031,10 @@ def tasks_for_day(day, today=None):
     tasks dated that day whatever their status, and daily tasks with status
     done when they have a completion on it.
 
-    When `day` is today (the 4am day), pending one time tasks that are undated
-    or dated earlier are included too, because they are still on today's list
-    (tasks_today shows them) and the review has to ask about them.
+    When `day` is today (the 4am day), pending one time tasks dated earlier are
+    included too, because they are still on today's list (tasks_today shows
+    them) and the review has to ask about them. Undated ones are the backlog
+    and are not (since migration 44).
 
     And on any day, an undated or earlier task that was settled that day stays
     in that day's list: done (a completion dated that day), or skipped or moved
@@ -3012,7 +3053,7 @@ def tasks_for_day(day, today=None):
               AND (recurrence IS NOT NULL
                    OR scheduled_for = :day
                    OR (:day = :today AND status = 'pending'
-                       AND (scheduled_for IS NULL OR scheduled_for < :day))
+                       AND scheduled_for IS NOT NULL AND scheduled_for < :day)
                    OR ((scheduled_for IS NULL OR scheduled_for < :day)
                        AND ((status = 'done' AND EXISTS (
                                 SELECT 1 FROM task_completions c
@@ -3076,7 +3117,8 @@ def must_do_counts(days):
 def add_planned_tasks(tasks, now=None):
     """Insert dated one time tasks in one transaction and return their ids.
 
-    Each task is a dict with text, scheduled_for, must_do and notes. All or
+    Each task is a dict with text, scheduled_for, must_do and notes, and
+    optionally due_date and minutes. All or
     nothing, so a plan the review confirmed is never half saved."""
     stamp = (now or datetime.now()).isoformat()
     conn = sqlite3.connect(DB_PATH)
@@ -3086,9 +3128,10 @@ def add_planned_tasks(tasks, now=None):
             for task in tasks:
                 cursor = conn.execute(
                     "INSERT INTO tasks (text, recurrence, created_at, scheduled_for, "
-                    "must_do, notes, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?)",
+                    "must_do, notes, updated_at, due_date, minutes) "
+                    "VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)",
                     (task["text"], stamp, task["scheduled_for"], int(bool(task.get("must_do"))),
-                     task.get("notes"), stamp))
+                     task.get("notes"), stamp, task.get("due_date"), task.get("minutes")))
                 ids.append(cursor.lastrowid)
         return ids
     finally:
@@ -3143,9 +3186,9 @@ def move_task(task_id, new_day, now=None):
             cursor = conn.execute("""
                 INSERT INTO tasks (text, recurrence, created_at, notes, scheduled_for,
                                    status, must_do, source, assignment_id, topic_id,
-                                   updated_at)
+                                   updated_at, due_date, minutes)
                 SELECT text, NULL, ?, notes, ?, 'pending', must_do, source,
-                       assignment_id, topic_id, ?
+                       assignment_id, topic_id, ?, due_date, minutes
                 FROM tasks WHERE id = ?
             """, (stamp, new_day, stamp, task_id))
             return cursor.lastrowid
@@ -3168,47 +3211,212 @@ def set_task_calendar_event(task_id, event_id, now=None):
         conn.close()
 
 
+def clear_task_calendar_event(task_id, now=None):
+    """Forget a task's calendar block, because the event is gone from Google
+    (he deleted it) or was removed on purpose. Without this a deleted block
+    kept refusing a new booking, since the task still pointed at it."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE tasks SET calendar_event_id = NULL, updated_at = ? WHERE id = ?",
+                ((now or datetime.now()).isoformat(), task_id))
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def backlog_tasks():
+    """The backlog: active one time tasks with no scheduled day that are still
+    pending, oldest first. Not on today's list and not on any day's plan."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(f"""
+            SELECT {_TASK_COLUMNS} FROM tasks
+            WHERE archived_at IS NULL AND recurrence IS NULL
+              AND status = 'pending' AND scheduled_for IS NULL
+            ORDER BY id
+        """).fetchall()
+    finally:
+        conn.close()
+    return [_task_dict(row) for row in rows]
+
+
+def unschedule_task(task_id, now=None):
+    """Back to the backlog: no day, not a must do, no block remembered. The
+    caller removes the block from Google first. False when there is no active
+    pending one time task with that id."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE tasks SET scheduled_for = NULL, must_do = 0, calendar_event_id = NULL, "
+                "updated_at = ? WHERE id = ? AND recurrence IS NULL AND archived_at IS NULL "
+                "AND status = 'pending'",
+                ((now or datetime.now()).isoformat(), task_id))
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def save_day_plan(day, items, now=None):
+    """Make a day's plan real in one transaction: each item is a dict with
+    text, must_do, and optionally task_id and minutes. An item with a task_id
+    puts that existing task on the day (a backlog item leaves the backlog);
+    one without is inserted. Returns the task ids in order. All or nothing, so
+    a confirmed plan is never half saved."""
+    stamp = (now or datetime.now()).isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        ids = []
+        with conn:
+            for item in items:
+                must = int(bool(item.get("must_do")))
+                if item.get("task_id"):
+                    conn.execute(
+                        "UPDATE tasks SET scheduled_for = ?, must_do = ?, "
+                        "minutes = COALESCE(?, minutes), updated_at = ? WHERE id = ?",
+                        (day, must, item.get("minutes"), stamp, item["task_id"]))
+                    ids.append(item["task_id"])
+                else:
+                    cursor = conn.execute(
+                        "INSERT INTO tasks (text, recurrence, created_at, scheduled_for, "
+                        "must_do, minutes, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?)",
+                        (item["text"], stamp, day, must, item.get("minutes"), stamp))
+                    ids.append(cursor.lastrowid)
+        return ids
+    finally:
+        conn.close()
+
+
+def moved_destination(task):
+    """The day a moved task's copy is on, or None. move_task inserts the copy
+    in the same transaction with the old row's updated_at as its created_at,
+    so that pair finds it without another column."""
+    if task["status"] != "moved" or not task.get("updated_at"):
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(
+            "SELECT scheduled_for FROM tasks WHERE id > ? AND text = ? AND created_at = ? "
+            "ORDER BY id LIMIT 1", (task["id"], task["text"], task["updated_at"])).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def session_plan(session_id):
+    """The saved proposal of a session as a dict, or None."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute("SELECT plan FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    finally:
+        conn.close()
+    return json.loads(row[0]) if row and row[0] else None
+
+
+def set_session_plan(session_id, plan):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            conn.execute("UPDATE sessions SET plan = ? WHERE id = ?",
+                         (json.dumps(plan), session_id))
+    finally:
+        conn.close()
+
+
+# ── Club events he attends ──
+
+def add_attending(calendar_id, series_id, title, now=None):
+    """Mark a club event or series as one he attends. False when it already was."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO calendar_attending (calendar_id, series_id, title, "
+                "created_at) VALUES (?, ?, ?, ?)",
+                (calendar_id, series_id, title, (now or datetime.now()).isoformat()))
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def attending_set():
+    """{(calendar id, series id)} of everything he attends."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return {(c, s) for c, s in conn.execute(
+            "SELECT calendar_id, series_id FROM calendar_attending")}
+    finally:
+        conn.close()
+
+
+def attending_rows():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute("SELECT id, calendar_id, series_id, title, created_at "
+                            "FROM calendar_attending ORDER BY id").fetchall()
+    finally:
+        conn.close()
+
+
+def drop_attending(attending_id):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            return conn.execute("DELETE FROM calendar_attending WHERE id = ?",
+                                (attending_id,)).rowcount > 0
+    finally:
+        conn.close()
+
+
 # ── Sessions ──
 # A session is a chat with its own purpose, prompt and tools (session_types.py),
 # run by sessions.py. Messages are stored whole, as the API's content blocks.
 
 _SESSION_COLUMNS = ("id, type, status, title, for_day, model, created_at, opened_at, "
                     "last_message_at, closed_at, summary, push_sent_at, reminder_sent_at, "
-                    "closed_by")
+                    "closed_by, plan")
 
 
 def _insert_session_messages(conn, session_id, messages, stamp):
     for message in messages:
         conn.execute(
             "INSERT INTO session_messages (session_id, role, content, model, input_tokens, "
-            "output_tokens, cache_read_tokens, cache_write_tokens, ms, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "output_tokens, cache_read_tokens, cache_write_tokens, ms, created_at, author) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, message["role"], json.dumps(message["content"]),
              message.get("model"), message.get("input_tokens"), message.get("output_tokens"),
              message.get("cache_read_tokens"), message.get("cache_write_tokens"),
-             message.get("ms"), stamp))
+             message.get("ms"), stamp, message.get("author", "model")))
     if messages:
         conn.execute("UPDATE sessions SET last_message_at = ? WHERE id = ?",
                      (stamp, session_id))
 
 
-def create_session(session_type, for_day, model, opening=None, now=None):
+def create_session(session_type, for_day, model, opening=None, now=None, plan=None):
     """Insert a session, and its opening message when there is one, in one
     transaction. Returns the new id, or None when UNIQUE (type, for_day)
     refused it because that day already has one; the caller fetches that one.
 
-    opening is a list of content blocks, stored as the first assistant row."""
+    opening is a list of content blocks, stored as the first assistant row. It
+    is a code authored message, so its author is 'code'. plan is the proposal
+    saved with it, a dict stored as JSON."""
     stamp = (now or datetime.now()).isoformat()
     conn = sqlite3.connect(DB_PATH)
     try:
         with conn:
             cursor = conn.execute(
-                "INSERT INTO sessions (type, for_day, model, created_at) VALUES (?, ?, ?, ?)",
-                (session_type, for_day, model, stamp))
+                "INSERT INTO sessions (type, for_day, model, created_at, plan) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (session_type, for_day, model, stamp,
+                 json.dumps(plan) if plan is not None else None))
             session_id = cursor.lastrowid
             if opening:
                 _insert_session_messages(
-                    conn, session_id, [{"role": "assistant", "content": opening}], stamp)
+                    conn, session_id,
+                    [{"role": "assistant", "content": opening, "author": "code"}], stamp)
         return session_id
     except sqlite3.IntegrityError:
         return None
@@ -3315,7 +3523,7 @@ def session_messages(session_id):
     try:
         rows = conn.execute(
             "SELECT id, role, content, model, input_tokens, output_tokens, cache_read_tokens, "
-            "cache_write_tokens, ms, created_at FROM session_messages "
+            "cache_write_tokens, ms, created_at, author FROM session_messages "
             "WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
     finally:
         conn.close()

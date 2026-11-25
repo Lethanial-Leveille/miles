@@ -12,6 +12,9 @@ the permission gate. task_add is raised to hokage so a guest's voice in the
 room cannot add tasks; a key is not a voice in the room, it is a capability
 with two operations, and the narrow route is what enforces it.
 
+A captured task has no day, so it goes to the backlog (migration 44), not onto
+today's list; the nightly review suggests from it.
+
 Version 1 decides with rules, not a model: a capture is a list item only when
 it says which list ("eggs to the grocery list", "grocery: eggs, milk" for a
 list that exists). Everything else is a task. A wrong guess costs one tap to
@@ -84,7 +87,7 @@ def capture(text, source, key_id=None, now=None):
     if kind == "task":
         title = items[0][:1].upper() + items[0][1:]
         task_id = add_task(title, now=now)
-        message = f"Added task: {title}"
+        message = f"Added to backlog: {title}"
         log_capture(key_id, source, text, "task", message, ref_id=task_id, now=now)
         return "task", message
 

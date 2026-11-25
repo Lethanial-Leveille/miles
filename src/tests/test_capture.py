@@ -55,8 +55,10 @@ def test_a_capture_becomes_a_task_and_is_logged(db, key):
     response = _post(raw, "email professor about the lab")
     assert response.status_code == 200
     assert response.json() == {"ok": True, "kind": "task",
-                               "message": "Added task: Email professor about the lab"}
-    assert [t[1] for t in db.tasks_today()] == ["Email professor about the lab"]
+                               "message": "Added to backlog: Email professor about the lab"}
+    # No day, so it waits in the backlog and is not on today's list.
+    assert db.tasks_today() == []
+    assert [t["text"] for t in db.backlog_tasks()] == ["Email professor about the lab"]
     conn = sqlite3.connect(db.DB_PATH)
     assert conn.execute("SELECT key_id, source, text, kind FROM capture_log").fetchall() == [
         (key_id, "mac_hotkey", "email professor about the lab", "task")]
@@ -123,3 +125,24 @@ def test_the_key_is_stored_only_as_a_hash(db, key):
     stored = conn.execute("SELECT key_hash FROM capture_keys").fetchone()[0]
     assert raw not in stored and stored == capture.hash_key(raw)
     assert capture.CAPTURE_TIER == "chunin"
+
+
+def test_a_new_key_goes_to_a_private_file_and_is_never_printed(tmp_path):
+    import os
+    import stat
+    import subprocess
+    import sys
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "scripts", "capture_key.py")
+    path = tmp_path / "keys" / "mac.key"
+    env = {**os.environ, "MILES_DB_PATH": str(tmp_path / "keys.db")}
+    out = subprocess.run([sys.executable, script, "new", "mac", "--path", str(path)],
+                         capture_output=True, text=True, env=env, check=True)
+    key = path.read_text().strip()
+    assert key.startswith(capture.KEY_PREFIX)
+    assert key not in out.stdout and key not in out.stderr
+    assert str(path) in out.stdout and "Key 1" in out.stdout
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    again = subprocess.run([sys.executable, script, "new", "mac", "--path", str(path)],
+                           capture_output=True, text=True, env=env)
+    assert again.returncode != 0                       # never overwrites a key file

@@ -23,6 +23,7 @@ from database import (
     find_list,
     get_or_create_list,
     list_items,
+    task_day,
     tasks_today,
     unchecked_items_matching,
 )
@@ -227,7 +228,9 @@ _TASK_WORDS = {"type": "string",
 )
 def task_add_tool(task, recurrence=None):
     task = written_form(task)
-    add_task(task, recurrence)
+    # A one time task said aloud is for today, so it gets today's day. With no
+    # day it would be in the backlog, which is not on today's list.
+    add_task(task, recurrence, scheduled_for=task_day() if recurrence is None else None)
     if recurrence == "daily":
         return f"Added the daily task: {task}."
     return f"Added the task: {task}."

@@ -95,7 +95,7 @@ def test_unchecking_puts_the_item_back(client, db):
 
 def test_tasks_today_with_its_day(client, db):
     vitamins = db.add_task("take vitamins", "daily")
-    bank = db.add_task("call the bank")
+    bank = db.add_task("call the bank", scheduled_for=db.task_day())
     body = client.get("/tasks/today").json()
     assert body == {"day": db.task_day(), "tasks": [
         {"id": vitamins, "text": "take vitamins", "recurrence": "daily"},
