@@ -69,6 +69,10 @@ _CLOCK_TIME = re.compile(
     rf"|\b(?:at|from|until|till|by|before|after|around)\s+(?:{_HOURS})\b"  # at ten
     rf"|\b(?:{_HOURS})\s*(?:a\.?m\.?|p\.?m\.?|o'clock)(?![a-z])"   # ten pm, two o'clock
     rf"|\b(?:{_HOURS})\s+(?:to|until|till|through)\s+(?:{_HOURS})\b"  # two to four
+    r"|\b\d{1,2}\s*o[\u2019']?clock\b"                              # 2 o'clock
+    r"|\b(?:half past|quarter (?:past|to|till|after))\b"            # half past two
+    rf"|\b(?:{_HOURS})\s+(?:thirty|fifteen|forty|oh)\b"             # ten thirty
+    r"|\b\d{1,2}\.\d{2}\b"                                         # 10.30
     r"|\b(?:noon|midnight)\b", re.IGNORECASE)
 
 

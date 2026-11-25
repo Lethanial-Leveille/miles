@@ -128,7 +128,7 @@ def test_a_block_on_another_day_reads_not_booked(db, world):
     assert rp.render_plan(TOMORROW).splitlines()[1] == "1. Study, not booked"
 
 
-def test_confirming_books_a_new_block_for_the_day_when_the_old_one_is_on_another(db, world):
+def test_confirming_moves_the_block_that_is_on_another_day(db, world):
     fixed_night(db, world)
     session = _session()
     study = db.session_plan(session["id"])["must_dos"][0]["task_id"]
@@ -139,10 +139,38 @@ def test_confirming_books_a_new_block_for_the_day_when_the_old_one_is_on_another
         nr.confirm_plan(now=NOW)
     finally:
         session_types.end_turn(token)
-    new_id = db.get_task(study)["calendar_event_id"]
-    assert new_id != old
-    assert world.events[MILES][new_id]["start"]["dateTime"].startswith("2026-11-25")
-    assert old in world.events[MILES]            # the other day's event is left alone
+    # The same event, now on the 25th: nothing left behind, nothing booked twice.
+    assert db.get_task(study)["calendar_event_id"] == old
+    assert world.events[MILES][old]["start"]["dateTime"].startswith("2026-11-25")
+    assert world.events[MILES][old]["summary"] == "Linear algebra study"
+    assert len([c for c, _ in world.inserts if c == MILES]) == 2      # the other two items
+
+
+def test_a_preview_never_clears_a_block_id_and_remove_block_still_finds_it(db, world):
+    fixed_night(db, world)
+    session = _session()
+    study = db.session_plan(session["id"])["must_dos"][0]["task_id"]
+    old = world.add(MILES, "wrong_day", "Study", at(27, 14), at(27, 16))
+    db.set_task_calendar_event(study, old)
+    token, _ = _in_turn(session["id"])
+    try:
+        nr.set_plan(must_dos=["Study for linear algebra test"], now=NOW)
+    finally:
+        session_types.end_turn(token)
+    assert db.get_task(study)["calendar_event_id"] == old            # a preview wrote nothing
+    assert "Study for linear algebra test, not booked" not in rp.render_plan(TOMORROW)
+    assert nr.remove_block(study, now=NOW).startswith("Removed the block")
+    assert old not in world.events[MILES]
+
+
+def test_schedule_block_moves_a_block_from_another_day(db, world):
+    task_id = _task(db, "Study", TOMORROW)
+    old = world.add(MILES, "wrong_day", "Study", at(27, 14), at(27, 16))
+    db.set_task_calendar_event(task_id, old)
+    nr.schedule_block(task_id, 60, start_time="15:00", now=NOW)
+    assert world.inserts == []
+    assert world.events[MILES][old]["start"]["dateTime"].startswith("2026-11-25T15:00")
+    assert db.get_task(task_id)["calendar_event_id"] == old
 
 
 # ── 4. a dropped must do becomes optional ──
@@ -343,9 +371,18 @@ def test_block_titles_are_short_and_deterministic(title, short):
     assert len(rp.block_title(title).split()) <= 4
 
 
-def test_an_explicit_short_title_wins():
-    assert rp.block_title("Study for linear algebra test", "Exam 3 prep: Lessons 19 to 21") == (
-        "Exam 3 prep: Lessons 19 to 21")
+def test_an_explicit_short_title_wins_but_is_capped():
+    assert rp.block_title("Study for linear algebra test", "Exam prep") == "Exam prep"
+    assert rp.block_title("Study", "Exam 3 prep: Lessons 19 to 21") == "Exam 3 prep: Lessons"
+    long = rp.block_title("x", "Supercalifragilistic Expialidocious Extraordinary Words")
+    assert len(long) <= 40 and len(long.split()) <= 4
+
+
+@pytest.mark.parametrize("title, short", [
+    (": notes", "Notes"), ("Study for", "Study for"), ("", ""),
+    (":", ""), ("Fix: nothing here", "Fix: nothing here")])
+def test_a_title_that_comes_out_empty_or_one_word_falls_back_to_the_task_words(title, short):
+    assert rp.block_title(title) == short
 
 
 def test_confirming_puts_the_details_in_the_description(db, world):
@@ -418,3 +455,23 @@ def test_a_course_code_class_is_cancelled_on_a_break_day():
     assert cls["mark"].startswith("(likely cancelled") and not cls["busy"]
     [exam] = roles.annotate([ev("MAS3114 Exam 3", at(25, 9), at(25, 10))])
     assert exam["busy"]
+
+
+# ── C. moving only moves ──
+
+def test_a_hand_renamed_block_keeps_its_title_and_description_when_moved(db, world):
+    task_id = _task(db, "Study for linear algebra test", TOMORROW)
+    nr.schedule_block(task_id, 120, start_time="14:00", now=NOW)
+    event = world.events[MILES][db.get_task(task_id)["calendar_event_id"]]
+    event["summary"], event["description"] = "My own name", "My own notes"      # he edited it
+    nr.move_block(task_id, "17:00", now=NOW)
+    assert (event["summary"], event["description"]) == ("My own name", "My own notes")
+    assert event["start"]["dateTime"].startswith("2026-11-25T17:00")
+
+
+# ── the guard, more spoken times ──
+
+@pytest.mark.parametrize("line", ["2 o'clock works.", "Half past two.", "Ten thirty works.",
+                                  "Study 10.30 tomorrow.", "Quarter to three."])
+def test_still_more_time_forms_are_dropped(line):
+    assert sessions.guard_text(line) == ""

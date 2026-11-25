@@ -100,13 +100,17 @@ BLOCK_TITLE_WORDS = 4
 def block_title(title, short_title=None):
     """The short name a MILES block carries, 2 to 4 words, so the calendar stays
     readable ("Linear algebra study", not the whole task). A task may carry its
-    own (short_title). Otherwise it is derived the same way every time:
+    own (short_title), capped at four words and forty characters. Otherwise it is derived the same way every time:
       "Study for linear algebra test"  becomes "Linear algebra study"
       "Fix Friday: Test Prep ... Dentist"  becomes "Fix Friday" (before the colon)
       anything else drops filler words and keeps the first four words.
     The full text, the reason and any notes go in the event description."""
     if short_title and short_title.strip():
-        return short_title.strip()
+        # A model supplied name is capped: four words and forty characters.
+        capped = " ".join(short_title.split()[:BLOCK_TITLE_WORDS])
+        if len(capped) > 40:
+            capped = capped[:40].rsplit(" ", 1)[0] if " " in capped[:40] else capped[:40]
+        return capped
     text = title.strip()
     head = text.split(":", 1)[0].strip() if ":" in text else text
     study = re.match(r"(?i)^study for (?:the |a |an |my )?(.+?)(?: (?:exam|test|quiz|midterm|final)s?)?$",
@@ -116,6 +120,12 @@ def block_title(title, short_title=None):
     else:
         words = [w for w in head.split() if w.casefold() not in _FILLER] or head.split()
         words = words[:BLOCK_TITLE_WORDS]
+    if len(words) < 2:
+        # Too little left (": notes", "Study for"): the task's own words, four
+        # at most, so a block is never named by one stray word or nothing.
+        fallback = text.strip(" :").split()[:BLOCK_TITLE_WORDS]
+        if len(fallback) > len(words):
+            words = fallback
     out = " ".join(words)
     return out[:1].upper() + out[1:]
 
@@ -413,22 +423,27 @@ def local_busy(day, exclude_ids=()):
     return local, unreadable
 
 
-def live_block(task, day=None):
-    """The MILES event of a task if it still exists, else None. A task whose
-    block he deleted by hand has its remembered id cleared, so it can be booked
-    again (before this, the dead id kept refusing a new booking).
-
-    With day, a block on another day is not this plan's block: it is forgotten
-    the same way (the event itself is left alone) so the task can be booked on
-    its day. Otherwise a block left on the 27th would show as the 25th's time."""
+def existing_block(task):
+    """The MILES event a task points at, on any day, or None. The remembered id
+    is cleared only when the event is gone (he deleted it, or it is cancelled),
+    which is a fact about Google. A block merely on another day is left alone."""
     from database import clear_task_calendar_event
     if not task or not task.get("calendar_event_id"):
         return None
     event = calendar_tools.get_miles_event(task["calendar_event_id"])
-    if event is not None and day is not None and event["start"].date() != _day(day):
-        event = None
     if event is None:
         clear_task_calendar_event(task["id"])
+    return event
+
+
+def live_block(task, day=None):
+    """existing_block, but with day only a block on that day counts. A block on
+    another day returns None WITHOUT clearing its id: previewing a plan writes
+    nothing, so remove_block still finds the block and confirming moves it
+    instead of leaving it behind and booking a second one."""
+    event = existing_block(task)
+    if event is not None and day is not None and event["start"].date() != _day(day):
+        return None
     return event
 
 

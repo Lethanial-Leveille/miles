@@ -30,7 +30,7 @@ from database import (add_attending, add_task, attending_set, backlog_tasks, com
                       tasks_between, tasks_for_day, unschedule_task)
 from review_plan import (ASK, MUST_DO_CAP, block_description, block_title, build_proposal,
                          clock_words, day_words,
-                         default_minutes, find_slot, fitting_gaps, local_busy, live_block,
+                         default_minutes, existing_block, find_slot, fitting_gaps, local_busy, live_block,
                          overlaps, place_blocks, place_plan, plan_text, range_words,
                          read_events, render_plan, short_day, today_line, week_view,
                          window_of)
@@ -459,14 +459,20 @@ def confirm_plan(now=None):
     for m in plan["must_dos"]:
         try:
             task = get_task(m["task_id"])
-            if live_block(task, day) or not m.get("slot"):
+            existing = existing_block(task)
+            if (existing and existing["start"].date() == day) or not m.get("slot"):
                 continue
             start = datetime.datetime.combine(day, datetime.time.fromisoformat(m["slot"][0]))
             end = datetime.datetime.combine(day, datetime.time.fromisoformat(m["slot"][1]))
-            _, event_id = calendar_tools.add_miles_event(
-                block_title(task["text"], task.get("short_title")), start, end,
-                block_description(task, m.get("reason")))
-            set_task_calendar_event(task["id"], event_id, now)
+            title = block_title(task["text"], task.get("short_title"))
+            description = block_description(task, m.get("reason"))
+            if existing:
+                # The task's block is on another day: move that one here, so no
+                # block is left behind and none is booked twice.
+                calendar_tools.move_miles_event(existing["id"], start, end, title, description)
+            else:
+                _, event_id = calendar_tools.add_miles_event(title, start, end, description)
+                set_task_calendar_event(task["id"], event_id, now)
         except Exception as exc:
             problems.append(f"{m['title']} ({exc})")
     plan["confirmed"] = True
@@ -640,9 +646,8 @@ def move_block(task_id, start_time, minutes=None, now=None):
     if overlaps(busy, start, end):
         raise ToolNotice(f"{clock_words(start)} to {clock_words(end)} on {day_words(day)} overlaps "
                          "something on his calendar. Nothing was moved.")
-    calendar_tools.move_miles_event(event["id"], start, end,
-                                    block_title(task["text"], task.get("short_title")),
-                                    block_description(task))
+    # Only the time: a title or description he edited by hand stays as he left it.
+    calendar_tools.move_miles_event(event["id"], start, end)
     return (f"Moved {task['text']} to {clock_words(start)} to {clock_words(end)} on "
             f"{day_words(day)}.")
 
@@ -761,7 +766,8 @@ def schedule_block(task_id=None, duration_minutes=None, start_time=None, earlies
         # Google and clears a dead one, so only a block that exists refuses.
         if task["recurrence"] is not None or not task["scheduled_for"]:
             raise ToolNotice(f"{title} has no date, so it has no day to block out.")
-        if live_block(task, _day(task["scheduled_for"])):
+        existing = existing_block(task)
+        if existing and existing["start"].date() == _day(task["scheduled_for"]):
             raise ToolNotice(f"{title} already has a block on the calendar.")
         if task["status"] != "pending":
             raise ToolNotice(f"{title} is {task['status']}, so it needs no block.")
@@ -770,6 +776,7 @@ def schedule_block(task_id=None, duration_minutes=None, start_time=None, earlies
         if not isinstance(minutes, int) or not 5 <= minutes <= 600:
             raise ToolNotice("duration_minutes must be a whole number from 5 to 600.")
         prepared.append({"task": task, "title": title, "minutes": minutes,
+                         "move_id": existing["id"] if existing else None,
                          "day": _day(task["scheduled_for"]),
                          "start": (_clock_arg(entry["start_time"], "start_time")
                                    if entry.get("start_time") else None)})
@@ -813,10 +820,16 @@ def schedule_block(task_id=None, duration_minutes=None, start_time=None, earlies
 
     for slot in plans:
         p = slot["item"]
-        _, event_id = calendar_tools.add_miles_event(
-            block_title(p["title"], p["task"].get("short_title")), slot["start"], slot["end"],
-            block_description(p["task"]))
-        set_task_calendar_event(p["task"]["id"], event_id, now)
+        title = block_title(p["title"], p["task"].get("short_title"))
+        description = block_description(p["task"])
+        if p["move_id"]:
+            # Its block is on another day: move it here instead of booking a second.
+            calendar_tools.move_miles_event(p["move_id"], slot["start"], slot["end"],
+                                            title, description)
+        else:
+            _, event_id = calendar_tools.add_miles_event(title, slot["start"], slot["end"],
+                                                         description)
+            set_task_calendar_event(p["task"]["id"], event_id, now)
         booked.append(f"Blocked {p['title']} on {day_words(p['day'])} from "
                       f"{clock_words(slot['start'])} to {clock_words(slot['end'])} on the "
                       "MILES calendar.")
