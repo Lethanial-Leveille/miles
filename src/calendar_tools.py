@@ -539,7 +539,8 @@ def _fetch_events(queries, state=None):
                 token = page.get("nextPageToken")
                 if not token:
                     break
-            items = [e for e in items if evallo_filter.keep(e, state, now)]
+            items = [v for v in (evallo_filter.view(e, state, now)[0] for e in items)
+                     if v is not None]
             return query["calendarId"], items, None
         except Exception as exc:
             return query["calendarId"], None, exc

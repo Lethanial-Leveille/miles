@@ -717,3 +717,125 @@ def test_a_refused_push_never_turns_the_filter_on(client, agent):
     older = iso(ef.now_utc() - datetime.timedelta(hours=3))
     assert put(client, agent, fetched_at=older).status_code == 409
     assert not ef.load_state().on                          # a 409 does not activate
+
+
+# ── revision 5, group 4: uncertain events come back anonymous ──
+
+SECRET_NAME = "Maribel Quintero"
+SECRET_BITS = (SECRET_NAME, "Organic Chem", "zoom.us/j/12345", "Room 204", "maribel@example.com")
+
+
+def _secret_kwargs():
+    return dict(description="Organic Chem with Zoom link https://zoom.us/j/12345",
+                location="Room 204",
+                attendees=[{"email": "maribel@example.com", "displayName": SECRET_NAME},
+                           {"self": True, "responseStatus": "accepted", "email": "me@example.com"}],
+                organizer={"displayName": SECRET_NAME}, creator={"email": "maribel@example.com"},
+                conferenceData={"entryPoints": [{"uri": "https://zoom.us/j/12345"}]})
+
+
+@pytest.fixture
+def uncertain(calendar):
+    fake = calendar
+    fetched = ef.load_state().fetched_at
+    recent = iso(fetched - datetime.timedelta(minutes=1))
+    day = datetime.datetime(2026, 12, 1)
+    fake.add(fake_google.PRIMARY, "u1", f"{SECRET_NAME} <> Other Tutor | Organic Chem",
+             day.replace(hour=10), day.replace(hour=11),
+             extendedProperties={"private": {"evalloEvent": "true", "note": SECRET_NAME}},
+             updated=recent, **_secret_kwargs())                         # row 1, no id
+    fake.add(fake_google.PRIMARY, "u3", f"{SECRET_NAME} <> Other Tutor | Chem",
+             day.replace(hour=13), day.replace(hour=14),
+             extendedProperties={"private": {"evalloEvent": "true", "evalloSessionId": "f" * 24}},
+             updated=recent, **_secret_kwargs())                         # row 3, new
+    kw = _secret_kwargs()
+    kw["attendees"][1]["responseStatus"] = "declined"
+    fake.add(fake_google.PRIMARY, "u4", f"{SECRET_NAME} <> Other Tutor | Declined",
+             day.replace(hour=15), day.replace(hour=16),
+             extendedProperties={"private": {"evalloEvent": "true", "evalloSessionId": "9" * 24}},
+             updated=recent, **kw)                                       # row 3, he declined
+    fake.add(fake_google.PRIMARY, "u5", "Kid <> Lethanial Leveille | Math",
+             day.replace(hour=17), day.replace(hour=18),
+             extendedProperties={"private": {"evalloEvent": "true", "evalloSessionId": "8" * 24}},
+             updated=recent, description="His own notes")                # row 3 with his name
+    return fake
+
+
+D2 = datetime.datetime(2026, 12, 1)
+
+
+def _clean(text):
+    for bit in SECRET_BITS:
+        assert bit not in text, bit
+
+
+def test_uncertain_events_are_anonymous_on_the_app_and_review_paths(uncertain):
+    import json
+    window = cal.events_for_app(D2, D2 + datetime.timedelta(days=1))
+    _clean(json.dumps(window))
+    by_id = {e["id"]: e for e in window["events"]}
+    for eid in ("u1", "u3", "u4"):
+        assert by_id[eid]["title"] == ef.ANONYMOUS_TITLE
+        assert not by_id[eid]["description"]
+    assert by_id["u4"]["declined"] and not by_id["u1"]["declined"]
+    assert by_id["u5"]["title"] == "Kid <> Lethanial Leveille | Math"     # his name: keeps data
+    assert by_id["u5"]["description"] == "His own notes"
+    reviewed = cal.reviewed_events(D2, D2 + datetime.timedelta(days=1))
+    _clean(json.dumps(reviewed, default=str))
+
+
+def test_anonymous_blocks_are_busy_unless_declined_or_free(uncertain):
+    blocks, _ = cal.busy_blocks(D2, D2 + datetime.timedelta(days=1))
+    assert sorted((a.astimezone().hour, b.astimezone().hour) for a, b in blocks) == \
+        [(10, 11), (13, 14), (17, 18)]
+
+
+def test_uncertain_events_are_anonymous_in_voice_and_conflicts(uncertain):
+    now = datetime.datetime(2026, 11, 30, 9)
+    listing = cal.get_upcoming_events("2026-12-01", "2026-12-02", now=now)
+    _clean(listing)
+    assert ef.ANONYMOUS_TITLE in listing
+    over = cal.get_upcoming_events("2026-12-01", "2026-12-02",
+                                   now=datetime.datetime(2026, 12, 1, 20))
+    _clean(over)
+    assert "Already over" in over and ef.ANONYMOUS_TITLE in over
+    _clean(cal.find_schedule_conflicts("2026-12-01", "2026-12-02", now=now))
+
+
+def test_anonymous_blocks_keep_what_the_write_guard_needs(uncertain):
+    ids = {e["id"]: e for e in cal._fetch_events([{
+        "calendarId": fake_google.PRIMARY, "timeMin": D2.astimezone().isoformat(),
+        "timeMax": (D2 + datetime.timedelta(days=1)).astimezone().isoformat()}])[0][1]}
+    block = ids["u3"]
+    assert block["extendedProperties"]["private"] == {"evalloEvent": "true",
+                                                      "evalloSessionId": "f" * 24}
+    assert "description" not in block and "organizer" not in block and "location" not in block
+    assert block["attendees"] == [{"self": True, "responseStatus": "accepted"}]
+    assert ids["u1"]["extendedProperties"]["private"] == {"evalloEvent": "true"}
+
+
+def test_row_2_and_row_5_keep_their_data():
+    row2 = ev(sid=MINE, title="Maribel <> Other | Chem", description="notes")
+    assert ef.view(row2, state(), NOW) == (row2, 2)
+    row5 = ev(title="Kid <> Lethanial Leveille | Math", start="2027-03-01T10:00:00-05:00")
+    assert ef.view(row5, state(), NOW) == (row5, 5)
+    row3_named = ev(title="Kid <> Lethanial Leveille", updated=iso(F))
+    assert ef.view(row3_named, state(), NOW)[0] is row3_named
+    assert ef.view(ev(), state(), NOW) == (None, 4)
+
+
+def test_nothing_anonymized_reaches_tool_call_log(uncertain, db):
+    import sqlite3
+    out = cal.get_upcoming_events("2026-12-01", "2026-12-02", now=datetime.datetime(2026, 11, 30, 9))
+    database.log_tool_call("get_upcoming_events", {"time_min": "2026-12-01"}, out)
+    conn = sqlite3.connect(database.DB_PATH)
+    rows = " ".join(" ".join(map(str, r)) for r in conn.execute("SELECT * FROM tool_call_log"))
+    conn.close()
+    _clean(rows)
+    assert ef.ANONYMOUS_TITLE in rows
+
+
+def test_a_filter_that_is_off_does_not_anonymize(uncertain):
+    ef.clear_active()
+    window = cal.events_for_app(D2, D2 + datetime.timedelta(days=1))
+    assert {e["title"] for e in window["events"]} >= {f"{SECRET_NAME} <> Other Tutor | Organic Chem"}

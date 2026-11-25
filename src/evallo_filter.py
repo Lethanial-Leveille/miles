@@ -230,6 +230,51 @@ def keep(event, state, now):
     return decide(event, state, now)[0]
 
 
+ANONYMOUS_TITLE = "Evallo session (unverified)"
+# Everything an anonymous block keeps, besides the reduced attendee list and the
+# Evallo private properties: when it is, whether it blocks time, which series.
+_ANONYMOUS_KEEPS = ("id", "start", "end", "transparency", "status", "recurringEventId",
+                    "originalStartTime")
+
+
+def anonymize(event):
+    """An uncertain event as a bare busy block: no title, description, location,
+    attendees, organizer, conference data or names. The Evallo private
+    properties stay (the write guard needs them), and the attendee list holds
+    only the owner's own response, so a declined event is still not busy."""
+    block = {key: event[key] for key in _ANONYMOUS_KEEPS if key in event}
+    block["summary"] = ANONYMOUS_TITLE
+    private = private_props(event)
+    block["extendedProperties"] = {"private": {k: private[k] for k in EVALLO_KEYS if k in private}}
+    attendees = event.get("attendees")
+    if isinstance(attendees, list):
+        for who in attendees:
+            if isinstance(who, dict) and who.get("self"):
+                block["attendees"] = [{"self": True, "responseStatus": who.get("responseStatus")}]
+                break
+    return block
+
+
+def view(event, state, now):
+    """(event as MILES may see it, or None when dropped; C4 row). A kept event
+    that is only uncertain (row 1 or 3) and does not carry his full name comes
+    back anonymized. Never raises."""
+    kept, row = decide(event, state, now)
+    if not kept:
+        return None, row
+    if row in (1, 3):
+        try:
+            if not has_tutor_name(event):
+                return anonymize(event), row
+        except Exception as exc:
+            print(f"Evallo filter: could not anonymize one event ({type(exc).__name__}); "
+                  "returning a bare block.", flush=True)
+            return {"id": event.get("id"), "start": event.get("start"), "end": event.get("end"),
+                    "summary": ANONYMOUS_TITLE,
+                    "extendedProperties": {"private": {}}}, row
+    return event, row
+
+
 # ── what he is told ──
 
 def note(outcome):
