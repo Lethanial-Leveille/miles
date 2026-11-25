@@ -1163,6 +1163,27 @@ def _migration_044_review_v2(conn):
     """)
 
 
+def _migration_045_evallo_filter(conn):
+    """The ids of his own Evallo sessions, pushed by the Mac, and when the set
+    was taken. One row in evallo_verification (id is always 1), replaced with
+    the set in one transaction. See docs/EVALLO_FILTER_CONTRACT.md, C2."""
+    conn.execute("""
+        CREATE TABLE evallo_verified_sessions (
+            session_id TEXT PRIMARY KEY
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE evallo_verification (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            fetched_at TEXT NOT NULL,
+            pushed_at TEXT NOT NULL,
+            window_start TEXT NOT NULL,
+            window_end TEXT NOT NULL,
+            count INTEGER NOT NULL
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -1208,6 +1229,7 @@ MIGRATIONS = [
     (42, _migration_042_session_metrics),
     (43, _migration_043_capture),
     (44, _migration_044_review_v2),
+    (45, _migration_045_evallo_filter),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
