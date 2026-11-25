@@ -9,7 +9,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
@@ -890,6 +892,18 @@ def agent_heartbeat(body: Heartbeat, user: str = Depends(get_agent_user)):
 def agent_job_report(body: JobReport, user: str = Depends(get_agent_user)):
     agent_watchdog.job_report(body.job, body.day, body.ok, body.detail)
     return {"recorded": True}
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request, exc):
+    """FastAPI's default 422 echoes the submitted values. On the Evallo push
+    route that body can hold a token, so there it answers with the field and the
+    error type only. Every other route keeps the default answer."""
+    if request.url.path != "/agent/evallo/sessions":
+        return await request_validation_exception_handler(request, exc)
+    errors = [{"loc": [str(part) for part in err.get("loc", ()) if part != "body"],
+               "type": str(err.get("type", "invalid"))} for err in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 class EvalloSessions(BaseModel):

@@ -558,3 +558,35 @@ def test_survivors_script_lists_id_updated_and_row(tmp_path):
     out = tmp_path / "survivors.txt"
     mod.write_private(str(out), lines)
     assert oct(out.stat().st_mode & 0o777) == "0o600"
+
+
+def test_validation_errors_never_echo_what_was_sent(client, agent, caplog, capsys):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    secret = "SECRET-fake-token-9f8e7d"
+    capsys.readouterr()
+    bodies = [
+        body(token=secret),
+        body(session_ids=[secret]),
+        body(window_start=secret),
+        body(window_end=secret, fetched_at=secret),
+        body(session_ids=[MINE, MINE, secret]),
+    ]
+    for payload in bodies:
+        r = client.put("/agent/evallo/sessions", json=payload, headers=_h(agent))
+        assert r.status_code == 422
+        assert secret not in r.text
+        assert "input" not in r.text
+        assert all(set(e) == {"loc", "type"} for e in r.json()["detail"]
+                   ) if isinstance(r.json()["detail"], list) else True
+    raw = client.put("/agent/evallo/sessions", content=secret, headers=_h(agent))
+    assert raw.status_code == 422 and secret not in raw.text
+    out = capsys.readouterr()
+    assert secret not in out.out and secret not in out.err
+    assert secret not in caplog.text
+
+
+def test_other_routes_keep_the_default_422(client, agent):
+    r = client.post("/agent/jobs/report", headers=_h(agent),
+                    json={"job": "lunch", "day": "2026-11-24", "ok": True})
+    assert r.status_code == 422 and "input" in r.json()["detail"][0]
