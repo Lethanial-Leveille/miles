@@ -153,6 +153,23 @@ class EvalloProtectedError(EventLookupError):
 EVALLO_KEYS = ("evalloEvent", "evalloSessionId", "orgId")
 
 
+def _visible(items):
+    """Raw events through the Evallo filter, for the lookups that do not go
+    through _fetch_events: another tutor's session is gone, and an uncertain one
+    is an anonymous block. The same view every read path gets."""
+    state = evallo_filter.load_state()
+    now = evallo_filter.now_utc()
+    return [v for v in (evallo_filter.view(e, state, now)[0] for e in items) if v is not None]
+
+
+def _safe_title(event):
+    """The title to quote about an Evallo event: his own session keeps its
+    name, anything else the anonymous label, so a refusal never repeats a name
+    the filter would have hidden."""
+    shown = _visible([event])
+    return shown[0].get("summary", "That event") if shown else evallo_filter.ANONYMOUS_TITLE
+
+
 def _guard_not_evallo(calendar_id, event_id, event=None):
     """Fetch the event now and refuse, writing nothing, if it carries any
     Evallo private property. Every delete and patch goes through here before
@@ -172,7 +189,7 @@ def _guard_not_evallo(calendar_id, event_id, event=None):
     private = (event.get("extendedProperties") or {}).get("private") or {}
     if any(key in private for key in EVALLO_KEYS):
         raise EvalloProtectedError(
-            f"{event.get('summary', 'That event')} is an Evallo tutoring session, synced "
+            f"{_safe_title(event)} is an Evallo tutoring session, synced "
             "two ways with Evallo, so it is never changed or deleted from here. Nothing "
             "was changed.")
 
@@ -617,11 +634,15 @@ def _miles_event(service, event_id):
     if miles_id is None:
         raise EventLookupError("there is no MILES calendar, so there is nothing to change")
     try:
-        return miles_id, service.events().get(calendarId=miles_id, eventId=event_id).execute()
+        event = service.events().get(calendarId=miles_id, eventId=event_id).execute()
     except HttpError as exc:
         if exc.status_code in (404, 410):
             raise EventLookupError("that event is not on the MILES calendar") from exc
         raise
+    shown = _visible([event])
+    if not shown:
+        raise EventLookupError("that event is not on the MILES calendar")
+    return miles_id, shown[0]
 
 
 def _local(moment):
@@ -716,6 +737,7 @@ def _find_miles_event(service, title, day, now, nearby=False):
         calendarId=calendar_id, timeMin=_utc(_start_of_day(when)),
         timeMax=_utc(_end_of_day(when)), singleEvents=True, orderBy="startTime",
     ).execute().get("items", [])
+    items = _visible(items)
 
     wanted = set(_words(title))
     matches = [e for e in items if wanted and wanted <= set(_words(e.get("summary", "")))]
@@ -763,6 +785,7 @@ def _matching_that_week(service, calendar_id, wanted, when):
         timeMax=_utc(_end_of_day(when + datetime.timedelta(days=7))),
         singleEvents=True, orderBy="startTime",
     ).execute().get("items", [])
+    items = _visible(items)
     return [e for e in items if wanted <= set(_words(e.get("summary", "")))]
 
 
@@ -1013,6 +1036,10 @@ def get_miles_event(event_id):
         raise
     if event.get("status") == "cancelled":
         return None
+    shown = _visible([event])
+    if not shown:
+        return None
+    event = shown[0]
     first, last, all_day = _event_bounds(event)
     return {"id": event["id"], "title": event.get("summary", "Untitled"),
             "start": first, "end": last, "all_day": all_day}
@@ -1873,6 +1900,7 @@ def rename_calendar_events(find, replace_with, time_min=None, time_max=None, now
     items = service.events().list(calendarId=calendar_id, timeMin=_utc(start), timeMax=_utc(end),
                                   singleEvents=True, orderBy="startTime", maxResults=250,
                                   ).execute().get("items", [])
+    items = _visible(items)
     matches = [e for e in items if word.search(e.get("summary", ""))]
     if not matches:
         raise EventLookupError(f"no event on the MILES calendar has {find!r} in its title in that range")

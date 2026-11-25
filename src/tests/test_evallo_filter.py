@@ -880,3 +880,61 @@ def test_whitespace_runs_and_non_breaking_spaces_match_the_name(title):
     event = ev(title=title)
     assert ef.has_tutor_name(event)
     assert ef.decide(event, state(), NOW + datetime.timedelta(days=2)) == (True, 5)
+
+
+# ── revision 5, group 6: direct lookups go through the filter too ──
+
+def _miles_event(fake, eid, title, hour, private, day=datetime.datetime(2026, 12, 2), **extra):
+    fake.add(fake_google.MILES, eid, title, day.replace(hour=hour), day.replace(hour=hour + 1),
+             extendedProperties={"private": private}, updated=extra.pop("updated", None), **extra)
+
+
+@pytest.fixture
+def lookups(calendar):
+    fetched = ef.load_state().fetched_at
+    recent = iso(fetched - datetime.timedelta(minutes=1))
+    old = iso(fetched - datetime.timedelta(days=3))
+    # uncertain (row 1) with a name that must never be quoted, and one the filter drops (row 4)
+    _miles_event(calendar, "anon", f"{SECRET_NAME} Chem", 9, {"evalloEvent": "true"},
+                 updated=recent, **_secret_kwargs())
+    _miles_event(calendar, "gone", f"{SECRET_NAME} Physics", 11,
+                 {"evalloEvent": "true", "evalloSessionId": "7" * 24}, updated=old)
+    _miles_event(calendar, "mine", "Gym", 13, {}, updated=old)
+    return calendar
+
+
+def test_failed_title_search_does_not_list_hidden_names(lookups):
+    now = datetime.datetime(2026, 12, 1, 8)
+    service = cal._service()
+    with pytest.raises(cal.EventLookupError) as err:
+        cal._find_miles_event(service, "Yoga", "2026-12-02", now)
+    text = str(err.value)
+    _clean(text)
+    assert "Gym" in text and ef.ANONYMOUS_TITLE in text and "Physics" not in text
+    with pytest.raises(cal.EventLookupError) as near:
+        cal._find_miles_event(service, "Chem", "2026-12-03", now, nearby=True)
+    _clean(str(near.value))
+
+
+def test_rename_and_block_lookups_use_the_filter(lookups):
+    now = datetime.datetime(2026, 12, 1, 8)
+    with pytest.raises(cal.EventLookupError):
+        cal.rename_calendar_events("Physics", "Math", "2026-12-02", "2026-12-03", now=now)
+    with pytest.raises(cal.EventLookupError):
+        cal.rename_calendar_events(SECRET_NAME, "X", "2026-12-02", "2026-12-03", now=now)
+    block = cal.get_miles_event("anon")
+    assert block["title"] == ef.ANONYMOUS_TITLE
+    assert cal.get_miles_event("gone") is None
+    assert cal.get_miles_event("mine")["title"] == "Gym"
+
+
+def test_the_write_guard_refusal_never_repeats_a_hidden_title(lookups):
+    for eid in ("anon", "gone"):
+        with pytest.raises(cal.EvalloProtectedError) as err:
+            cal._write_patch(fake_google.MILES, eid, {"summary": "x"})
+        _clean(str(err.value))
+        assert "Evallo tutoring session" in str(err.value)
+    with pytest.raises(cal.EvalloProtectedError) as ok:
+        cal._write_delete(fake_google.PRIMARY, "mine")
+    assert "Kid <> Lethanial Leveille | Math" in str(ok.value)       # his own keeps its name
+    assert lookups.written() == []
