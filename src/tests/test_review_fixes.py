@@ -403,7 +403,7 @@ def test_confirming_puts_the_details_in_the_description(db, world):
     block = world.events[MILES][db.get_task(study)["calendar_event_id"]]
     assert block["summary"] == "Linear algebra study"
     assert block["description"].splitlines() == [
-        "Study for linear algebra test", "Why: Due Monday",
+        "Study for linear algebra test", "Why: Due Mon Nov 30",
         "Notes: work practice problems, not rereading"]
 
 

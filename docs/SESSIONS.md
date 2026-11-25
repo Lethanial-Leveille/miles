@@ -213,9 +213,31 @@ or due within three days; exams in the next seven days (calendar events whose
 title has exam, test, midterm, final, quiz, OA or assessment as a word, on any
 calendar but MILES and not tutoring like "Test Prep", and backlog items that
 say exam or test and are due in seven days); conflicts to fix (from
-`find_conflicts`); then the oldest backlog items. Each carries a reason ("Due
-Monday", "Exam Monday", "Conflict to fix", "Oldest in backlog"). What is
-already planned for tomorrow comes first and is never suggested twice.
+`find_conflicts`); then the rest of the backlog. What is already planned for
+tomorrow comes first and is never suggested twice.
+
+The last step follows the owner's rule of Nov 25. Items are ranked soonest due
+first, undated last (oldest first). On one due date, exam prep (`is_exam_title`)
+comes before projects (`is_project_title`: the whole word project or projects
+in the title) before everything else (`kind_rank`). An item due more than seven
+days after the day being planned (`FAR_DUE_DAYS`, counted from tomorrow) is
+skipped while any other item is due sooner, so a far off item never fills a
+slot only for being old. Every dated suggestion says its real date: "Due Mon
+Nov 30", "Overdue, due Sun Nov 22", "Due today, Wed Nov 25", "Due tomorrow, Thu
+Nov 26", "Exam Thu Nov 26" for a calendar exam; an undated item keeps "Oldest
+in backlog". Other reasons stay "Conflict to fix".
+
+## The Tasks tab routes
+
+The shapes are fixed by `docs/TASKS_CONTRACT.md`; the code is `src/tasks_view.py`
+and the routes in `server.py`. `GET /tasks/overview?days=` answers today, the
+next days and the backlog (due soonest first, none last). `POST /tasks` makes
+a task for today or the backlog with an optional due date. `POST
+/tasks/{id}/complete` keeps its keys and adds `task`. `POST /tasks/{id}/reopen`
+undoes done for today. `POST /tasks/{id}/backlog` clears the day and must do and
+removes the MILES block only through `nightly_review._remove_block_of`, which
+uses the guarded `delete_miles_event` (an Evallo event is never touched). If
+Google fails while removing a block the route answers 502 and changes nothing.
 
 ## Usage metrics
 

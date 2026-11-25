@@ -135,6 +135,7 @@ warnings it cost before Sep 6 2026, is in
 │   ├── sessions.py            # session engine: streamed tool loop, whole transcripts, close, timer tick
 │   ├── session_schedule.py    # when a scheduled session opens, nudges and settles; decisions only
 │   ├── nightly_review.py      # the nightly review session: proposes tomorrow's plan, tools to change and confirm it
+│   ├── tasks_view.py          # the Tasks tab: Task object, overview, create, reopen, to backlog (docs/TASKS_CONTRACT.md)
 │   ├── review_plan.py         # the review's plan: placement, suggestions, week view, plan text, final plan
 │   ├── calendar_roles.py      # which calendars block time, breaks, likely cancelled classes, conflicts
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side

@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fastapi import FastAPI, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 from datetime import date, datetime, timedelta
@@ -41,6 +41,7 @@ import tts
 import database
 import sessions
 import capture
+import tasks_view
 # Imported for its side effect: registering the nightly_review session type.
 # Without it POST /sessions answers 400 for it and the timer has nothing to
 # open. Kept explicit, with this comment, because an unused looking import is
@@ -551,11 +552,60 @@ def quick_capture(body: CaptureRequest, key_id: int = Depends(get_capture_key)):
     return {"ok": True, "kind": kind, "message": message}
 
 
+class TaskCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    where: Literal["today", "backlog"]
+    due_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _task_http(exc: tasks_view.TaskError):
+    return HTTPException(status_code=exc.status, detail=exc.detail)
+
+
+@app.get("/tasks/overview")
+def tasks_overview(days: int = Query(3, ge=1, le=7), user: str = Depends(get_current_user)):
+    """The Tasks tab: today, the next days and the backlog. See docs/TASKS_CONTRACT.md."""
+    return tasks_view.overview(days)
+
+
+@app.post("/tasks", status_code=201)
+def create_task(body: TaskCreate, user: str = Depends(get_current_user)):
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="The title cannot be blank")
+    if body.due_date:
+        try:
+            date.fromisoformat(body.due_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="due_date is not a real date")
+    return {"task": tasks_view.create(title, body.where, body.due_date)}
+
+
 @app.post("/tasks/{task_id}/complete")
 def finish_task(task_id: int, user: str = Depends(get_current_user)):
-    if not complete_task(task_id):
-        raise HTTPException(status_code=404, detail="No active task with that id")
-    return {"completed": True, "day": task_day()}
+    try:
+        task = tasks_view.complete(task_id)
+    except tasks_view.TaskError as exc:
+        raise _task_http(exc)
+    return {"completed": True, "day": task_day(tasks_view.now()), "task": task}
+
+
+@app.post("/tasks/{task_id}/reopen")
+def reopen_task(task_id: int, user: str = Depends(get_current_user)):
+    try:
+        return {"task": tasks_view.reopen(task_id)}
+    except tasks_view.TaskError as exc:
+        raise _task_http(exc)
+
+
+@app.post("/tasks/{task_id}/backlog")
+def task_to_backlog(task_id: int, user: str = Depends(get_current_user)):
+    """Clears the day and must do, and removes the MILES block through the
+    guarded MILES only delete (nightly_review._remove_block_of)."""
+    try:
+        return {"task": tasks_view.to_backlog(task_id, nightly_review._remove_block_of)}
+    except tasks_view.TaskError as exc:
+        raise _task_http(exc)
 
 
 # ── Sessions ──

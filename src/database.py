@@ -3142,6 +3142,29 @@ def add_planned_tasks(tasks, now=None):
         conn.close()
 
 
+def task_completed_on(task_id, day):
+    """Whether the task has a completion dated `day`."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute("SELECT 1 FROM task_completions WHERE task_id = ? AND date = ?",
+                            (task_id, day)).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def remove_task_completion(task_id, day):
+    """Delete the completion dated `day` (a daily task's tick for that day).
+    False when there was none."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            cursor = conn.execute("DELETE FROM task_completions WHERE task_id = ? AND date = ?",
+                                  (task_id, day))
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
 def set_task_status(task_id, status, now=None):
     """Set a one time task to skipped or pending. done goes through
     complete_task, so the completion row voice reads is written too, and moved
