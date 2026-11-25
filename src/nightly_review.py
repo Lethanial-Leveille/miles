@@ -571,7 +571,8 @@ def on_close(session):
         return facts
     try:
         words = sessions.summarize(session["model"] or REVIEW.model, _SUMMARY_INSTRUCTIONS,
-                                   sessions.transcript(session["id"]))
+                                   sessions.transcript(session["id"]),
+                                   session_id=session["id"])
     except Exception as exc:
         print(f"Nightly review summary call failed: {exc}", flush=True)
         return facts

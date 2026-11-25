@@ -89,6 +89,16 @@ browsing.
   starting on a quarter hour. The slot finding and the cap are pure functions,
   tested without Google.
 
+## Usage metrics
+
+`scripts/session_metrics.py` prints, per night and in total: completion rate
+(reviews he closed himself over every settled one), cost per review (every
+assistant turn plus the close summary, at `MODEL_PRICES_PER_MTOK`), and must
+dos planned against done for days already over. Definitions are in
+`src/session_metrics.py`; the numbers come from rows the sessions already
+write (`closed_by` and the summary usage arrived in migration 42), so nothing
+runs at night to collect them.
+
 ## Time
 
 All naive local time, as every table stores it. The review for day D (its 4am

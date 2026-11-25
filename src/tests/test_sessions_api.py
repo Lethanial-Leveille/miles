@@ -126,8 +126,8 @@ def test_a_turn_streams_the_chat_stream_events(client, fake_claude):
         ("done", "Nice work."),
     ]
     texts = [(m["role"], m["text"]) for m in client.get(f"/sessions/{session_id}").json()["messages"]]
-    assert texts[1:] == [("user", "did the lab"), ("assistant", "One sec."),
-                         ("assistant", "Nice work.")]
+    # "One sec." was reset live, so a reload hides it too (decided Nov 24 2026).
+    assert texts[1:] == [("user", "did the lab"), ("assistant", "Nice work.")]
 
 
 def test_closing_in_a_turn_sends_closed_before_done(client, fake_claude):

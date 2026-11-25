@@ -377,3 +377,41 @@ def test_a_session_started_by_hand_gets_no_push(db):
     sessions.tick(datetime(2026, 11, 24, 22, 30), notify)
     assert sent == []
     assert len(db.list_sessions("all")) == 1
+
+
+# ── a reload reads the way the stream looked ──
+
+def test_text_beside_a_replaced_tool_call_is_hidden_on_reload(db, monkeypatch, fake_claude, hokage):
+    # Live, "Let me check." is streamed and then reset before "It is 42.", so a
+    # reload must not show it as its own message either.
+    _type(monkeypatch)
+    session, _ = sessions.create("test_chat", NOW)
+    fake_claude([text_block("Let me check."), tool_block("lookup", {"q": "x"}, "toolu_1")],
+                [text_block("It is 42.")])
+    events, on_text = _recorder()
+    sessions.run_turn(session["id"], "what is it", on_text=on_text, now=NOW)
+    assert ("reset", "") in events
+    shown = sessions.view(session["id"], NOW)["messages"]
+    assert [(m["role"], m["text"]) for m in shown] == [
+        ("user", "what is it"), ("assistant", "It is 42.")]
+
+
+def test_text_beside_a_closing_call_stays_on_reload(db, monkeypatch, fake_claude, hokage):
+    # close_session does not return to the model, so no round follows and
+    # nothing was reset live: the goodbye stays.
+    _type(monkeypatch, on_close=lambda s: "Summary.")
+    session, _ = sessions.create("test_chat", NOW)
+    fake_claude([text_block("Good night."), tool_block("close_session", {}, "toolu_1")])
+    events, on_text = _recorder()
+    sessions.run_turn(session["id"], "done", on_text=on_text, now=NOW)
+    assert ("reset", "") not in events
+    shown = sessions.view(session["id"], NOW)["messages"]
+    assert shown[-1]["text"] == "Good night."
+    assert db.get_session(session["id"])["closed_by"] == "user"
+
+
+def test_the_timer_closes_as_timer(db, monkeypatch, hokage):
+    _type(monkeypatch, on_close=lambda s: "Summary.")
+    session, _ = sessions.create("test_chat", NOW)
+    sessions.close(session["id"], NOW, closed_by="timer")
+    assert db.get_session(session["id"])["closed_by"] == "timer"

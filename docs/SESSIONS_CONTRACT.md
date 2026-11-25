@@ -73,6 +73,18 @@ Rules that come with it:
   earlier (or undated).
 - Must dos are capped at 3 per `scheduled_for` day, enforced in code.
 
+### Migration 42 (`_migration_042_session_metrics`, added Nov 24 2026)
+
+Internal columns for the usage metrics; none of them is in any endpoint.
+
+```sql
+ALTER TABLE sessions ADD COLUMN closed_by TEXT
+    CHECK (closed_by IS NULL OR closed_by IN ('user', 'timer'));
+ALTER TABLE sessions ADD COLUMN summary_model TEXT;
+ALTER TABLE sessions ADD COLUMN summary_input_tokens INTEGER;
+ALTER TABLE sessions ADD COLUMN summary_output_tokens INTEGER;
+```
+
 ## 2. Time
 
 All times are the Pi's local time, America/New_York, ISO 8601 with no offset
@@ -87,7 +99,9 @@ plain date (`YYYY-MM-DD`) and is shown as a date, never converted.
  The nightly review for day D is created at
 D 21:30, reminded at D 22:30 if never opened, and settled at D+1 03:00:
 `missed` if he never sent a message, otherwise closed with a summary. No push
-is sent after midnight.
+is sent after midnight, and no review is created after midnight either: if
+the Pi was off from 21:30 to midnight there is none that night unless he
+starts one by hand.
 
 ## 3. Endpoints
 
@@ -112,9 +126,11 @@ All need the normal login JWT (`get_current_user`). Errors use FastAPI's
 }
 ```
 
-`purpose` comes from the session type registry, not the table. `title`,
+`purpose` comes from the session type registry, not the table, and is never
+null: a row whose type is no longer registered shows its type name. `title`,
 `for_day`, `opened_at`, `last_message_at`, `closed_at` and `summary` can be
-null.
+null. `closed_at` is when the session was settled, so a `missed` session has
+one too.
 
 ### Message object (what the app renders)
 
@@ -123,7 +139,10 @@ null.
 ```
 
 Only the text blocks of a stored message, joined with a blank line. A message
-with no text (a tool call or a tool result alone) is left out entirely.
+with no text (a tool call or a tool result alone) is left out entirely. So is
+the text of an assistant round that called a tool when another assistant round
+followed its results: that is exactly the text the live stream threw away with
+`reset`, so a reload reads the way the turn looked live.
 
 ### `GET /sessions?status=open`
 
@@ -190,7 +209,8 @@ push on the lock screen.
 {
   "aps": {
     "alert": {"title": "Nightly review", "body": "3 tasks today. What got done, and what matters tomorrow?"},
-    "thread-id": "session"
+    "thread-id": "session",
+    "sound": "default"
   },
   "kind": "session",
   "session_id": 12,

@@ -1103,6 +1103,14 @@ FOLLOWUP_TIMEOUT = 3.0
 # and counting it toward the next one would mark tomorrow done before it began.
 DAY_STARTS_AT_HOUR = 4
 
+# Dollars per million tokens, for the session metrics' cost per review:
+# (input, output, cache read, cache write at the five minute TTL). Anthropic's
+# list prices as of Nov 2026; a model missing here is reported as unpriced
+# rather than guessed at.
+MODEL_PRICES_PER_MTOK = {
+    "claude-haiku-4-5": (1.00, 5.00, 0.10, 1.25),
+}
+
 # ── Push notifications, through Apple's push service (APNs) ──
 #
 # Reminders and timers used to be heard only in his room. With these set, the

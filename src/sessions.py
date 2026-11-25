@@ -131,11 +131,35 @@ def text_of(content):
     return "\n\n".join(part for part in parts if part.strip())
 
 
+def _is_tool_results(row):
+    return row["role"] == "user" and bool(row["content"]) and all(
+        block.get("type") == "tool_result" for block in row["content"])
+
+
+def _replaced_by_next_round(rows, i):
+    """Whether rows[i] is an assistant round whose text the live stream threw
+    away: it called a tool and another assistant round followed its results.
+    The stream sends reset for exactly that case, so a reload hides the same
+    text and reads the way the turn looked live."""
+    row = rows[i]
+    if row["role"] != "assistant" or not any(
+            block.get("type") == "tool_use" for block in row["content"]):
+        return False
+    j = i + 1
+    while j < len(rows) and _is_tool_results(rows[j]):
+        j += 1
+    return j > i + 1 and j < len(rows) and rows[j]["role"] == "assistant"
+
+
 def public_messages(rows):
     """Messages as the app renders them. A tool call or a tool result alone has
-    no text and is left out entirely."""
+    no text and is left out entirely, and so is text written beside a tool call
+    that the next round replaced (see _replaced_by_next_round)."""
+    rows = list(rows)
     out = []
-    for row in rows:
+    for i, row in enumerate(rows):
+        if _replaced_by_next_round(rows, i):
+            continue
         text = text_of(row["content"])
         if text:
             out.append({"id": row["id"], "role": row["role"], "text": text,
@@ -404,15 +428,21 @@ def transcript(session_id):
     return "\n\n".join(lines)
 
 
-def summarize(model, instructions, text):
-    """One plain model call, no tools, no stream. For a type's on_close."""
+def summarize(model, instructions, text, session_id=None):
+    """One plain model call, no tools, no stream. For a type's on_close. Its
+    usage is kept on the session, so a review's cost includes its summary."""
     response = _client().messages.create(
         model=model, max_tokens=SUMMARY_MAX_TOKENS, system=instructions,
         messages=[{"role": "user", "content": text}])
+    usage = getattr(response, "usage", None)
+    if session_id is not None and usage is not None:
+        database.record_summary_usage(session_id, model,
+                                      getattr(usage, "input_tokens", None),
+                                      getattr(usage, "output_tokens", None))
     return "".join(b.text for b in response.content if b.type == "text").strip()
 
 
-def _close_locked(session_id, now=None):
+def _close_locked(session_id, now=None, closed_by="user"):
     session = get(session_id)
     if session["status"] != "open":
         raise NotOpen("That session is not open")
@@ -425,20 +455,22 @@ def _close_locked(session_id, now=None):
             # A close at 3am with the network down still has to close; a
             # session left open forever is worse than one with no summary.
             print(f"Session {session_id} summary failed: {exc}", flush=True)
-    if not database.finish_session(session_id, "closed", summary, now):
+    if not database.finish_session(session_id, "closed", summary, now, closed_by):
         raise NotOpen("That session is not open")
     return get(session_id)
 
 
-def close(session_id, now=None):
-    """Close an open session now and write its summary. Returns the row."""
+def close(session_id, now=None, closed_by="user"):
+    """Close an open session now and write its summary. Returns the row.
+    closed_by is 'user' for his Close button or close_session, 'timer' for
+    the 3am settle; the completion rate reads it."""
     with _lock(session_id):
-        return _close_locked(session_id, now)
+        return _close_locked(session_id, now, closed_by)
 
 
 def miss(session_id, now=None):
     with _lock(session_id):
-        return database.finish_session(session_id, "missed", None, now)
+        return database.finish_session(session_id, "missed", None, now, "timer")
 
 
 # ── the timer ──
@@ -484,7 +516,7 @@ def tick(now=None, notify=None):
                     done.append((session["id"], action))
             elif action == session_schedule.CLOSE:
                 try:
-                    close(session["id"], now)
+                    close(session["id"], now, closed_by="timer")
                     done.append((session["id"], action))
                 except NotOpen:
                     pass

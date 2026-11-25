@@ -1073,6 +1073,23 @@ def _migration_041_sessions_and_planned_tasks(conn):
     """)
 
 
+def _migration_042_session_metrics(conn):
+    """What the nightly review's numbers need that the rows did not yet say.
+
+    closed_by tells a review he finished himself ('user') from one the 3am
+    timer settled ('timer'), which is the difference between a completed review
+    and an abandoned one. A missed session is 'timer' too.
+
+    The summary call at close is a model call like any turn, but it writes no
+    message, so its usage had nowhere to go; without these the cost of a review
+    would be quietly understated by that call."""
+    conn.execute("ALTER TABLE sessions ADD COLUMN closed_by TEXT "
+                 "CHECK (closed_by IS NULL OR closed_by IN ('user', 'timer'))")
+    conn.execute("ALTER TABLE sessions ADD COLUMN summary_model TEXT")
+    conn.execute("ALTER TABLE sessions ADD COLUMN summary_input_tokens INTEGER")
+    conn.execute("ALTER TABLE sessions ADD COLUMN summary_output_tokens INTEGER")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -1115,6 +1132,7 @@ MIGRATIONS = [
     (39, _migration_039_approvals),
     (40, _migration_040_watchdog),
     (41, _migration_041_sessions_and_planned_tasks),
+    (42, _migration_042_session_metrics),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -3116,7 +3134,8 @@ def set_task_calendar_event(task_id, event_id, now=None):
 # run by sessions.py. Messages are stored whole, as the API's content blocks.
 
 _SESSION_COLUMNS = ("id, type, status, title, for_day, model, created_at, opened_at, "
-                    "last_message_at, closed_at, summary, push_sent_at, reminder_sent_at")
+                    "last_message_at, closed_at, summary, push_sent_at, reminder_sent_at, "
+                    "closed_by")
 
 
 def _insert_session_messages(conn, session_id, messages, stamp):
@@ -3282,7 +3301,7 @@ def session_has_user_message(session_id):
         conn.close()
 
 
-def finish_session(session_id, status, summary=None, now=None):
+def finish_session(session_id, status, summary=None, now=None, closed_by=None):
     """Settle an open session as closed (with its summary) or missed. Only an
     open one changes, so a close racing the timer settles it once. closed_at is
     when it was settled, for a missed one too. True when this call settled it."""
@@ -3292,10 +3311,62 @@ def finish_session(session_id, status, summary=None, now=None):
     try:
         with conn:
             cursor = conn.execute(
-                "UPDATE sessions SET status = ?, summary = ?, closed_at = ? "
+                "UPDATE sessions SET status = ?, summary = ?, closed_at = ?, closed_by = ? "
                 "WHERE id = ? AND status = 'open'",
-                (status, summary, (now or datetime.now()).isoformat(), session_id))
+                (status, summary, (now or datetime.now()).isoformat(), closed_by, session_id))
         return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def record_summary_usage(session_id, model, input_tokens, output_tokens):
+    """The close summary call's usage, kept on the session for its cost."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            conn.execute(
+                "UPDATE sessions SET summary_model = ?, summary_input_tokens = ?, "
+                "summary_output_tokens = ? WHERE id = ?",
+                (model, input_tokens, output_tokens, session_id))
+    finally:
+        conn.close()
+
+
+def session_metrics_rows(session_type, first_day=None):
+    """One row per scheduled session of a type, oldest first, with what the
+    metrics need: how it ended, every token it spent by model, and the must dos
+    planned for the day after it.
+
+    Must dos are counted on for_day + 1, the day the review plans. A must do
+    later moved counts as planned and not done on that day; its copy counts on
+    the day it moved to, which is the truth about each day's plan."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        sessions = conn.execute(
+            "SELECT * FROM sessions WHERE type = ? AND for_day IS NOT NULL "
+            "AND (? IS NULL OR for_day >= ?) ORDER BY for_day",
+            (session_type, first_day, first_day)).fetchall()
+        out = []
+        for s in sessions:
+            usage = conn.execute(
+                "SELECT model, SUM(input_tokens), SUM(output_tokens), "
+                "SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*) "
+                "FROM session_messages WHERE session_id = ? AND role = 'assistant' "
+                "GROUP BY model", (s["id"],)).fetchall()
+            wrote = conn.execute(
+                "SELECT COUNT(*) FROM session_messages WHERE session_id = ? AND role = 'user' "
+                "AND content NOT LIKE '%\"tool_result\"%'", (s["id"],)).fetchone()[0]
+            next_day = (datetime.fromisoformat(s["for_day"]) + timedelta(days=1)).date().isoformat()
+            planned, done = conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(status = 'done'), 0) FROM tasks "
+                "WHERE must_do = 1 AND recurrence IS NULL AND archived_at IS NULL "
+                "AND scheduled_for = ?", (next_day,)).fetchone()
+            out.append({"session": dict(s), "user_messages": wrote,
+                        "usage": [tuple(u) for u in usage],
+                        "must_dos_day": next_day,
+                        "must_dos_planned": planned, "must_dos_done": done})
+        return out
     finally:
         conn.close()
 
