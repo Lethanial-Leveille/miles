@@ -1,30 +1,29 @@
 # AGENTS.md
 
-Instructions for coding agents (Codex, Claude Code and their subagents) working in this repo.
-The repo's own rules, conventions and production warnings are in CLAUDE.md; read it first. The
-phase plan and its amendments are in docs/ROADMAP.md.
+Rules for coding agents (Codex, Claude Code and their subagents) that apply to this repo only. The general workflow (plans, contracts, Codex reviews, builders, deploys) is global: `~/.claude/CLAUDE.md` for Claude and `~/.codex/AGENTS.md` for Codex. This file adds MILES rules on top and wins where they differ. Read CLAUDE.md first; it holds the full repo conventions and production warnings.
 
-## Codex and Claude roles
+## Production database and services
+- The Pi services, the Cloudflare tunnel and `~/miles/data/miles.db` are production. Do not modify the running services, edit `~/.cloudflared/config.yml`, or write to the production database unless Lethanial explicitly asks.
+- Before any migration or deploy, take a fresh backup into `~/miles/data/backups/` named `miles-before-<what>-<YYYYMMDD-HHMMSS>.db`, and tell him before anything touches production.
 
-Set by Lethanial on Nov 25 2026.
+## Secrets
+- Never print a secret (API keys, JWTs, OAuth tokens, capture keys, `.env` values) in command output, logs or replies. Write it to a mode 600 file (on the Pi under `~/.miles-keys/`) and report only the path and key id. Verify by hash or length, never by value. If one is printed, say so and rotate it.
+- Never commit secrets or private data; the list is under Things to Never Commit in CLAUDE.md. Run `git status` before `git add`.
 
-- **Plan and contract.** Opus writes the plan and the contract at the start of every phase. This is
-  standard and does not need his approval each time. Any other use of Opus still needs his approval
-  first.
-- **Contract review before building.** Before any builder starts, Codex on GPT 6.2 Astra at High
-  effort reviews the contract for gaps, missing error cases, and conflicts with the roadmap
-  amendments. Its findings are shown to him together with the plan.
-- **Orchestration.** Claude Code on Sonnet orchestrates and runs builder subagents one at a time, each
-  in its own worktree.
-- **End of phase review.** Codex replaces the Opus review at the end of every phase, using the Codex
-  adversarial review on Astra at High effort.
-- **Stubborn bugs.** If a bug fails twice, it is delegated with the Codex rescue command on Astra at
-  High.
-- **Usage limits.** If Claude hits a usage limit, Codex on GPT 6.2 Sol at Medium may finish the current
-  builder task only if a written contract and tests already exist in that worktree. Otherwise work
-  stops at a clean point.
-- **Codex limits.** Codex never deploys, never touches production, and runs in the workspace write
-  sandbox only.
-- **Review gate.** The automatic review gate stays off.
-- **Main session model.** If the model menu offers an Opus Plan option (Opus in plan mode, Sonnet for
-  execution), use it for the main session.
+## UF password
+- Never store, type or ask for his UF password, and never try to get around Duo or MFA.
+- Any 401, `invalid_grant`, or redirect to the UF login or Duo page stops the job at once with no retries (no lockouts) and marks it as needing login. He logs in himself.
+
+## Evallo
+- Evallo's two way sync writes the whole org's sessions onto his primary Google Calendar and must stay on.
+- NEVER delete, move or edit any calendar event carrying Evallo's fields (`evalloEvent`, `evalloSessionId`, `orgId`) from any code, script or agent, not even a one off script. The calendar layer must refuse such writes, with a test.
+- An Evallo event counts as his only if its session id is in the verified set from the Mac. If the set is stale, only his full name in the tutor position of the title counts, never "Lethanial" alone. Unknown means busy, never free.
+- The Evallo token stays on the Mac: never printed, logged or sent to the Pi. Only session ids go to the Pi.
+
+## Contracts
+- The shapes the backend and the app share live in `docs/*_CONTRACT.md` (`SESSIONS_CONTRACT.md`, `TASKS_CONTRACT.md`). Change them only with his approval.
+- Contract reviews also check for conflicts with the amendments in `docs/ROADMAP.md`.
+
+## Roadmap
+- `docs/ROADMAP.md` holds the phase plan and its amendments. One phase at a time; stop after each for real use.
+- Before any Phase 6 errand runs unattended, the full security review in `docs/ROADMAP.md` must be done.
