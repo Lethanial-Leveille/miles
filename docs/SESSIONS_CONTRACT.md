@@ -85,6 +85,37 @@ ALTER TABLE sessions ADD COLUMN summary_input_tokens INTEGER;
 ALTER TABLE sessions ADD COLUMN summary_output_tokens INTEGER;
 ```
 
+### Migration 44 (`_migration_044_review_v2`, added Nov 25 2026)
+
+Internal columns and one table for nightly review v2; none of them is in any
+endpoint, so the app sees no change. The opening message is now a proposal
+written by code and its text is an ordinary assistant message.
+
+```sql
+ALTER TABLE tasks ADD COLUMN due_date TEXT;              -- 'YYYY-MM-DD', apart from scheduled_for
+ALTER TABLE tasks ADD COLUMN minutes INTEGER;
+ALTER TABLE sessions ADD COLUMN plan TEXT;               -- the saved proposal, JSON
+ALTER TABLE session_messages ADD COLUMN author TEXT NOT NULL DEFAULT 'model'
+    CHECK (author IN ('model', 'code'));
+CREATE TABLE calendar_attending (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    calendar_id TEXT NOT NULL,
+    series_id TEXT NOT NULL,                             -- recurringEventId, or the event's own id
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (calendar_id, series_id)
+);
+```
+
+Rules that come with it:
+- A one time task with no `scheduled_for` is in the backlog. `tasks_today` and
+  the review's today no longer include it. (This replaces the migration 41
+  rule that showed an undated task on today's list.) Voice `task_add` sets
+  `scheduled_for` to today's 4am day, so it still lands on today. A capture
+  has no day and goes to the backlog.
+- Messages a tool posted, written by code, have `author = 'code'` and are
+  returned by the API as ordinary assistant text. The opening is one.
+
 ## 2. Time
 
 All times are the Pi's local time, America/New_York, ISO 8601 with no offset

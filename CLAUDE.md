@@ -134,7 +134,9 @@ warnings it cost before Sep 6 2026, is in
 │   ├── session_types.py       # session type registry: purpose, prompt, own tools, model, schedule
 │   ├── sessions.py            # session engine: streamed tool loop, whole transcripts, close, timer tick
 │   ├── session_schedule.py    # when a scheduled session opens, nudges and settles; decisions only
-│   ├── nightly_review.py      # the nightly review session: close out today, plan tomorrow
+│   ├── nightly_review.py      # the nightly review session: proposes tomorrow's plan, tools to change and confirm it
+│   ├── review_plan.py         # the review's plan: placement, suggestions, week view, plan text, final plan
+│   ├── calendar_roles.py      # which calendars block time, breaks, likely cancelled classes, conflicts
 │   ├── web_search.py          # Anthropic's web search, offered to Claude, run on their side
 │   ├── pending_action.py      # code spoken read backs; the few changes that still ask
 │   ├── resume.py              # what she had left to say when he cut her off, held for a go on, and where to start it
@@ -191,7 +193,8 @@ warnings it cost before Sep 6 2026, is in
 │   ├── check_gain.py          # mic gain verification
 │   ├── profile_turn.py        # times the turn stages no stopwatch covers
 │   ├── seed_memories.py       # seed corpus loader
-│   ├── capture_key.py         # new, list, revoke quick capture keys; a key is shown once
+│   ├── capture_key.py         # new, list, revoke quick capture keys; a new key goes to a mode 600 file, never printed
+│   ├── calendar_roles.py      # attend, list, drop: club events he goes to, which then count as busy
 │   └── setup_auth.py          # one time password and JWT secret setup
 ├── assets/                    # wake_chime.wav
 ├── systemd/                   # every unit, versioned. Installed by copying
@@ -458,8 +461,10 @@ of the value itself.
 
 ### Sessions — why: [SESSIONS.md](docs/SESSIONS.md)
 - `SESSION_MODELS = {"nightly_review": "claude-haiku-4-5"}` (a type missing here runs on `MODEL_A`)
-- `SESSION_BLOCK_EARLIEST = (9, 0)`, `SESSION_BLOCK_LATEST = (21, 0)` (where `schedule_block`
-  looks for a free slot when he gives no time)
+- `SESSION_BLOCK_EARLIEST = (10, 0)`, `SESSION_BLOCK_LATEST = (21, 0)` (where the review
+  places blocks when he gives no time)
+- `CALENDAR_ROLES` (by calendar id: blocking, club, holiday; an unlisted calendar is blocking),
+  `UF_BREAKS`, `CLASS_TITLES = ["DSA"]`, `EXAM_WORDS`, `EXAM_EXCLUDE` (all in `config.py`)
 - `MAX_ROUNDS = 6` per turn (in `sessions.py`, not `config.py`)
 
 ### Presence radar — why: [BACKEND_TODO.md](docs/BACKEND_TODO.md#presence-detection)

@@ -45,8 +45,14 @@ class SessionType:
     system_prompt: Callable[[dict], str]
     tools: ToolRegistry
     # Called with the time it is created; returns the first assistant message,
-    # built in code from data, or None to open with no message.
-    opening: Callable[[datetime.datetime], str | None] | None = None
+    # built in code from data, or None to open with no message. It may return
+    # (message, plan) instead, where plan is a dict saved with the session
+    # (sessions.plan) so the type can act on exactly what he was shown.
+    opening: Callable[[datetime.datetime], str | tuple | None] | None = None
+    # True for a type whose tools post code authored messages (post_message).
+    # The engine then holds the model's text until the round's tools have run,
+    # because whether it may be shown depends on whether code posted.
+    posts_messages: bool = False
     # Called with the session row when it closes; returns the summary to save.
     # None means closing saves nothing, which is what a plain chat will want.
     on_close: Callable[[dict], str | None] | None = None
@@ -112,6 +118,9 @@ def all_types() -> list[SessionType]:
 class TurnState:
     session_id: int
     close_requested: bool = False
+    # Messages tools posted this turn, written by code. The engine stores and
+    # streams them after the model's own text.
+    posted: list = field(default_factory=list)
 
 
 _turn: contextvars.ContextVar[TurnState | None] = contextvars.ContextVar(
@@ -143,3 +152,17 @@ def request_close() -> None:
     if state is None:
         raise ToolNotice("There is no session running to close.")
     state.close_requested = True
+
+
+def post_message(text: str) -> bool:
+    """Post a message written by code, not the model, into the turn in
+    progress. A time shown to him must come from code reading the calendar, so
+    the plan and the week are built by code and posted here; the engine then
+    holds the model's own words to one line with no clock times (see
+    sessions.guard_text). False when no turn is running (a tool called on its
+    own, as a test does)."""
+    state = _turn.get()
+    if state is None or not text.strip():
+        return False
+    state.posted.append(text.strip())
+    return True

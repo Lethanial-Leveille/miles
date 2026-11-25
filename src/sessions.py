@@ -20,6 +20,7 @@ closed. The server adds done or error at the end.
 """
 
 import json
+import re
 import threading
 import time
 from datetime import datetime
@@ -48,6 +49,58 @@ OPENING_CUE = "[The session is open. Begin with your opening message.]"
 # The words the close summary is asked for in. Counts are computed in code by
 # the type's on_close; this only asks for what was said.
 SUMMARY_MAX_TOKENS = 300
+
+
+# ── the guard on the model's words ──
+# When code posts a message (the plan, the week), every time in it came from the
+# calendar. The model's own words beside it may not add times of their own: on
+# the live night a model wrote "Study block, 2 to 4 PM" about a block that no
+# longer existed, and the plan he trusted was wrong. So in a turn where code
+# posted, the model keeps one short line, and any line with a clock time in it
+# is dropped.
+GUARD_MAX_CHARS = 120
+_CLOCK_TIME = re.compile(
+    r"\b\d{1,2}:\d{2}\b"                          # 2:30, 14:00
+    r"|\b\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)(?![a-z])"  # 2 PM, 9am, 9 a.m.
+    r"|\b\d{1,2}\s+(?:to|until|till|through|-)\s+\d{1,2}\b"  # 2 to 4
+    r"|\b(?:noon|midnight)\b", re.IGNORECASE)
+
+
+def has_clock_time(line):
+    return bool(_CLOCK_TIME.search(line))
+
+
+def guard_text(text):
+    """The model's text in a turn where code posted a message: lines with a
+    clock time dropped, then at most one short line (the first sentence, no
+    longer than GUARD_MAX_CHARS). Empty when nothing is left."""
+    lines = [line.strip() for line in text.splitlines()]
+    lines = [line for line in lines if line and not has_clock_time(line)]
+    if not lines:
+        return ""
+    line = lines[0]
+    sentence = re.match(r"(.+?[.!?])(?:\s|$)", line)
+    if sentence:
+        line = sentence.group(1)
+    if len(line) > GUARD_MAX_CHARS:
+        line = line[:GUARD_MAX_CHARS].rsplit(" ", 1)[0].rstrip(",;:")
+    # A clock time that sat in a sentence cut from a longer line was not seen
+    # by the line test; check the one line that is kept.
+    return "" if has_clock_time(line) else line
+
+
+def _blocks_with_text(blocks, shown):
+    """The round's content blocks with its text replaced by `shown`, at the
+    place the first text block was; no text block at all when shown is empty.
+    Keeps the stored blocks valid for the API: only text and tool calls."""
+    out, placed = [], False
+    for block in blocks:
+        if block["type"] != "text":
+            out.append(block)
+        elif not placed and shown:
+            out.append({"type": "text", "text": shown})
+            placed = True
+    return out
 
 
 class SessionError(Exception):
@@ -148,7 +201,10 @@ def _replaced_by_next_round(rows, i):
     j = i + 1
     while j < len(rows) and _is_tool_results(rows[j]):
         j += 1
-    return j > i + 1 and j < len(rows) and rows[j]["role"] == "assistant"
+    # A message code posted is not the model answering the results, so it does
+    # not replace the model's words beside the call.
+    return (j > i + 1 and j < len(rows) and rows[j]["role"] == "assistant"
+            and rows[j].get("author", "model") != "code")
 
 
 def public_messages(rows):
@@ -190,8 +246,12 @@ def create(type_name, now=None):
     for_day = task_day(now) if session_type.schedule is not None else None
 
     opening = session_type.opening(now) if session_type.opening else None
+    plan = None
+    if isinstance(opening, tuple):
+        opening, plan = opening
     blocks = [{"type": "text", "text": opening}] if opening else None
-    session_id = database.create_session(type_name, for_day, session_type.model, blocks, now)
+    session_id = database.create_session(type_name, for_day, session_type.model, blocks, now,
+                                         plan=plan)
     if session_id is None:
         return database.session_for_day(type_name, for_day), False
     return database.get_session(session_id), True
@@ -320,8 +380,12 @@ def _usage(final):
     }
 
 
-def _stream_round(session_type, kwargs, on_text):
-    """One streamed model call. Returns (the text written, the final message)."""
+def _stream_round(session_type, kwargs, on_text, hold_text=False):
+    """One streamed model call. Returns (the text written, the final message).
+
+    hold_text keeps the text back instead of streaming it, for a type whose
+    tools post messages: whether the text may be shown is decided once the
+    round's tools have run. The stage events still go out as the tools start."""
     text = ""
     with _client().messages.stream(**kwargs) as stream:
         for event in stream:
@@ -332,11 +396,13 @@ def _stream_round(session_type, kwargs, on_text):
                 elif block.type == "text" and text and not text[-1].isspace():
                     # Two text blocks carry no space between them.
                     text += "\n\n"
-                    _emit(on_text, "delta", "\n\n")
+                    if not hold_text:
+                        _emit(on_text, "delta", "\n\n")
                 continue
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
                 text += event.delta.text
-                _emit(on_text, "delta", event.delta.text)
+                if not hold_text:
+                    _emit(on_text, "delta", event.delta.text)
         final = stream.get_final_message()
     return text, final
 
@@ -367,6 +433,7 @@ def run_turn(session_id, message, on_text=None, now=None):
 
         token, state = begin_turn(session_id)
         reply = ""
+        hold = session_type.posts_messages
         try:
             for round_index in range(MAX_ROUNDS):
                 kwargs = dict(model=model, max_tokens=MAX_TOKENS, system=system,
@@ -376,7 +443,7 @@ def run_turn(session_id, message, on_text=None, now=None):
                     # calls, but none may be made: this round has to answer.
                     kwargs["tool_choice"] = {"type": "none"}
                 started = time.monotonic()
-                round_text, final = _stream_round(session_type, kwargs, on_text)
+                round_text, final = _stream_round(session_type, kwargs, on_text, hold_text=hold)
                 blocks = [b for b in (_block_dict(b) for b in final.content)
                           if not (b["type"] == "text" and not b["text"].strip())]
                 assistant = {"role": "assistant", "content": blocks, "model": model,
@@ -385,23 +452,46 @@ def run_turn(session_id, message, on_text=None, now=None):
                 tool_uses = [b for b in final.content if b.type == "tool_use"]
 
                 if not tool_uses:
+                    if hold:
+                        reply = guard_text(round_text) if state.posted else round_text.strip()
+                        blocks = assistant["content"] = _blocks_with_text(blocks, reply)
+                        _emit(on_text, "delta", reply)
                     if blocks:
                         database.add_session_messages(session_id, [assistant], now)
                     break
 
                 results = _run_tools(session_type, tool_uses, model, tier)
+                if hold:
+                    # The tools have run, so it is known whether code posted.
+                    shown = guard_text(round_text) if state.posted else round_text.strip()
+                    blocks = assistant["content"] = _blocks_with_text(blocks, shown)
                 result_row = {"role": "user", "content": _result_blocks(results)}
                 database.add_session_messages(session_id, [assistant, result_row], now)
                 messages = messages + [{"role": "assistant", "content": blocks},
                                        {"role": "user", "content": result_row["content"]}]
                 if not _needs_another_round(session_type, results):
+                    if hold:
+                        reply = shown
+                        _emit(on_text, "delta", shown)
                     break
-                if round_text:
+                if round_text and not hold:
                     # What was written beside the tool call is replaced by the
                     # answer the next round writes from its result.
                     _emit(on_text, "reset", "")
+                if hold:
+                    reply = ""
         finally:
             end_turn(token)
+
+        # What code posted goes last, after the model's own words: stored as
+        # its own rows (author 'code') and streamed as ordinary text.
+        for posted in state.posted:
+            database.add_session_messages(
+                session_id, [{"role": "assistant", "author": "code",
+                              "content": [{"type": "text", "text": posted}]}], now)
+            lead = "\n\n" if reply.strip() else ""
+            _emit(on_text, "delta", lead + posted)
+            reply = f"{reply.strip()}{lead}{posted}"
 
         if state.close_requested:
             # The timer runs in its own process, so this lock does not cover

@@ -1,34 +1,43 @@
-"""The nightly review: close out today and plan tomorrow.
+"""The nightly review: close out today and plan tomorrow, by proposing.
 
 The first session type. At 21:30 the timer opens one for the day and pushes it
-to his phone. Nova opens with today's tasks, read from the table in code, and
-asks what got done. Then she updates each status, shows the next seven days,
-asks for two or three must dos for tomorrow, puts those on the calendar as
-blocks, confirms the plan, and closes when he says he is done.
+to his phone. Code opens with a proposal, no model call: how today went, what
+tomorrow's calendar holds, and up to three must dos with times in his free
+gaps (review_plan.py). He answers "good" and the model calls confirm_plan, or
+he asks for a change and the model calls set_plan with the whole plan he now
+wants. Either way code writes the message he reads, so no time in it can be
+wrong; the engine holds the model's own words to one short line (see
+sessions.guard_text).
 
-The model words it; code does every count and every time. The must do cap, the
-free slot, the date a task moved to and the summary's numbers are worked out
-here, so Haiku only has to call simple tools and talk.
+The model words it; code does every count and every time. That is why it runs
+on Haiku (SESSION_MODELS): the cheapest model that does the job.
 
 Its tools live in their own registry (session_types.py explains why), and
-schedule_block writes only to the MILES calendar, through
-calendar_tools.add_miles_event.
+every calendar write goes to the MILES calendar only, through calendar_tools,
+which also refuses any event Evallo owns.
 """
 
 import datetime
 
+import calendar_roles
 import calendar_tools
 import sessions
 from config import SESSION_BLOCK_EARLIEST, SESSION_BLOCK_LATEST
-from database import (add_planned_tasks, complete_task, get_task, last_session_summary,
-                      move_task, must_do_counts, session_has_user_message,
-                      set_task_calendar_event, set_task_status, task_day, tasks_between,
-                      tasks_for_day)
-from session_types import Schedule, SessionType, register_type, request_close
+from database import (add_attending, add_task, attending_set, backlog_tasks, complete_task,
+                      get_task, last_session_summary, move_task, must_do_counts,
+                      save_day_plan, session_has_user_message, session_plan,
+                      set_session_plan, set_task_calendar_event, set_task_status, task_day,
+                      tasks_between, tasks_for_day, unschedule_task)
+from review_plan import (ASK, MUST_DO_CAP, build_proposal, clock_words, day_words,
+                         default_minutes, find_slot, fitting_gaps, local_busy, live_block,
+                         overlaps, place_blocks, place_plan, plan_text, range_words,
+                         read_events, render_plan, short_day, today_line, week_view,
+                         window_of)
+from session_types import (Schedule, SessionType, current_session_id, post_message,
+                           register_type, request_close)
 from tools import Permission, ToolNotice, ToolRegistry
 
 NAME = "nightly_review"
-MUST_DO_CAP = 3
 UPCOMING_DAYS = 7
 
 # The contract's times: created and pushed at 21:30, reminded at 22:30 if never
@@ -44,16 +53,6 @@ tool = registry.register
 
 def _day(value):
     return datetime.date.fromisoformat(value) if isinstance(value, str) else value
-
-
-def day_words(day):
-    """"Wednesday November 25"."""
-    return _day(day).strftime("%A %B %-d")
-
-
-def clock_words(moment):
-    """"4 PM", "4:30 PM"."""
-    return moment.strftime("%-I:%M %p").replace(":00", "")
 
 
 def _count(n, one, many):
@@ -85,47 +84,6 @@ def must_do_overflow(existing, new_tasks, cap=MUST_DO_CAP):
     return over
 
 
-_STEP = datetime.timedelta(minutes=15)
-
-
-def _round_up(moment):
-    """Up to the next quarter hour, so a block picked at 9:07 starts at 9:15."""
-    base = moment.replace(minute=0, second=0, microsecond=0)
-    while base < moment:
-        base += _STEP
-    return base
-
-
-def overlaps(busy, start, end):
-    return any(a < end and start < b for a, b in busy)
-
-
-def fitting_gaps(busy, window_start, window_end, minutes, not_before=None):
-    """Free gaps inside the window at least `minutes` long, earliest first.
-
-    not_before trims the window's start (to now, for a block today) and is
-    rounded up to a quarter hour."""
-    start = window_start
-    if not_before is not None and not_before > start:
-        start = _round_up(not_before)
-    if start >= window_end:
-        return []
-    need = datetime.timedelta(minutes=minutes)
-    clipped = [(max(a, start), min(b, window_end)) for a, b in busy
-               if a < window_end and b > start]
-    gaps = calendar_tools.free_gaps(calendar_tools.merge_busy(clipped), start, window_end)
-    return [(a, b) for a, b in gaps if b - a >= need]
-
-
-def find_slot(busy, window_start, window_end, minutes, not_before=None):
-    """(start, end) of the first free stretch that fits, or None."""
-    gaps = fitting_gaps(busy, window_start, window_end, minutes, not_before)
-    if not gaps:
-        return None
-    start = gaps[0][0]
-    return start, start + datetime.timedelta(minutes=minutes)
-
-
 def _gap_list(gaps):
     return ", ".join(f"{clock_words(a)} to {clock_words(b)}" for a, b in gaps)
 
@@ -153,6 +111,12 @@ def _active_task(task_id):
         raise ToolNotice(f"There is no task with id {task_id}. Call get_tasks_for_date "
                          "for the ids.")
     return task
+
+
+def _clock():
+    """The time, as one function so a test can set it. Tools take a now
+    argument for direct calls; through the engine nothing passes one."""
+    return datetime.datetime.now()
 
 
 def _today(now=None):
@@ -254,10 +218,11 @@ def update_task_status(task_id, status, move_to=None, now=None):
 @tool(
     name="get_upcoming_items",
     description=(
-        "What is already planned for the days after today: tasks by date and "
-        "every calendar event, so you can show him the week before he plans "
-        "tomorrow. If the calendar cannot be read, the result says so and the "
-        "tasks are still there."
+        "What is already planned for the days after today, as data for your own "
+        "reading: tasks by date, every calendar event with its note (club, "
+        "holiday, likely cancelled), and the conflicts between events. Never "
+        "repeat times from it to him; use show_week to show him the week. If the "
+        "calendar cannot be read, the result says so and the tasks are still there."
     ),
     input_schema={
         "type": "object",
@@ -268,6 +233,7 @@ def update_task_status(task_id, status, move_to=None, now=None):
     min_tier="hokage",
 )
 def get_upcoming_items(days=UPCOMING_DAYS, now=None):
+    now = now or _clock()
     if not isinstance(days, int) or not 1 <= days <= 14:
         raise ToolNotice("days must be a whole number from 1 to 14.")
     first = _today(now) + datetime.timedelta(days=1)
@@ -278,7 +244,7 @@ def get_upcoming_items(days=UPCOMING_DAYS, now=None):
          "must_do": t["must_do"], "has_block": bool(t["calendar_event_id"])}
         for t in tasks_between(first.isoformat(), last.isoformat())]}
     try:
-        window = calendar_tools.events_for_app(
+        window = calendar_tools.reviewed_events(
             datetime.datetime.combine(first, datetime.time(0)),
             datetime.datetime.combine(last + datetime.timedelta(days=1), datetime.time(0)))
     except Exception as exc:
@@ -288,76 +254,428 @@ def get_upcoming_items(days=UPCOMING_DAYS, now=None):
         return result
     events = []
     for e in window["events"]:
-        if e["all_day"]:
-            when = "all day"
-        else:
-            start = datetime.datetime.fromisoformat(e["start"]).astimezone().replace(tzinfo=None)
-            end = datetime.datetime.fromisoformat(e["end"]).astimezone().replace(tzinfo=None)
-            when = f"{clock_words(start)} to {clock_words(end)}"
-        events.append({"date": e["start"][:10], "day": day_words(e["start"][:10]),
-                       "when": when, "title": e["title"], "calendar": e["calendar"]})
+        start, end = calendar_roles.event_span(e)
+        when = "all day" if e["all_day"] else range_words(start, end)
+        events.append({"date": start.date().isoformat(), "day": day_words(start.date()),
+                       "when": when, "title": e["title"], "calendar": e["calendar"],
+                       "note": e["mark"] or None, "busy": e["busy"]})
     result["events"] = events
+    result["conflicts"] = [
+        {"date": c["start"].date().isoformat(), "between": [c["a"]["title"], c["b"]["title"]],
+         "overlap": range_words(c["start"], c["end"])}
+        for c in calendar_roles.find_conflicts(window["events"])]
     if window.get("unreadable"):
         result["calendars_not_read"] = window["unreadable"]
     return result
 
 
+# ── the plan ──
+
+def _session_plan():
+    """(session id, saved plan) of the session this turn is in."""
+    session_id = current_session_id()
+    plan = session_plan(session_id) if session_id else None
+    if plan is None:
+        raise ToolNotice("There is no saved plan for this session.")
+    return session_id, plan
+
+
+def _session_today(session_id):
+    from database import get_session
+    session = get_session(session_id)
+    return session["for_day"] or task_day()
+
+
+def _item_matching(plan, title):
+    """The plan item (must do or optional) whose title is `title`, ignoring
+    case, or the only one that contains it. None when there is no single one."""
+    items = plan["must_dos"] + plan["optional"]
+    wanted = title.casefold().strip()
+    exact = [i for i in items if i["title"].casefold().strip() == wanted]
+    if exact:
+        return exact[0]
+    partial = [i for i in items if wanted in i["title"].casefold()
+               or i["title"].casefold() in wanted]
+    return partial[0] if len(partial) == 1 else None
+
+
+def _task_by_title(title, day):
+    """A task already on that day or in the backlog whose title is `title`
+    exactly (ignoring case), so naming a known task in a plan links to it
+    instead of making a second copy."""
+    wanted = title.casefold().strip()
+    for task in tasks_between(day, day) + backlog_tasks():
+        if task["text"].casefold().strip() == wanted:
+            return task
+    return None
+
+
+def _entry(raw, plan, must):
+    """One item of a set_plan request as a plan item, with its ids resolved: by
+    task_id when given, else from the saved plan, else a task of that name.
+    The model sees titles only, never ids, so code keeps them."""
+    if isinstance(raw, str):
+        raw = {"title": raw}
+    title = str(raw.get("title") or "").strip()
+    if not title:
+        raise ToolNotice("Every item needs a title. Nothing was changed.")
+    task_id = raw.get("task_id")
+    old = _item_matching(plan, title)
+    if task_id:
+        task = _active_task(task_id)
+        if task["status"] != "pending" or task["recurrence"] is not None:
+            raise ToolNotice(f"{task['text']} is {task['status'] if task['recurrence'] is None else 'a daily task'}, "
+                             "so it cannot be planned. Nothing was changed.")
+        title = title or task["text"]
+    elif old and old.get("task_id"):
+        task_id = old["task_id"]
+    else:
+        task = _task_by_title(title, plan["day"])
+        task_id = task["id"] if task else None
+    item = {"title": title, "task_id": task_id}
+    if must:
+        minutes = raw.get("minutes")
+        if minutes is not None and (not isinstance(minutes, int) or not 5 <= minutes <= 600):
+            raise ToolNotice("minutes must be a whole number from 5 to 600. Nothing was changed.")
+        start = raw.get("start")
+        if start:
+            _clock_arg(start, "start")
+        item.update(minutes=minutes if minutes is not None else (old or {}).get("minutes"),
+                    start=start or (old or {}).get("start"),
+                    reason=(old or {}).get("reason") or "Your choice", slot=None)
+    return item
+
+
 @tool(
-    name="create_tasks",
+    name="set_plan",
     description=(
-        "Save the tasks he chose, each with a title and a date, must_do true for a "
-        "must do. At most three must dos a day; a batch that would pass that is "
-        "refused whole, with how many slots are left. Call it once he has said "
-        "what he wants, before scheduling blocks."
+        "Change tomorrow's plan. Send the FULL plan he now wants, not just the "
+        "difference: must_dos (at most 3, in priority order, each a title, with "
+        "minutes and a fixed start HH:MM only if he said so) and optional tasks. "
+        "Use the titles as they were shown; code keeps their ids. Code finds "
+        "the times and posts the updated plan to him, so do not write times or "
+        "repeat the plan. Add earliest and latest (HH:MM) to widen or narrow "
+        "the hours."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "tasks": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "date": {"type": "string", "description": "YYYY-MM-DD"},
-                        "must_do": {"type": "boolean"},
-                        "notes": {"type": "string"},
-                    },
-                    "required": ["title", "date"],
-                },
-            },
+            "must_dos": {"type": "array", "items": {"type": "object", "properties": {
+                "title": {"type": "string"}, "task_id": {"type": "integer"},
+                "minutes": {"type": "integer"}, "start": {"type": "string"}},
+                "required": ["title"]}},
+            "optional": {"type": "array", "items": {"type": "object", "properties": {
+                "title": {"type": "string"}, "task_id": {"type": "integer"}},
+                "required": ["title"]}},
+            "earliest": {"type": "string", "description": "HH:MM, 24 hour."},
+            "latest": {"type": "string", "description": "HH:MM, 24 hour."},
         },
-        "required": ["tasks"],
+        "required": ["must_dos"],
+    },
+    permission=Permission.WRITE,
+    returns_to_model=False,
+    min_tier="hokage",
+)
+def set_plan(must_dos, optional=None, earliest=None, latest=None, now=None):
+    now = now or _clock()
+    session_id, plan = _session_plan()
+    if not isinstance(must_dos, list):
+        raise ToolNotice("must_dos has to be a list.")
+    if len(must_dos) > MUST_DO_CAP:
+        raise ToolNotice(f"At most {MUST_DO_CAP} must dos a day, and this asked for "
+                         f"{len(must_dos)}. Ask which to make optional. Nothing was changed.")
+    new = dict(plan)
+    new["must_dos"] = [_entry(m, plan, True) for m in must_dos]
+    new["optional"] = [_entry(o, plan, False) for o in (optional or [])]
+    if earliest:
+        new["earliest"] = _clock_arg(earliest, "earliest").strftime("%H:%M")
+    if latest:
+        new["latest"] = _clock_arg(latest, "latest").strftime("%H:%M")
+    if window_of(new)[1] <= window_of(new)[0]:
+        raise ToolNotice("latest has to be after earliest. Nothing was changed.")
+    new = place_plan(new, now)
+    set_session_plan(session_id, new)
+    post_message(plan_text(_session_today(session_id), new, now))
+    left = [m["title"] for m in new["must_dos"] if not m["slot"]] if not new["unchecked"] else []
+    return "Posted the updated plan." + (f" No time found for: {', '.join(left)}." if left else "")
+
+
+@tool(
+    name="confirm_plan",
+    description=(
+        "He said the plan is good. Call it once: code checks the calendar again, "
+        "saves tomorrow's tasks, books every must do on the MILES calendar, "
+        "posts the final plan and closes the review. Write only a short good "
+        "night beside it, with no times."
+    ),
+    input_schema={"type": "object", "properties": {}},
+    permission=Permission.EXTERNAL_WRITE,
+    returns_to_model=False,
+    min_tier="hokage",
+)
+def confirm_plan(now=None):
+    now = now or _clock()
+    session_id, plan = _session_plan()
+    day = _day(plan["day"])
+    # The calendar may have changed since 21:30: read it again, keep every slot
+    # that is still free, and place again any whose slot is not.
+    plan = place_plan(plan, now, keep_slots=True)
+    if plan["unchecked"]:
+        raise ToolNotice("The calendar could not be read, so nothing was booked. "
+                         "Try again in a moment.")
+    must_ids = [m["task_id"] for m in plan["must_dos"] if m.get("task_id")]
+    others = [t for t in tasks_between(day.isoformat(), day.isoformat())
+              if t["must_do"] and t["id"] not in must_ids]
+    if len(others) + len(plan["must_dos"]) > MUST_DO_CAP:
+        raise ToolNotice(f"{day_words(day)} already has other must dos, so this plan would pass "
+                         f"{MUST_DO_CAP}: {', '.join(t['text'] for t in others)}. Nothing was "
+                         "saved. Ask which to drop.")
+
+    items = [{"task_id": m.get("task_id"), "text": m["title"], "must_do": True,
+              "minutes": default_minutes(m["title"], m.get("minutes"))} for m in plan["must_dos"]]
+    items += [{"task_id": o.get("task_id"), "text": o["title"], "must_do": False}
+              for o in plan["optional"]]
+    ids = save_day_plan(day.isoformat(), items, now)
+
+    problems = []
+    for m, task_id in zip(plan["must_dos"], ids):
+        task = get_task(task_id)
+        if live_block(task) or not m.get("slot"):
+            continue
+        start = datetime.datetime.combine(day, datetime.time.fromisoformat(m["slot"][0]))
+        end = datetime.datetime.combine(day, datetime.time.fromisoformat(m["slot"][1]))
+        try:
+            _, event_id = calendar_tools.add_miles_event(m["title"], start, end)
+            set_task_calendar_event(task_id, event_id, now)
+        except Exception as exc:
+            problems.append(f"{m['title']} ({exc})")
+    set_session_plan(session_id, plan)
+    post_message(render_plan(day, order=ids))
+    request_close()
+    return "Booked, and closing." + (f" Could not book: {'; '.join(problems)}." if problems else "")
+
+
+@tool(
+    name="add_to_backlog",
+    description=(
+        "Add something to his backlog, with a due date (YYYY-MM-DD) if he gave "
+        "one. The backlog is what he has to do with no day chosen yet."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"title": {"type": "string"},
+                       "due_date": {"type": "string", "description": "YYYY-MM-DD"}},
+        "required": ["title"],
     },
     permission=Permission.WRITE,
     returns_to_model=True,
 )
-def create_tasks(tasks, now=None):
-    if not isinstance(tasks, list) or not tasks:
-        raise ToolNotice("create_tasks needs at least one task.")
-    today = _today(now)
-    rows = []
-    for task in tasks:
-        title = str(task.get("title") or "").strip()
-        if not title:
-            raise ToolNotice("Every task needs a title. Nothing was saved.")
-        day = _date_arg(task.get("date"))
-        if day < today:
-            raise ToolNotice(f"{day_words(day)} has already passed. Nothing was saved.")
-        rows.append({"text": title, "scheduled_for": day.isoformat(),
-                     "must_do": bool(task.get("must_do")), "notes": task.get("notes") or None})
+def add_to_backlog(title, due_date=None, now=None):
+    now = now or _clock()
+    title = str(title or "").strip()
+    if not title:
+        raise ToolNotice("The backlog item needs a title.")
+    due = _date_arg(due_date, "due_date").isoformat() if due_date else None
+    task_id = add_task(title[:1].upper() + title[1:], now=now, due_date=due)
+    return f"Added {title} to the backlog (task {task_id})" + (f", due {day_words(due)}." if due else ".")
 
-    days = sorted({r["scheduled_for"] for r in rows})
-    over = must_do_overflow(must_do_counts(days), [(r["scheduled_for"], r["must_do"]) for r in rows])
-    if over:
-        parts = [f"{day_words(day)} has room for {_count(left, 'more must do', 'more must dos')} "
-                 f"and this asked for {asked}" for day, (left, asked) in sorted(over.items())]
-        raise ToolNotice(f"Nothing was saved. At most {MUST_DO_CAP} must dos a day: "
-                         + "; ".join(parts) + ". Ask which to make optional.")
 
-    ids = add_planned_tasks(rows, now)
-    return {"created": [{"id": task_id, "title": r["text"], "date": r["scheduled_for"],
-                         "must_do": r["must_do"]} for task_id, r in zip(ids, rows)]}
+def _remove_block_of(task, now=None):
+    """Delete a task's block from MILES if it is there, and forget its id."""
+    from database import clear_task_calendar_event
+    if task["calendar_event_id"]:
+        calendar_tools.delete_miles_event(task["calendar_event_id"])
+        clear_task_calendar_event(task["id"], now)
+
+
+@tool(
+    name="push_to_backlog",
+    description=(
+        "Take something out of tomorrow's plan and put it back in the backlog: "
+        "give a task_id, or the title as shown in the plan. Removes its block "
+        "from the MILES calendar if it had one, and posts the updated plan."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"task_id": {"type": "integer"}, "title": {"type": "string"}},
+    },
+    permission=Permission.EXTERNAL_WRITE,
+    returns_to_model=False,
+    min_tier="hokage",
+)
+def push_to_backlog(task_id=None, title=None, now=None):
+    now = now or _clock()
+    session_id, plan = _session_plan()
+    item = None
+    if task_id:
+        task = _active_task(task_id)
+    elif title:
+        item = _item_matching(plan, title)
+        if item is None:
+            raise ToolNotice(f"No single item in the plan matches {title!r}.")
+        task = get_task(item["task_id"]) if item.get("task_id") else None
+    else:
+        raise ToolNotice("Give a task_id or the title of a plan item.")
+
+    if task is not None:
+        if task["status"] != "pending" or task["recurrence"] is not None:
+            raise ToolNotice(f"{task['text']} cannot go to the backlog; it is "
+                             f"{'a daily task' if task['recurrence'] else task['status']}.")
+        _remove_block_of(task, now)
+        unschedule_task(task["id"], now)
+        name = task["text"]
+    else:
+        name = item["title"]
+        add_task(name, now=now, minutes=item.get("minutes"))
+
+    new = dict(plan)
+    ids = {task["id"]} if task else set()
+    new["must_dos"] = [m for m in plan["must_dos"]
+                       if m is not item and not (m.get("task_id") in ids)]
+    new["optional"] = [o for o in plan["optional"]
+                       if o is not item and not (o.get("task_id") in ids)]
+    if len(new["must_dos"]) + len(new["optional"]) == len(plan["must_dos"]) + len(plan["optional"]):
+        return f"Moved {name} to the backlog. It was not in the plan."
+    new = place_plan(new, now)
+    set_session_plan(session_id, new)
+    post_message(plan_text(_session_today(session_id), new, now))
+    return f"Moved {name} to the backlog and posted the updated plan."
+
+
+@tool(
+    name="show_week",
+    description=(
+        "Post the next seven days to him: each day with its events, conflicts "
+        "and open days. Code writes it from the calendar, so write no times of "
+        "your own."
+    ),
+    input_schema={"type": "object", "properties": {}},
+    permission=Permission.READ,
+    returns_to_model=False,
+    min_tier="hokage",
+)
+def show_week(now=None):
+    now = now or _clock()
+    first = _today(now) + datetime.timedelta(days=1)
+    events, error = read_events(first, UPCOMING_DAYS)
+    if error:
+        raise ToolNotice(f"The week could not be shown: {error}.")
+    post_message("The week ahead\n\n" + week_view(events, first, UPCOMING_DAYS))
+    return "Posted the week."
+
+
+# ── blocks ──
+
+def _block_of(task_id):
+    """(task, its live MILES event) for move_block and remove_block. Looks the
+    event up on the MILES calendar only. An id not found there is refused: an
+    event on his own calendar is not Nova's to change, and a block he deleted
+    by hand is gone, so its stale id is cleared."""
+    from database import clear_task_calendar_event
+    task = _active_task(task_id)
+    if not task["calendar_event_id"]:
+        raise ToolNotice(f"{task['text']} has no block on the MILES calendar.")
+    event = calendar_tools.get_miles_event(task["calendar_event_id"])
+    if event is None:
+        clear_task_calendar_event(task_id)
+        raise ToolNotice(f"{task['text']} has no block on the MILES calendar any more "
+                         "(it is not there, or it is not a MILES event). Nothing was changed. "
+                         "Book it again with schedule_block if he wants it.")
+    return task, event
+
+
+@tool(
+    name="move_block",
+    description=(
+        "Move a task's block on the MILES calendar to a new start (HH:MM, 24 "
+        "hour, same day), optionally with a new length in minutes. Refused if "
+        "it overlaps his calendar, and refused for anything not on MILES."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"task_id": {"type": "integer"},
+                       "start_time": {"type": "string", "description": "HH:MM, 24 hour."},
+                       "minutes": {"type": "integer"}},
+        "required": ["task_id", "start_time"],
+    },
+    permission=Permission.EXTERNAL_WRITE,
+    returns_to_model=True,
+    min_tier="hokage",
+)
+def move_block(task_id, start_time, minutes=None, now=None):
+    now = now or _clock()
+    task, event = _block_of(task_id)
+    day = event["start"].date()
+    length = (int((event["end"] - event["start"]).total_seconds() // 60)
+              if minutes is None else minutes)
+    if not isinstance(length, int) or not 5 <= length <= 600:
+        raise ToolNotice("minutes must be a whole number from 5 to 600.")
+    start = datetime.datetime.combine(day, _clock_arg(start_time, "start_time"))
+    end = start + datetime.timedelta(minutes=length)
+    busy, _ = local_busy(day, exclude_ids={event["id"]})
+    if overlaps(busy, start, end):
+        raise ToolNotice(f"{clock_words(start)} to {clock_words(end)} on {day_words(day)} overlaps "
+                         "something on his calendar. Nothing was moved.")
+    calendar_tools.move_miles_event(event["id"], start, end)
+    return (f"Moved {task['text']} to {clock_words(start)} to {clock_words(end)} on "
+            f"{day_words(day)}.")
+
+
+@tool(
+    name="remove_block",
+    description=(
+        "Delete a task's block from the MILES calendar. The task stays; it just "
+        "has no block. Refused for anything not on MILES."
+    ),
+    input_schema={"type": "object", "properties": {"task_id": {"type": "integer"}},
+                  "required": ["task_id"]},
+    permission=Permission.EXTERNAL_WRITE,
+    returns_to_model=True,
+    min_tier="hokage",
+)
+def remove_block(task_id, now=None):
+    now = now or _clock()
+    task, event = _block_of(task_id)
+    _remove_block_of(task, now)
+    return f"Removed the block for {task['text']} from the MILES calendar."
+
+
+@tool(
+    name="mark_attending",
+    description=(
+        "He goes to this club event, so it counts as busy. Give the title and the "
+        "day it falls on (YYYY-MM-DD). whole_series true (the default) marks every "
+        "repeat of a repeating event."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"title": {"type": "string"},
+                       "day": {"type": "string", "description": "YYYY-MM-DD"},
+                       "whole_series": {"type": "boolean"}},
+        "required": ["title", "day"],
+    },
+    permission=Permission.WRITE,
+    returns_to_model=True,
+    min_tier="hokage",
+)
+def mark_attending(title, day, whole_series=True, now=None):
+    now = now or _clock()
+    when = _date_arg(day, "day")
+    start = datetime.datetime.combine(when, datetime.time(0))
+    window = calendar_tools.events_for_app(start, start + datetime.timedelta(days=1))
+    found = calendar_roles.find_attendable(window["events"], title)
+    if not found:
+        raise ToolNotice(f"No club event with {title!r} in its title on {day_words(when)}.")
+    series = {e["series_id"] for e in found}
+    if len(series) > 1:
+        raise ToolNotice("More than one club event matches: "
+                         + ", ".join(sorted({e["title"] for e in found})) + ". Use the full title.")
+    event = found[0]
+    series_id = event["series_id"] if whole_series else event["id"]
+    new = add_attending(event["calendar_id"], series_id, event["title"], now)
+    scope = "every repeat" if whole_series and event["repeating"] else "that one"
+    return (f"Marked {event['title']} as attended ({scope}); it now counts as busy."
+            if new else f"{event['title']} was already marked as attended.")
 
 
 def _local_busy(start, end):
@@ -375,8 +693,10 @@ def _local_busy(start, end):
         "Put a task on the MILES calendar as a block on the task's own day. Give "
         "start_time (HH:MM, 24 hour) for a time he chose, or leave it out to take "
         "the first free gap that fits; earliest and latest (HH:MM) narrow where it "
-        "looks. A time that overlaps his calendar is refused with the free gaps "
-        "listed. Ask how long the task takes first."
+        "looks. duration_minutes defaults to 60 (120 for studying for an exam). "
+        "To book several at once send tasks, a list of {task_id, duration_minutes, "
+        "start_time}; they are placed in order without overlapping. A time that "
+        "overlaps his calendar is refused with the free gaps listed."
     ),
     input_schema={
         "type": "object",
@@ -386,66 +706,91 @@ def _local_busy(start, end):
             "start_time": {"type": "string", "description": "HH:MM, 24 hour."},
             "earliest": {"type": "string", "description": "HH:MM, 24 hour."},
             "latest": {"type": "string", "description": "HH:MM, 24 hour, when it must end by."},
+            "tasks": {"type": "array", "items": {"type": "object", "properties": {
+                "task_id": {"type": "integer"}, "duration_minutes": {"type": "integer"},
+                "start_time": {"type": "string"}}, "required": ["task_id"]}},
         },
-        "required": ["task_id", "duration_minutes"],
     },
     permission=Permission.EXTERNAL_WRITE,
     returns_to_model=True,
     min_tier="hokage",
 )
-def schedule_block(task_id, duration_minutes, start_time=None, earliest=None, latest=None,
-                   now=None):
-    now = now or datetime.datetime.now()
-    task = _active_task(task_id)
-    title = task["text"]
-    if task["calendar_event_id"]:
-        raise ToolNotice(f"{title} already has a block on the calendar.")
-    if task["recurrence"] is not None or not task["scheduled_for"]:
-        raise ToolNotice(f"{title} has no date, so it has no day to block out.")
-    if task["status"] != "pending":
-        raise ToolNotice(f"{title} is {task['status']}, so it needs no block.")
-    if not isinstance(duration_minutes, int) or not 5 <= duration_minutes <= 600:
-        raise ToolNotice("duration_minutes must be a whole number from 5 to 600.")
+def schedule_block(task_id=None, duration_minutes=None, start_time=None, earliest=None,
+                   latest=None, tasks=None, now=None):
+    now = now or _clock()
+    entries = tasks or ([{"task_id": task_id, "duration_minutes": duration_minutes,
+                          "start_time": start_time}] if task_id else [])
+    if not entries:
+        raise ToolNotice("Give a task_id, or a list of tasks.")
 
-    day = _day(task["scheduled_for"])
-    window_start = datetime.datetime.combine(
-        day, _clock_arg(earliest, "earliest") if earliest else datetime.time(*SESSION_BLOCK_EARLIEST))
-    window_end = datetime.datetime.combine(
-        day, _clock_arg(latest, "latest") if latest else datetime.time(*SESSION_BLOCK_LATEST))
-    if window_end <= window_start:
-        raise ToolNotice("latest has to be after earliest.")
+    prepared = []
+    for entry in entries:
+        task = _active_task(entry.get("task_id"))
+        title = task["text"]
+        # A block he deleted by hand leaves its id behind; live_block checks
+        # Google and clears a dead one, so only a block that exists refuses.
+        if live_block(task):
+            raise ToolNotice(f"{title} already has a block on the calendar.")
+        if task["recurrence"] is not None or not task["scheduled_for"]:
+            raise ToolNotice(f"{title} has no date, so it has no day to block out.")
+        if task["status"] != "pending":
+            raise ToolNotice(f"{title} is {task['status']}, so it needs no block.")
+        minutes = entry.get("duration_minutes") or task.get("minutes")
+        minutes = default_minutes(title, minutes)
+        if not isinstance(minutes, int) or not 5 <= minutes <= 600:
+            raise ToolNotice("duration_minutes must be a whole number from 5 to 600.")
+        prepared.append({"task": task, "title": title, "minutes": minutes,
+                         "day": _day(task["scheduled_for"]),
+                         "start": (_clock_arg(entry["start_time"], "start_time")
+                                   if entry.get("start_time") else None)})
 
-    midnight = datetime.datetime.combine(day, datetime.time(0))
-    busy, unreadable = _local_busy(midnight, midnight + datetime.timedelta(days=1))
-    length = datetime.timedelta(minutes=duration_minutes)
-
-    if start_time:
-        start = datetime.datetime.combine(day, _clock_arg(start_time, "start_time"))
-        end = start + length
-        if start < now:
-            raise ToolNotice(f"{clock_words(start)} on {day_words(day)} has already passed.")
-        if overlaps(busy, start, end):
-            gaps = fitting_gaps(busy, window_start, window_end, duration_minutes, now)
-            free = (f"Free gaps of {duration_minutes} minutes or more between "
-                    f"{clock_words(window_start)} and {clock_words(window_end)}: {_gap_list(gaps)}."
-                    if gaps else "There is no free gap that long between "
-                    f"{clock_words(window_start)} and {clock_words(window_end)}.")
-            raise ToolNotice(f"{clock_words(start)} to {clock_words(end)} on {day_words(day)} "
-                             f"overlaps something on his calendar. Nothing was added. {free}")
-    else:
-        slot = find_slot(busy, window_start, window_end, duration_minutes, now)
-        if slot is None:
-            raise ToolNotice(f"No free {duration_minutes} minute gap between "
+    booked, unreadable_all = [], []
+    plans = []
+    for day in sorted({p["day"] for p in prepared}):
+        group = [p for p in prepared if p["day"] == day]
+        early = _clock_arg(earliest, "earliest") if earliest else datetime.time(*SESSION_BLOCK_EARLIEST)
+        late = _clock_arg(latest, "latest") if latest else datetime.time(*SESSION_BLOCK_LATEST)
+        window_start = datetime.datetime.combine(day, early)
+        window_end = datetime.datetime.combine(day, late)
+        if window_end <= window_start:
+            raise ToolNotice("latest has to be after earliest.")
+        midnight = datetime.datetime.combine(day, datetime.time(0))
+        busy, unreadable = _local_busy(midnight, midnight + datetime.timedelta(days=1))
+        unreadable_all += unreadable
+        for p in group:
+            if p["start"] is not None and datetime.datetime.combine(day, p["start"]) < now:
+                raise ToolNotice(f"{clock_words(datetime.datetime.combine(day, p['start']))} on "
+                                 f"{day_words(day)} has already passed.")
+        not_before = now if day == now.date() else None
+        slots, unplaced = place_blocks(busy, day, group, early, late, not_before)
+        if unplaced:
+            p = unplaced[0]
+            if p["start"] is not None:
+                start = datetime.datetime.combine(day, p["start"])
+                end = start + datetime.timedelta(minutes=p["minutes"])
+                gaps = fitting_gaps(busy, window_start, window_end, p["minutes"], now)
+                free = (f"Free gaps of {p['minutes']} minutes or more between "
+                        f"{clock_words(window_start)} and {clock_words(window_end)}: {_gap_list(gaps)}."
+                        if gaps else "There is no free gap that long between "
+                        f"{clock_words(window_start)} and {clock_words(window_end)}.")
+                raise ToolNotice(f"{clock_words(start)} to {clock_words(end)} on {day_words(day)} "
+                                 f"overlaps something on his calendar. Nothing was added. {free}")
+            raise ToolNotice(f"No free {p['minutes']} minute gap between "
                              f"{clock_words(window_start)} and {clock_words(window_end)} on "
-                             f"{day_words(day)}. Ask for a time, or a wider window.")
-        start, end = slot
+                             f"{day_words(day)}. Ask for a time, or a wider window. "
+                             "Nothing was added.")
+        plans += slots
 
-    _, event_id = calendar_tools.add_miles_event(title, start, end)
-    set_task_calendar_event(task_id, event_id, now)
-    said = (f"Blocked {title} on {day_words(day)} from {clock_words(start)} to "
-            f"{clock_words(end)} on the MILES calendar.")
-    if unreadable:
-        said += f" These calendars could not be read, so check them: {', '.join(unreadable)}."
+    for slot in plans:
+        p = slot["item"]
+        _, event_id = calendar_tools.add_miles_event(p["title"], slot["start"], slot["end"])
+        set_task_calendar_event(p["task"]["id"], event_id, now)
+        booked.append(f"Blocked {p['title']} on {day_words(p['day'])} from "
+                      f"{clock_words(slot['start'])} to {clock_words(slot['end'])} on the "
+                      "MILES calendar.")
+    said = " ".join(booked)
+    if unreadable_all:
+        said += f" These calendars could not be read, so check them: {', '.join(unreadable_all)}."
     return said
 
 
@@ -468,35 +813,39 @@ STAGES = {
     "get_tasks_for_date": "Reading today's tasks",
     "update_task_status": "Updating the task",
     "get_upcoming_items": "Checking your week",
-    "create_tasks": "Saving tomorrow's tasks",
+    "show_week": "Reading your week",
+    "set_plan": "Updating the plan",
+    "confirm_plan": "Booking the plan",
+    "add_to_backlog": "Adding to the backlog",
+    "push_to_backlog": "Moving it to the backlog",
     "schedule_block": "Finding a time on your calendar",
+    "move_block": "Moving the block",
+    "remove_block": "Removing the block",
+    "mark_attending": "Marking the event",
     "close_session": "Wrapping up",
 }
 
 
 # ── the session's own words ──
 
-def _task_line(task):
-    marks = []
-    if task["must_do"]:
-        marks.append("must do")
-    if task["recurrence"] == "daily":
-        marks.append("daily")
-    label = f" ({', '.join(marks)})" if marks else ""
-    return f"{task['text']}{label}: {_STATUS_WORDS.get(task['status'], task['status'])}"
-
-
 def opening(now):
-    """Today's tasks with their statuses, then the question. Built from the
-    table, so the first thing he reads costs no model call and cannot be wrong
-    about what was on his list."""
+    """The proposal, built in code with no model call: how today went, what
+    tomorrow holds, up to three must dos with times. Returns (text, plan); the
+    engine saves the plan with the session so "good" confirms exactly what he
+    was shown. If anything in the build fails, a plain opening still goes out,
+    so a calendar outage at 21:30 never means no review."""
     day = task_day(now)
-    tasks = tasks_for_day(day, today=day)
-    if not tasks:
-        return (f"Nothing was on your list for {day_words(day)}. What did you get done "
-                "today, and what matters tomorrow?")
-    lines = "\n".join(f"{i}. {_task_line(t)}" for i, t in enumerate(tasks, 1))
-    return f"Here is {day_words(day)}:\n\n{lines}\n\nWhat got done?"
+    try:
+        plan = build_proposal(day, now)
+        return plan_text(day, plan, now), plan
+    except Exception as exc:
+        print(f"Nightly review proposal failed: {exc}", flush=True)
+        tomorrow = (_day(day) + datetime.timedelta(days=1)).isoformat()
+        plan = {"day": tomorrow, "earliest": "%02d:%02d" % SESSION_BLOCK_EARLIEST,
+                "latest": "%02d:%02d" % SESSION_BLOCK_LATEST, "unchecked": True,
+                "must_dos": [], "optional": []}
+        return (f"{today_line(day)}\n\nI could not build tomorrow's plan just now. "
+                "What matters tomorrow?"), plan
 
 
 def push_body(now):
@@ -518,23 +867,29 @@ def system_prompt(session):
     last = last_session_summary(NAME, day.isoformat())
     last_night = (f"\n\nLast night's review ({day_words(last[0])}) ended with:\n{last[1]}"
                   if last else "")
-    return f"""You are Nova, running Lethanial's nightly review in the Nova app. He reads it on his phone, so write short plain sentences and short lists. No markdown headings. Never use hyphens.
+    return f"""You are Nova, running Lethanial's nightly review in the Nova app. He reads it on his phone, so write short plain sentences. No markdown headings. Never use hyphens.
 
 Today, the day being reviewed, is {day_words(day)} ({day.isoformat()}). The days ahead:
 {week}
 
-The review goes in this order:
-1. Close out today. Your opening message listed today's tasks and asked what got done. Call get_tasks_for_date for today to get the ids, then call update_task_status for each task he tells you about: done, skipped, or moved with the date he gives. Ask about any he did not mention. Never mark a task he has not told you about.
-2. Show the next seven days. Call get_upcoming_items and give him a short view of what is already planned and on his calendar.
-3. Ask for two or three must dos for tomorrow, plus any optional tasks. Save them with create_tasks, must_do true for the must dos. Three must dos a day is the most the tool will take, and it says how many slots are left.
-4. Offer to put each must do on the calendar. Ask how long each takes, then call schedule_block. If he names a time, pass it as start_time. If a time overlaps, offer one of the free gaps the tool lists.
-5. Confirm the plan in a few lines: tomorrow's must dos with their times, then the optional tasks.
-6. When he says he is done, call close_session and write a short good night beside it.
+Your opening message already proposed tomorrow's plan: how today went, tomorrow's calendar, up to three suggested must dos with times, and optional tasks. It ended by asking if it is good. Code wrote it, and code writes every plan and week view he sees after it. You do not.
+
+What he says, and what you do:
+He says it is good (good, yes, looks great, book it): call confirm_plan once. It books everything, posts the final plan and closes the review. Write only a short good night beside it.
+He wants a change (swap one, drop one, another time, another task, a different length): call set_plan with the FULL plan he now wants, at most three must dos in order, and optional tasks. Use the titles as they were shown. Pass minutes or a fixed start (HH:MM, 24 hour) only when he said so. Code finds the times and posts the updated plan.
+He says he also did something, or skipped it: call get_tasks_for_date for today to get the ids, then update_task_status. Only for tasks he told you about.
+He wants something out of the plan and back in the backlog: call push_to_backlog.
+He wants something remembered for later: call add_to_backlog, with a due date if he gave one.
+He wants to see the week: call show_week.
+He wants a block moved or removed: call move_block or remove_block.
+He says he goes to a club event: call mark_attending.
+Use get_upcoming_items or get_tasks_for_date only for your own reading.
 
 Rules:
-Dates you send are YYYY-MM-DD and clock times are HH:MM, 24 hour. Take them from the list above; do not work them out.
+Whenever a tool posts a plan or the week, write at most one short line beside it and never write a clock time, a time range or the plan again. Code shows the times; anything you add about times is cut.
+Dates you send are YYYY-MM-DD and clock times are HH:MM, 24 hour. Take dates from the list above; do not work them out.
 Never work out free time or counts yourself; the tools do that.
-Never say something was saved, moved or scheduled unless a tool said so.
+Never say something was saved, moved or booked unless a tool said so.
 If a tool refuses, tell him what it said and ask what he wants instead.{last_night}"""
 
 
@@ -591,4 +946,5 @@ REVIEW = register_type(SessionType(
     push_body=push_body,
     reminder_body="Still open. Two minutes to plan tomorrow.",
     stages=STAGES,
+    posts_messages=True,
 ))

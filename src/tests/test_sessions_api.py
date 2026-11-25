@@ -69,7 +69,7 @@ def test_start_answers_201_with_the_opening(client):
     [opening] = body["messages"]
     assert set(opening) == MESSAGE_KEYS
     assert opening["role"] == "assistant"
-    assert opening["text"].startswith("Nothing was on your list for ")
+    assert opening["text"].startswith("Nothing was planned today.\n\nTomorrow, ")
     assert session["last_message_at"] == opening["created_at"]
 
 
@@ -119,10 +119,10 @@ def test_a_turn_streams_the_chat_stream_events(client, fake_claude):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert _events(response.text) == [
-        ("delta", "One "), ("delta", "sec."),
+        # The review holds the model's text until its tools have run (it may
+        # post a message), so the replaced "One sec." is never streamed.
         ("stage", "Reading today's tasks"),
-        ("reset", ""),
-        ("delta", "Nice "), ("delta", "work."),
+        ("delta", "Nice work."),
         ("done", "Nice work."),
     ]
     texts = [(m["role"], m["text"]) for m in client.get(f"/sessions/{session_id}").json()["messages"]]
