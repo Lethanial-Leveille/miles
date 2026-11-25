@@ -1171,9 +1171,59 @@ APNS_TIMEOUT_S     = 10.0
 SESSION_MODELS = {"nightly_review": "claude-haiku-4-5"}
 
 # Where schedule_block looks for a free slot when he gives no start time, as
-# (hour, minute) on the task's day. Not before nine, because he does not plan
+# (hour, minute) on the task's day. Not before ten, because he does not plan
 # focused work before class, and ending by nine at night, because a block that
 # starts at ten is one he will move. He can name earliest and latest to go
 # outside it.
-SESSION_BLOCK_EARLIEST = (9, 0)
+SESSION_BLOCK_EARLIEST = (10, 0)
 SESSION_BLOCK_LATEST   = (21, 0)
+
+
+# ── Calendar roles (calendar_roles.py) ──
+# What each calendar means for being busy, by calendar id (the name is a
+# comment). "blocking" calendars hold what he has committed to. "club" and
+# "holiday" calendars are context: they show in the week view, marked, but they
+# never count as busy and never make a conflict, unless he marks a club event
+# or series "I attend" (the calendar_attending table).
+# MILES is blocking too, but it is created by code, so it is found by name.
+# Any calendar not listed here, such as a newly imported one, is BLOCKING by
+# default: a new calendar counts as busy until someone classifies it here, so
+# the review errs toward fewer double bookings.
+CALENDAR_ROLES = {
+    "primary.fake@example.com": "blocking",   # his primary calendar
+    # the imported "Calendar" (fake-calendar-09@example.com)
+    # is not listed on purpose: it defaults to blocking
+    "fake-calendar-05@example.com": "club",  # UF ACM Events
+    "fake-calendar-08@example.com": "club",                                                                           # UF IEEE
+    "fake-calendar-04@example.com": "club",  # General NSBE Member Events
+    "fake-calendar-07@example.com": "club",                                                                          # UF NSBE
+    "en.usa#holiday@group.v.calendar.google.com": "holiday",                                               # Holidays in United States
+}
+
+# The real calendar ids are private: they live in an untracked file (mode 600), never in this repo.
+# When it exists it replaces the placeholder ids above. Format: {"<calendar id>": "blocking|club|holiday"}.
+CALENDAR_ROLES_FILE = os.environ.get("MILES_CALENDAR_ROLES_FILE") or os.path.expanduser("~/miles/data/calendar_roles.json")
+try:
+    import json as _json
+    with open(CALENDAR_ROLES_FILE, encoding="utf-8") as _roles_file:
+        CALENDAR_ROLES = _json.load(_roles_file)
+except FileNotFoundError:
+    pass
+
+# Days classes do not meet, as (first day, last day inclusive, name). Verify any
+# other break against UF's academic calendar before adding it; do not guess
+# dates. An all day event on the holidays calendar counts as a break day too.
+UF_BREAKS = [("2026-11-25", "2026-11-28", "Thanksgiving break")]
+
+# Titles of his class events, matched whole (ignoring case), so "DSA" is the
+# class and "DSA Final Exam" is not. Found by reading his primary calendar for
+# recurring weekly timed events. Tutoring ("Test Prep") and club events never
+# belong here. A class on a break day shows "(likely cancelled, ...)" and is
+# not busy.
+CLASS_TITLES = ["DSA"]
+
+# Words that make a calendar event or a backlog item an exam to study for.
+# Matched as whole words, case blind. Titles containing any EXAM_EXCLUDE text
+# are tutoring, not his exams: "Test Prep" has the word test in it.
+EXAM_WORDS = ["exam", "test", "midterm", "final", "quiz", "oa", "assessment"]
+EXAM_EXCLUDE = ["test prep", "tutoring", "group sessions"]

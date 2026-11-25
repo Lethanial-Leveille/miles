@@ -17,6 +17,15 @@ with the current one, so "tomorrow" said at 3:52 PM meant 3:52 PM tomorrow, and 
 listing starting there silently dropped the morning. Listings snap a bare day to
 its start and end. A new event with no time is refused rather than invented.
 
+Evallo guard: his primary calendar is synced two ways with Evallo, so a write
+there could cancel a real tutoring session. Every delete and patch goes through
+_write_delete or _write_patch, which fetch the event first and refuse, before
+any API write call, if its private extended properties hold evalloEvent,
+evalloSessionId or orgId. That check is independent of the MILES only rule and
+covers voice edits, deletes, undo, renames, the app's tap routes and the
+nightly review's move and remove. Nothing here decides which events are
+Evallo's by title.
+
 Failures raise. A swallowed exception here used to turn an expired token into
 "No upcoming events found", which is Nova confidently telling him his calendar
 is empty. The executor turns a raise into an is_error result instead.
@@ -34,6 +43,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+import calendar_roles
 import pending_action
 from parsing import words_for_number
 from tools import Permission, tool
@@ -127,6 +137,51 @@ class WhenError(ValueError):
 class EventLookupError(ValueError):
     """No single event matched. The message says what is there instead, so Nova
     can ask rather than guess."""
+
+
+class EvalloProtectedError(EventLookupError):
+    """The event belongs to Evallo and is never written. A subclass of
+    EventLookupError so every caller that already reports a refused lookup
+    reports this too."""
+
+
+# Private extended properties Evallo's two way sync puts on the tutoring
+# sessions it writes into his primary calendar. Changing or deleting such an
+# event from here could cancel a real session in Evallo, so no write path may
+# touch one. A second check, independent of the MILES only rule.
+EVALLO_KEYS = ("evalloEvent", "evalloSessionId", "orgId")
+
+
+def _guard_not_evallo(calendar_id, event_id, event=None):
+    """Fetch the event and refuse, writing nothing, if it carries any Evallo
+    private property. Every delete and patch goes through here before the API
+    write call. An event already gone (404 or 410) has nothing to protect; the
+    write itself will say so."""
+    if event is None:
+        try:
+            event = _service().events().get(calendarId=calendar_id, eventId=event_id).execute()
+        except HttpError as exc:
+            if exc.status_code in (404, 410):
+                return
+            raise
+    private = (event.get("extendedProperties") or {}).get("private") or {}
+    if any(key in private for key in EVALLO_KEYS):
+        raise EvalloProtectedError(
+            f"{event.get('summary', 'That event')} is an Evallo tutoring session, synced "
+            "two ways with Evallo, so it is never changed or deleted from here. Nothing "
+            "was changed.")
+
+
+def _write_patch(calendar_id, event_id, body, event=None):
+    """The one place an event is patched. Guarded first."""
+    _guard_not_evallo(calendar_id, event_id, event)
+    _service().events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
+
+
+def _write_delete(calendar_id, event_id, event=None):
+    """The one place an event is deleted. Guarded first."""
+    _guard_not_evallo(calendar_id, event_id, event)
+    _service().events().delete(calendarId=calendar_id, eventId=event_id).execute()
 
 
 # ── time, resolved in code ──
@@ -504,6 +559,15 @@ def events_for_app(start, end):
                 "mine": owned,
                 "editable": cid == miles_id,
                 "repeating": bool(event.get("recurringEventId")),
+                # What the nightly review needs to classify an event: which
+                # calendar it is on, which series it belongs to (an instance of
+                # a repeating event carries its parent's id), and whether it
+                # blocks time at all.
+                "calendar_id": cid,
+                "series_id": event.get("recurringEventId") or event["id"],
+                "transparent": event.get("transparency") == "transparent",
+                "declined": any(a.get("self") and a.get("responseStatus") == "declined"
+                                for a in event.get("attendees", [])),
             })
     events.sort(key=lambda e: (e["start"][:10], not e["all_day"], e["start"]))
     return {"events": events, "unreadable": unreadable}
@@ -555,14 +619,15 @@ def change_event_for_app(event_id, title=None, start=None, end=None):
         body["end"] = {"dateTime": new_end.astimezone().isoformat()}
     if not body:
         raise WhenError("nothing to change; give a title, start or end")
-    return _patch_event(calendar_id, event_id, body, body.get("summary", event.get("summary", "Untitled")))
+    return _patch_event(calendar_id, event_id, body,
+                        body.get("summary", event.get("summary", "Untitled")), event)
 
 
 def delete_event_for_app(event_id):
     """A tap delete, at once. The app asks first, so there is no second question."""
     service = _service()
     calendar_id, event = _miles_event(service, event_id)
-    return _delete_event(calendar_id, event_id, event.get("summary", "Untitled"))
+    return _delete_event(calendar_id, event_id, event.get("summary", "Untitled"), event)
 
 
 def _words(text):
@@ -836,36 +901,101 @@ def _already_over(calendars, asked_from, now):
             + [line for _, line in over] + [""])
 
 
-def busy_blocks(start, end):
+def reviewed_events(start, end):
+    """events_for_app with each event classified by calendar_roles: its role,
+    whether it counts as busy, and the mark the week view shows. What the
+    nightly review reads, and what busy_blocks is built from.
+
+    Reads the attending table, so an event he marked "I attend" is blocking."""
+    import database
+    window = events_for_app(start, end)
+    return {"events": calendar_roles.annotate(window["events"], database.attending_set()),
+            "unreadable": window["unreadable"]}
+
+
+def busy_blocks(start, end, exclude_ids=()):
     """(merged busy blocks, names of calendars that could not be read) across
     every selected calendar between two local times. The blocks are aware
-    datetimes, as Google returns them. Raises when no calendar could be read,
-    because an empty answer would read as a free day.
+    datetimes. Raises when no calendar could be read, because an empty answer
+    would read as a free day.
 
-    Shared by check_calendar_freebusy and the nightly review's schedule_block,
-    so the two can never disagree about when he is busy."""
-    service = _service()
-    # Public holiday calendars cannot be asked for busy time (Google answers
-    # notFound), and a holiday is not busy time anyway. Left in, every answer
-    # carried a failure Nova would feel obliged to mention.
-    calendars = {cid: name for cid, name in _selected(service).items()
-                 if "#holiday@" not in cid}
+    Shared by check_calendar_freebusy and the nightly review's scheduling, so
+    the two can never disagree about when he is busy. Roles apply here
+    (calendar_roles.py): club events, holidays and likely cancelled classes are
+    not busy unless he attends them. That changed check_calendar_freebusy on
+    purpose, since a club talk he never goes to used to make him look busy.
 
-    body = {"timeMin": _utc(start), "timeMax": _utc(end),
-            "items": [{"id": cid} for cid in calendars]}
-    answer = service.freebusy().query(body=body).execute().get("calendars", {})
+    Built from the events themselves, not Google's freebusy answer, because a
+    class on a break day has to be taken out of the busy time, and freebusy
+    cannot say which event a block came from. A transparent (marked free) or
+    declined event is skipped, as freebusy skipped it. exclude_ids leaves
+    named events out, so a block being moved does not collide with itself.
 
-    blocks, unreadable = [], []
-    for cid, data in answer.items():
-        if data.get("errors"):
-            unreadable.append(calendars.get(cid, cid))
-            continue
-        blocks += [(datetime.datetime.fromisoformat(b["start"]),
-                    datetime.datetime.fromisoformat(b["end"])) for b in data.get("busy", [])]
-
-    if calendars and len(unreadable) == len(calendars):
+    The list of events is the step any later filter belongs on (for example
+    dropping tutoring events not in a verified set): it sits between
+    reviewed_events and the blocks."""
+    window = reviewed_events(start, end)
+    unreadable = window["unreadable"]
+    if unreadable and len(unreadable) >= len(_selected(_service())):
         raise RuntimeError("could not read any calendar")
+    blocks = []
+    for e in window["events"]:
+        if not e["busy"] or e["id"] in exclude_ids:
+            continue
+        first = datetime.datetime.fromisoformat(e["start"])
+        last = datetime.datetime.fromisoformat(e["end"])
+        if e["all_day"]:
+            first, last = first.astimezone(), last.astimezone()
+        blocks.append((first, last))
     return merge_busy(blocks), unreadable
+
+
+def get_miles_event(event_id):
+    """One event from the MILES calendar as {id, title, start, end, all_day}
+    with naive local times, or None when it is not there: never existed, was
+    deleted (404 or 410) or is marked cancelled. Looks only on the MILES
+    calendar, so an id from any other calendar is simply not found, and a
+    block he deleted by hand reads as gone instead of as a block that exists."""
+    service = _service()
+    miles_id = _miles_calendar_id(service)
+    if miles_id is None:
+        return None
+    try:
+        event = service.events().get(calendarId=miles_id, eventId=event_id).execute()
+    except HttpError as exc:
+        if exc.status_code in (404, 410):
+            return None
+        raise
+    if event.get("status") == "cancelled":
+        return None
+    first, last, all_day = _event_bounds(event)
+    return {"id": event["id"], "title": event.get("summary", "Untitled"),
+            "start": first, "end": last, "all_day": all_day}
+
+
+def move_miles_event(event_id, start, end):
+    """Change a block's time. The event must be on the MILES calendar, and the
+    write goes only to the MILES calendar id; anything else raises
+    EventLookupError and changes nothing."""
+    service = _service()
+    calendar_id, event = _miles_event(service, event_id)
+    if event.get("status") == "cancelled":
+        raise EventLookupError("that event is not on the MILES calendar")
+    body = {"start": {"dateTime": _local(start).astimezone().isoformat()},
+            "end": {"dateTime": _local(end).astimezone().isoformat()}}
+    _write_patch(calendar_id, event_id, body, event)
+
+
+def delete_miles_event(event_id):
+    """Remove a block from the MILES calendar. False when it was not there
+    (already gone), so a task whose block he deleted can still be cleaned up;
+    never touches another calendar."""
+    service = _service()
+    miles_id = _miles_calendar_id(service)
+    if miles_id is None or get_miles_event(event_id) is None:
+        return False
+    _write_delete(miles_id, event_id)
+    return True
 
 
 @tool(
@@ -995,8 +1125,7 @@ def add_miles_event(summary, start, end):
 def _insert_event(summary, start, end):
     """The actual write, remembered so it can be undone."""
     calendar_id, event_id = add_miles_event(summary, start, end)
-    _record_change("Removed", summary, lambda: _service().events().delete(
-        calendarId=calendar_id, eventId=event_id).execute())
+    _record_change("Removed", summary, lambda: _write_delete(calendar_id, event_id))
     return f"Added {summary}."
 
 
@@ -1044,9 +1173,9 @@ def delete_calendar_event(title, day, now=None):
         # its series, so this is the one delete that cannot be fully taken back.
         question = f"Delete {what} {when}{_once(event)}?"
         return _ask(pending_action.propose(question.rstrip("?"),
-                                           lambda: _delete_event(calendar_id, event["id"], name)))
+                                           lambda: _delete_event(calendar_id, event["id"], name, event)))
 
-    _delete_event(calendar_id, event["id"], name)
+    _delete_event(calendar_id, event["id"], name, event)
     copy = {key: event[key] for key in _RESTORABLE if key in event}
     _record_change("Restored", name, lambda: _service().events().insert(
         calendarId=calendar_id, body=copy).execute())
@@ -1144,27 +1273,26 @@ def update_calendar_event(title, day, new_title=None, new_start_time=None,
     # At once since Sep 16 2026: a move is fully reversible, so the question
     # before it cost a turn and protected nothing undo does not. What changed is
     # read back in code, so he hears the real day and time.
-    _patch_event(calendar_id, event["id"], body, new_title or name)
+    _patch_event(calendar_id, event["id"], body, new_title or name, event)
     restore = {key: event[key] for key in body if key in event}
-    _record_change("Put back", name, lambda: _service().events().patch(
-        calendarId=calendar_id, eventId=event["id"], body=restore).execute())
+    _record_change("Put back", name, lambda: _write_patch(calendar_id, event["id"], restore, event))
     sentence = ", and ".join(clauses) + _once(event)
     said = sentence[0].upper() + sentence[1:] + "."
     pending_action.announce(said)
     return f"{said} This was read back to him word for word; he can say undo."
 
 
-def _delete_event(calendar_id, event_id, name):
+def _delete_event(calendar_id, event_id, name, event=None):
     """The actual delete: at once, or through confirm_pending_action for one
     occurrence of a repeating event."""
-    _service().events().delete(calendarId=calendar_id, eventId=event_id).execute()
+    _write_delete(calendar_id, event_id, event)
     return f"Deleted {name}."
 
 
-def _patch_event(calendar_id, event_id, body, name):
+def _patch_event(calendar_id, event_id, body, name, event=None):
     """The actual edit. patch, not update, so fields this tool never touches,
     like attendees and reminders, are left exactly as they were."""
-    _service().events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
+    _write_patch(calendar_id, event_id, body, event)
     return f"Updated {name}."
 
 
@@ -1703,8 +1831,7 @@ def rename_calendar_events(find, replace_with, time_min=None, time_max=None, now
         done, failed = 0, []
         for event, new_title in changes:
             try:
-                _service().events().patch(calendarId=calendar_id, eventId=event["id"],
-                                          body={"summary": new_title}).execute()
+                _write_patch(calendar_id, event["id"], {"summary": new_title}, event)
                 done += 1
             except Exception as exc:
                 failed.append(f"{event.get('summary')} ({exc})")

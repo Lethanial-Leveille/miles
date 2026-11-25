@@ -1,3 +1,5 @@
+import os as _os_roles
+_os_roles.environ["MILES_CALENDAR_ROLES_FILE"] = "/nonexistent/calendar_roles.json"  # tests never read the real ids
 import os
 import sqlite3
 import sys
@@ -43,6 +45,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 import database
+
+
+@pytest.fixture(autouse=True)
+def no_real_google(monkeypatch):
+    """No test may read or write his real calendar. The nightly review builds
+    its opening from the calendar, so without this a test creating a session
+    on the Pi would call Google with the live token. A test that wants a
+    calendar installs its own (tests/fake_google.py), which replaces this."""
+    import calendar_tools
+
+    def refuse():
+        raise FileNotFoundError("no Google token; tests never reach the real calendar")
+    monkeypatch.setattr(calendar_tools, "_service", refuse)
+    calendar_tools._calendar_cache.clear()
 
 
 @pytest.fixture

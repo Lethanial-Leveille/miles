@@ -58,6 +58,15 @@ class FakeService:
                 service.listed.append(query)
                 return _Call({"items": service.events_by_calendar.get(query["calendarId"], [])})
 
+            def get(self, calendarId, eventId):
+                # The Evallo guard fetches an event before any write. One this
+                # fake does not know (an addition just made) has no private
+                # properties.
+                for event in service.events_by_calendar.get(calendarId, []):
+                    if event["id"] == eventId:
+                        return _Call(event)
+                return _Call({"id": eventId})
+
             def delete(self, calendarId, eventId):
                 service.deleted.append((calendarId, eventId))
                 return _Call("")
