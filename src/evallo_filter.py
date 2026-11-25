@@ -171,6 +171,44 @@ def session_id(event):
     return value if isinstance(value, str) and SESSION_ID.match(value) else None
 
 
+def _zone(name):
+    """The ZoneInfo for a Google timeZone name, or None when absent or unknown."""
+    if not isinstance(name, str) or not name:
+        return None
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        return None
+
+
+def place_in_time(event):
+    """A copy of the event whose start and end carry real offsets. Google can
+    send a dateTime with no offset and a separate timeZone; read as local time
+    it lands hours off. An offset in the dateTime always wins; with no offset
+    and no usable zone the field is left as it came (the old behavior), and
+    start_date calls that start unusable."""
+    placed = dict(event)
+    changed = False
+    zones = {}
+    for key in ("start", "end"):
+        part = event.get(key)
+        if not isinstance(part, dict) or not part.get("dateTime"):
+            continue
+        try:
+            moment = datetime.datetime.fromisoformat(str(part["dateTime"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if moment.tzinfo is not None:
+            continue
+        zone = _zone(part.get("timeZone")) or zones.get("start")
+        if zone is None:
+            continue
+        zones[key] = zone
+        placed[key] = {**part, "dateTime": moment.replace(tzinfo=zone).isoformat()}
+        changed = True
+    return placed if changed else event
+
+
 def start_date(event):
     """The New York date of the event's start, or None when unusable."""
     start = event.get("start") if isinstance(event, dict) else None
@@ -180,13 +218,11 @@ def start_date(event):
         if start.get("dateTime"):
             moment = datetime.datetime.fromisoformat(str(start["dateTime"]).replace("Z", "+00:00"))
             if moment.tzinfo is None:
-                # No offset in the string: the event's own zone, else New York.
-                zone = NY
-                if start.get("timeZone"):
-                    try:
-                        zone = ZoneInfo(str(start["timeZone"]))
-                    except Exception:
-                        zone = NY
+                # No offset in the string: the event's own zone. An unknown or
+                # missing zone makes the start unusable; New York is never guessed.
+                zone = _zone(start.get("timeZone"))
+                if zone is None:
+                    return None
                 moment = moment.replace(tzinfo=zone)
             return moment.astimezone(NY).date()
         if start.get("date"):
@@ -277,6 +313,10 @@ def view(event, state, now):
     kept, row = decide(event, state, now)
     if not kept:
         return None, row
+    try:
+        event = place_in_time(event)
+    except Exception:
+        pass
     if row in (1, 3):
         try:
             if not has_tutor_name(event):

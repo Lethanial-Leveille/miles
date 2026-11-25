@@ -4,6 +4,7 @@ Every database here is a temporary one, and Google is the fake."""
 import datetime
 import os
 import tempfile
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -817,7 +818,7 @@ def test_an_event_in_another_zone_uses_its_new_york_date():
     naive["start"] = {"dateTime": "2026-11-18T00:30:00", "timeZone": "America/New_York"}
     assert ef.start_date(naive) == datetime.date(2026, 11, 18)
     naive["start"] = {"dateTime": "2026-11-18T00:30:00", "timeZone": "Not/AZone"}
-    assert ef.start_date(naive) == datetime.date(2026, 11, 18)       # falls back to New York
+    assert ef.start_date(naive) is None                              # never guesses New York
 
 
 @pytest.mark.parametrize("title", [
@@ -955,3 +956,102 @@ def test_survivors_main_reads_the_real_flag_and_labels_the_outcome(db, monkeypat
     lines = out.read_text().splitlines()
     assert lines[0].startswith("outcome=") and lines[0] != "outcome=off"
     assert all("row 4" not in line for line in lines)
+
+
+# ── round 3, group 1: an offset-less dateTime with its own timeZone ──
+
+TOKYO = datetime.datetime(2026, 11, 26, 0, 30, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+
+class _Reshaped:
+    """Hands the filter the way Google can send an event: dateTime without an
+    offset, plus a separate timeZone."""
+
+    def __init__(self, service, shapes):
+        self._service, self._shapes = service, shapes
+
+    def events(self):
+        inner = self._service.events()
+        shapes = self._shapes
+
+        def list_(**query):
+            call = inner.list(**query)
+
+            class Run:
+                def execute(self):
+                    page = call.execute()
+                    items = []
+                    for item in page["items"]:
+                        if item["id"] in shapes:
+                            item = {**item, **shapes[item["id"]]}
+                        items.append(item)
+                    return {**page, "items": items}
+            return Run()
+        return type("E", (), {"list": staticmethod(list_), "get": inner.get,
+                              "patch": inner.patch, "delete": inner.delete,
+                              "insert": inner.insert})()
+
+    def __getattr__(self, name):
+        return getattr(self._service, name)
+
+
+@pytest.fixture
+def tokyo(calendar, monkeypatch):
+    fetched = ef.load_state().fetched_at
+    old = iso(fetched - datetime.timedelta(days=3))
+    end = TOKYO + datetime.timedelta(hours=1)
+    calendar.add(fake_google.PRIMARY, "tokyo", "Kid <> Lethanial Leveille | Tokyo", TOKYO, end,
+                 extendedProperties={"private": {"evalloEvent": "true", "evalloSessionId": MINE}},
+                 updated=old)
+    shapes = {"tokyo": {"start": {"dateTime": "2026-11-26T00:30:00", "timeZone": "Asia/Tokyo"},
+                        "end": {"dateTime": "2026-11-26T01:30:00", "timeZone": "Asia/Tokyo"}}}
+    inner = cal._service
+    monkeypatch.setattr(cal, "_service", lambda: _Reshaped(inner(), shapes))
+    # an ordinary lesson at the same real instant, to make a conflict
+    calendar.add(fake_google.PRIMARY, "same", "Calc lab", TOKYO, end)
+    return calendar
+
+
+def test_a_timezone_event_is_placed_at_its_real_instant_everywhere(tokyo):
+    day = datetime.datetime(2026, 11, 25)
+    window = (day - datetime.timedelta(days=1), day + datetime.timedelta(days=3))
+    blocks, _ = cal.busy_blocks(*window)
+    assert any(a == TOKYO and b == TOKYO + datetime.timedelta(hours=1) for a, b in blocks)
+    shown = {e["id"]: e for e in cal.events_for_app(*window)["events"]}
+    assert datetime.datetime.fromisoformat(shown["tokyo"]["start"]) == TOKYO
+    assert datetime.datetime.fromisoformat(shown["tokyo"]["end"]) == TOKYO + datetime.timedelta(hours=1)
+    local = TOKYO.astimezone()
+    now = datetime.datetime(2026, 11, 24, 9)
+    listing = cal.get_upcoming_events("2026-11-25", "2026-11-28", now=now)
+    assert "Tokyo" in listing and cal._spoken(local.replace(tzinfo=None)) in listing
+    conflicts = cal.find_schedule_conflicts("2026-11-25", "2026-11-28", now=now)
+    assert "Tokyo" in conflicts and "Calc lab" in conflicts
+
+
+def test_the_event_is_kept_by_its_new_york_date_not_its_wall_clock():
+    # 00:30 Tokyo on Nov 26 is Nov 25 at 10:30 AM Eastern.
+    event = ev(sid=MINE)
+    event["start"] = {"dateTime": "2026-11-26T00:30:00", "timeZone": "Asia/Tokyo"}
+    assert ef.start_date(event) == datetime.date(2026, 11, 25)
+    placed = ef.place_in_time(event)
+    assert datetime.datetime.fromisoformat(placed["start"]["dateTime"]) == TOKYO
+    assert event["start"]["dateTime"] == "2026-11-26T00:30:00"      # the original is untouched
+
+
+def test_an_unrecognized_zone_is_unusable_and_takes_row_5_never_row_4():
+    event = ev()
+    event["start"] = {"dateTime": "2026-11-26T00:30:00", "timeZone": "Mars/Olympus"}
+    assert ef.start_date(event) is None
+    assert ef.decide(event, state(), NOW) == (False, 6)
+    named = dict(event, summary="Kid <> Lethanial Leveille")
+    assert ef.decide(named, state(), NOW) == (True, 5)
+    assert ef.place_in_time(event)["start"] == event["start"]        # old behavior kept
+    no_zone = dict(event, start={"dateTime": "2026-11-26T00:30:00"})
+    assert ef.start_date(no_zone) is None
+
+
+def test_an_offset_wins_over_a_conflicting_zone():
+    event = ev()
+    event["start"] = {"dateTime": "2026-11-26T00:30:00+09:00", "timeZone": "America/New_York"}
+    assert ef.start_date(event) == datetime.date(2026, 11, 25)
+    assert ef.place_in_time(event)["start"] == event["start"]
