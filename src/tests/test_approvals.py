@@ -20,8 +20,8 @@ from tools import Permission, permits, registry  # noqa: E402
 
 T0 = datetime(2026, 11, 23, 19, 0, tzinfo=timezone.utc)
 ZOOM = "https://ufl.zoom.us/j/1234567890?pwd=abc123"
-TEXT = ("Hi! Reminder that Taylor's session is tomorrow at 4:15 PM. Here's the Zoom "
-        f"link: {ZOOM}. See you then!")
+TEXT = ("Hey Taylor, just a reminder that your session is tomorrow at 4:15 PM. Here's the "
+        f"Zoom link: {ZOOM}. Let me know if anything comes up!")
 
 
 @pytest.fixture(autouse=True)
@@ -124,6 +124,22 @@ def test_without_a_valid_zoom_file_no_link_is_allowed(db, zoom_file, content):
     with pytest.raises(ValueError, match="No links are allowed"):
         approvals.check_text(TEXT)
     assert approvals.check_text("See you tomorrow!") == "See you tomorrow!"
+
+
+@pytest.mark.parametrize("link,ok", [
+    ("https://ufl.zoom.us/j/8607898540?omn=94543491016", True),
+    ("https://ufl.zoom.us/j/8607898540?pwd=abc123&omn=94543491016", True),
+    ("https://ufl.zoom.us/j/8607898540?omn=abc", False),
+    ("https://ufl.zoom.us/j/8607898540?omn=1&extra=2", False),
+])
+def test_zoom_links_with_an_omn_number(db, zoom_file, link, ok):
+    zoom_file.write_text(json.dumps({"link": link}))
+    assert approvals.zoom_link() == (link if ok else None)
+    if ok:
+        text = f"Here's the Zoom link: {link}. Let me know if anything comes up!"
+        assert approvals.check_text(text) == text
+        with pytest.raises(ValueError):
+            approvals.check_text(f"Here: {link}1.")
 
 
 def test_meeting_link_edits_are_no_longer_a_kind(db):
