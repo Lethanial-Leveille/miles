@@ -991,6 +991,88 @@ def _migration_040_watchdog(conn):
     """)
 
 
+def _migration_041_sessions_and_planned_tasks(conn):
+    """Sessions: dedicated chats with their own purpose, prompt and tools, apart
+    from the main conversation. And dates, statuses and links on tasks, so the
+    nightly review can plan tomorrow on the same task list voice already uses.
+
+    type is free text, not a CHECK list, so a new session type (a plain chat
+    thread, a quiz) is a registry entry and never a migration. title and
+    last_message_at are here for the chat list a plain chat type will need:
+    sorted by last message, labelled by an auto title.
+
+    for_day is the 4am day a scheduled session belongs to. UNIQUE (type,
+    for_day) is what makes "one nightly review a night" true even if two timer
+    runs overlap; SQLite lets any number of NULLs through, so unscheduled
+    sessions are unaffected.
+
+    session_messages holds whole turns, as the API's content blocks in JSON:
+    tool calls and their results included, never trimmed. That is the opposite
+    of conversation_history, which keeps text only and trims Nova's replies on
+    purpose, so the two are kept apart and no voice query can read a session.
+
+    tasks: status is the truth for a dated one time task (pending, done,
+    skipped, moved). A daily task keeps using task_completions and its status
+    stays pending. A one time task finished before this migration has a
+    completion row, so it is backfilled to done. A moved task keeps its row and
+    date, marked moved, and a copy is made on the new date, so each day's plan
+    still counts what was planned for it."""
+    conn.execute("""
+        CREATE TABLE sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open', 'closed', 'missed')),
+            title TEXT,
+            for_day TEXT,
+            model TEXT,
+            created_at TEXT NOT NULL,
+            opened_at TEXT,
+            last_message_at TEXT,
+            closed_at TEXT,
+            summary TEXT,
+            push_sent_at TEXT,
+            reminder_sent_at TEXT,
+            UNIQUE (type, for_day)
+        )
+    """)
+    conn.execute("CREATE INDEX idx_sessions_status ON sessions (status, type)")
+    conn.execute("""
+        CREATE TABLE session_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL REFERENCES sessions(id),
+            role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+            content TEXT NOT NULL,
+            model TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            cache_read_tokens INTEGER,
+            cache_write_tokens INTEGER,
+            ms INTEGER,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX idx_session_messages ON session_messages (session_id, id)")
+
+    conn.execute("ALTER TABLE tasks ADD COLUMN notes TEXT")
+    conn.execute("ALTER TABLE tasks ADD COLUMN scheduled_for TEXT")
+    conn.execute("ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'pending' "
+                 "CHECK (status IN ('pending', 'done', 'skipped', 'moved'))")
+    conn.execute("ALTER TABLE tasks ADD COLUMN must_do INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' "
+                 "CHECK (source IN ('manual', 'canvas', 'study_plan', 'meal_prep'))")
+    conn.execute("ALTER TABLE tasks ADD COLUMN assignment_id INTEGER")
+    conn.execute("ALTER TABLE tasks ADD COLUMN topic_id INTEGER")
+    conn.execute("ALTER TABLE tasks ADD COLUMN calendar_event_id TEXT")
+    conn.execute("ALTER TABLE tasks ADD COLUMN updated_at TEXT")
+    conn.execute("CREATE INDEX idx_tasks_scheduled ON tasks (scheduled_for)")
+    conn.execute("""
+        UPDATE tasks SET status = 'done'
+        WHERE recurrence IS NULL
+          AND EXISTS (SELECT 1 FROM task_completions c WHERE c.task_id = tasks.id)
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -1032,6 +1114,7 @@ MIGRATIONS = [
     (38, _migration_038_health_hours),
     (39, _migration_039_approvals),
     (40, _migration_040_watchdog),
+    (41, _migration_041_sessions_and_planned_tasks),
 ]
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
@@ -2374,6 +2457,12 @@ def complete_task(task_id, now=None):
         conn.execute(
             "INSERT OR IGNORE INTO task_completions (task_id, date) VALUES (?, ?)",
             (task_id, task_day(now)))
+        # A one time task's status is its truth since migration 41; keep the
+        # two in step so "I did it" by voice shows as done in the review.
+        conn.execute(
+            "UPDATE tasks SET status = 'done', updated_at = ? "
+            "WHERE id = ? AND recurrence IS NULL",
+            ((now or datetime.now()).isoformat(), task_id))
         conn.commit()
         return True
     finally:
@@ -2388,18 +2477,27 @@ def tasks_today(now=None):
     a completion that settles it: for a one time task any completion at all
     (recurrence IS NULL makes the date test irrelevant), for a daily task only
     one dated today. A task with no such row is still to do. Archived tasks are
-    left out before any of that is asked."""
+    left out before any of that is asked.
+
+    Since migration 41 a one time task can carry a date and a status. It is on
+    today's list while it is pending and its date is today or earlier (or it
+    has none): a task planned for Friday does not show on Tuesday, and one
+    skipped, moved or done is settled."""
+    today = task_day(now)
     conn = sqlite3.connect(DB_PATH)
     try:
         return conn.execute("""
             SELECT t.id, t.text, t.recurrence FROM tasks t
             WHERE t.archived_at IS NULL
+              AND (t.recurrence IS NOT NULL
+                   OR (t.status = 'pending'
+                       AND (t.scheduled_for IS NULL OR t.scheduled_for <= ?)))
               AND NOT EXISTS (
                   SELECT 1 FROM task_completions c
                   WHERE c.task_id = t.id
                     AND (t.recurrence IS NULL OR c.date = ?))
             ORDER BY t.id
-        """, (task_day(now),)).fetchall()
+        """, (today, today)).fetchall()
     finally:
         conn.close()
 
