@@ -164,6 +164,19 @@ A job that later succeeds on its own closes its alert.
 
 UF Zoom, Google and Evallo logins die when he changes his UF password. A job that lands on a sign in page, gets a 401 or `invalid_grant`, or finds a login screen in place of the page stops at once. Nothing types a password or retries a login. The Mac (`/agent/login-expired`) or the Pi's Evallo code pushes "<Service> login expired (password change?). On the Mac run: <exact command>", with the failed job, once per service per day. The Mac queues the failed drafts or summaries and runs them once that login has been redone. At 8 AM each saved login is tested read only: on the Mac by its own launchd job, and on the Pi by `evallo_canary.py --login-only`. Only a broken one pushes.
 
+### Lesson Planning Lives in Claude, Not Here
+
+Since Nov 25 2026, lessons are planned in his Claude "Tutoring" project (one chat per student) when he says "prep". The 7:37 AM lesson plan task is paused. MILES and the Mac do not plan lessons and must not start to.
+
+That project reads Google Drive as its memory, so these are a contract:
+
+* `Tutoring/<Name>/questions`: the used, baseline and misses docs. He maintains them; nothing here writes them.
+* `Zoom summaries/<Name>`: written by the Mac's 9 PM summary grabber, one Doc per session, titled `<Name> summary <Mon DD>` (for example "Alex summary Nov 23").
+
+Do not rename or move those folders, and do not change the grabber's folder name or title format. Prep depends on both.
+
+Tutoring automation order: Phase 4 (did the session happen?), Phase 5 (Stage E replies) and Phase 6 (Evallo commands from Nova) go ahead as planned. Phase 4 starts only after a Thursday 7 PM reminder run works end to end. Phase 7 (multiple Nova chats) is lower priority, since tutoring chats live in the Claude project.
+
 ---
 
 ## Tech Stack
