@@ -64,6 +64,8 @@ daily task loses today's completion. Answers `{"task": Task}`. 404 unknown, 409 
 Clears `scheduled_for` and `must_do`, and removes the task's MILES block if it has one, only through the
 guarded, MILES only delete path (an Evallo or non MILES event is never touched). Answers
 `{"task": Task}`. 404 unknown, 409 for a daily task or a task already in the backlog.
+- 409 also for a task that is done or skipped: only a pending task can go to the backlog.
+- 502 when Google fails while removing the block: nothing is changed (day, must do and block id are kept), so a retry is safe.
 
 ## Nova
 
