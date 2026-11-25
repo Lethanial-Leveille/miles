@@ -561,9 +561,7 @@ def test_server_startup_clears_active_and_a_reader_restart_does_not(db):
     assert ef.load_state().on
 
 
-def test_startup_clear_without_a_row_or_table_does_not_raise(db, monkeypatch):
-    ef.clear_active()
-    monkeypatch.setattr(database, "DB_PATH", os.path.join(tempfile.mkdtemp(), "none", "x.db"))
+def test_startup_clear_without_a_row_is_fine(db):
     ef.clear_active()
 
 
@@ -1055,3 +1053,39 @@ def test_an_offset_wins_over_a_conflicting_zone():
     event["start"] = {"dateTime": "2026-11-26T00:30:00+09:00", "timeZone": "America/New_York"}
     assert ef.start_date(event) == datetime.date(2026, 11, 25)
     assert ef.place_in_time(event)["start"] == event["start"]
+
+
+# ── round 3, group 2: the startup reset cannot fail silently ──
+
+@pytest.fixture
+def quick_clear(monkeypatch):
+    monkeypatch.setattr(ef, "CLEAR_WAIT", 0.05)
+    monkeypatch.setattr(ef, "CLEAR_BUSY_TIMEOUT", 0.05)
+
+
+def _hold_the_writer_lock():
+    import sqlite3
+    holder = sqlite3.connect(database.DB_PATH, isolation_level=None, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")
+    return holder
+
+
+def test_the_reset_retries_while_another_writer_holds_the_database(db, quick_clear):
+    import threading
+    push(db)
+    holder = _hold_the_writer_lock()
+    threading.Timer(0.3, lambda: (holder.execute("COMMIT"), holder.close())).start()
+    ef.clear_active()                                      # waits, retries, succeeds
+    assert not ef.load_state().on
+
+
+def test_a_reset_that_never_gets_the_lock_fails_startup(db, quick_clear):
+    push(db)
+    holder = _hold_the_writer_lock()
+    try:
+        with pytest.raises(RuntimeError):
+            server._evallo_filter_off_until_a_push()        # the hook: the server must not start
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert ef.load_state().on                              # nothing was cleared, and it was loud

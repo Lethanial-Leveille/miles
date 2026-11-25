@@ -18,6 +18,7 @@ import contextvars
 import datetime
 import re
 import sqlite3
+import time
 import unicodedata
 from zoneinfo import ZoneInfo
 
@@ -41,20 +42,40 @@ _NAME_RULE = re.compile(
 OUTCOMES = ("active", "stale", "off", "unreadable")
 _RANK = {"active": 0, "stale": 1, "off": 2, "unreadable": 3}
 
+CLEAR_ATTEMPTS = 6
+CLEAR_WAIT = 0.5          # seconds between attempts
+CLEAR_BUSY_TIMEOUT = 2    # seconds SQLite itself waits on a lock, per attempt
+
+
 def clear_active():
     """miles-server's startup: the filter stays off until a push is accepted
     after this start. Only the server calls this; voice and the review never
-    write the flag. A failure is logged and never stops the server."""
-    try:
-        conn = sqlite3.connect(database.DB_PATH, timeout=10)
+    write the flag. SQLite may be busy, so it retries a few times; if it still
+    cannot write it RAISES, so the server does not start serving with a stale
+    `active` (an old set could be applied after a restart or rollback)."""
+    last = None
+    for attempt in range(CLEAR_ATTEMPTS):
         try:
-            conn.execute("UPDATE evallo_verification SET active = 0")
-            conn.commit()
-        finally:
-            conn.close()
-    except Exception as exc:
-        print(f"Evallo filter: could not clear active at startup ({type(exc).__name__}).",
-              flush=True)
+            conn = sqlite3.connect(database.DB_PATH, timeout=CLEAR_BUSY_TIMEOUT)
+            try:
+                conn.execute("UPDATE evallo_verification SET active = 0")
+                conn.commit()
+                return
+            finally:
+                conn.close()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc):
+                return              # no status table, so no filter that could be on
+            last = exc
+            if attempt + 1 < CLEAR_ATTEMPTS:
+                time.sleep(CLEAR_WAIT)
+        except Exception as exc:
+            last = exc
+            if attempt + 1 < CLEAR_ATTEMPTS:
+                time.sleep(CLEAR_WAIT)
+    print(f"Evallo filter: could not clear active at startup ({type(last).__name__}).",
+          flush=True)
+    raise RuntimeError("could not reset the Evallo filter at startup") from last
 
 
 def now_utc():
