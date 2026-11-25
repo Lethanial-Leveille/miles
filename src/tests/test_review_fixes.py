@@ -373,9 +373,10 @@ def test_block_titles_are_short_and_deterministic(title, short):
 
 def test_an_explicit_short_title_wins_but_is_capped():
     assert rp.block_title("Study for linear algebra test", "Exam prep") == "Exam prep"
-    assert rp.block_title("Study", "Exam 3 prep: Lessons 19 to 21") == "Exam 3 prep: Lessons"
-    long = rp.block_title("x", "Supercalifragilistic Expialidocious Extraordinary Words")
-    assert len(long) <= 40 and len(long.split()) <= 4
+    assert rp.block_title("Study", "Exam 3 prep: Lessons 19 to 21") == "Exam 3 prep: Lessons 19 to 21"
+    long = rp.block_title("x", "Supercalifragilistic Expialidocious Extraordinary Words Again")
+    assert len(long) <= 40 and long == "Supercalifragilistic Expialidocious"
+    assert rp.block_title("x", "A" * 60) == "A" * 40
 
 
 @pytest.mark.parametrize("title, short", [

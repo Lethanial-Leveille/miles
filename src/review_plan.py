@@ -100,16 +100,17 @@ BLOCK_TITLE_WORDS = 4
 def block_title(title, short_title=None):
     """The short name a MILES block carries, 2 to 4 words, so the calendar stays
     readable ("Linear algebra study", not the whole task). A task may carry its
-    own (short_title), capped at four words and forty characters. Otherwise it is derived the same way every time:
+    own (short_title), capped at forty characters. Otherwise it is derived the same way every time:
       "Study for linear algebra test"  becomes "Linear algebra study"
       "Fix Friday: Test Prep ... Dentist"  becomes "Fix Friday" (before the colon)
       anything else drops filler words and keeps the first four words.
     The full text, the reason and any notes go in the event description."""
     if short_title and short_title.strip():
-        # A model supplied name is capped: four words and forty characters.
-        capped = " ".join(short_title.split()[:BLOCK_TITLE_WORDS])
+        # A supplied name is capped at forty characters, cut at a word boundary.
+        # No word limit: "Exam 3 prep: Lessons 19 to 21" is the name he wants.
+        capped = " ".join(short_title.split())
         if len(capped) > 40:
-            capped = capped[:40].rsplit(" ", 1)[0] if " " in capped[:40] else capped[:40]
+            capped = capped[:41].rsplit(" ", 1)[0] if " " in capped[:41] else capped[:40]
         return capped
     text = title.strip()
     head = text.split(":", 1)[0].strip() if ":" in text else text
