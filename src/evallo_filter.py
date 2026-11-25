@@ -1,0 +1,314 @@
+"""Which Evallo events on his calendar are his, decided on the Pi.
+
+Evallo's two way sync writes the whole organization's tutoring sessions onto
+his primary calendar. The Mac reads his own sessions from Evallo's API and
+pushes their ids (PUT /agent/evallo/sessions); every calendar read drops an
+Evallo event that is not his. The one rule is keep() below, written out as a
+table in docs/EVALLO_FILTER_CONTRACT.md (C4). Every uncertainty errs toward
+keeping the event: busy, never free.
+
+The filter is on only when there is a status row, the state was read, and this
+process has accepted a push since it started (C2). A restart turns it off until
+the Mac's next push is accepted, so a redeploy or a rollback can never apply an
+old set.
+"""
+
+import contextlib
+import contextvars
+import datetime
+import re
+import sqlite3
+import threading
+from zoneinfo import ZoneInfo
+
+import database
+
+NY = ZoneInfo("America/New_York")
+UTC = datetime.timezone.utc
+
+EVALLO_KEYS = ("evalloEvent", "evalloSessionId", "orgId")
+SESSION_ID = re.compile(r"^[0-9a-f]{24}$")
+# Evallo stamps the push time, Google stamps `updated`; the two clocks may
+# disagree, so an event updated this close to the snapshot, or later, may have
+# been booked after it and is kept (row 3).
+CUTOFF_MARGIN = datetime.timedelta(minutes=15)
+FRESH_FOR = datetime.timedelta(hours=24)
+TUTOR_NAME = "Lethanial Leveille"
+# <student> <> <tutor> | ...   and   <student> / <tutor>
+_NAME_RULE = re.compile(
+    r"^\s*[^<>/]+?\s*(?:<>|/)\s*" + re.escape(TUTOR_NAME) + r"\s*(?:\||$)", re.IGNORECASE)
+
+OUTCOMES = ("active", "stale", "off", "unreadable")
+_RANK = {"active": 0, "stale": 1, "off": 2, "unreadable": 3}
+
+_accepted = False
+_accepted_lock = threading.Lock()
+
+
+def mark_accepted():
+    """Set only by an accepted push (200, an idempotent retry included)."""
+    global _accepted
+    with _accepted_lock:
+        _accepted = True
+
+
+def accepted():
+    with _accepted_lock:
+        return _accepted
+
+
+def reset_process_flag():
+    """A process restart, for tests."""
+    global _accepted
+    with _accepted_lock:
+        _accepted = False
+
+
+def now_utc():
+    return datetime.datetime.now(UTC)
+
+
+class Conflict(Exception):
+    """A push refused by the ordering rule. reason is older_snapshot or
+    conflicting_snapshot."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def iso_z(moment):
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_moment(text):
+    """An aware datetime from an ISO string, or None. A naive string is not a
+    moment here."""
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        moment = datetime.datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+# ── state ──
+
+class State:
+    """What one read of the database found: the ids and the status row together
+    (one transaction), whether it could be read, and whether this process has
+    accepted a push."""
+
+    def __init__(self, readable=True, ids=frozenset(), fetched_at=None, window=None,
+                 fetched_raw=None, accepted=False):
+        self.readable = readable
+        self.ids = ids
+        self.fetched_at = fetched_at          # aware datetime or None
+        self.fetched_raw = fetched_raw        # as stored
+        self.window = window                  # (start date, end date) or None
+        self.accepted = accepted
+
+    @property
+    def on(self):
+        return self.readable and self.fetched_at is not None and self.accepted
+
+    def outcome(self, now):
+        """unreadable, then off, then the freshness check."""
+        if not self.readable:
+            return "unreadable"
+        if self.fetched_at is None or not self.accepted:
+            return "off"
+        if now - self.fetched_at > FRESH_FOR:
+            return "stale"
+        return "active"
+
+
+def load_state():
+    """The verified ids and the status row from one transaction. A failure is
+    logged without detail beyond its type, and gives an unreadable state: every
+    event is kept."""
+    flag = accepted()
+    conn = None
+    try:
+        conn = sqlite3.connect(database.DB_PATH, timeout=5, isolation_level=None)
+        conn.execute("BEGIN")
+        row = conn.execute("SELECT fetched_at, window_start, window_end FROM evallo_verification "
+                           "WHERE id = 1").fetchone()
+        ids = frozenset(r[0] for r in conn.execute("SELECT session_id FROM evallo_verified_sessions"))
+        conn.execute("COMMIT")
+        if row is None:
+            return State(accepted=flag)
+        fetched = parse_moment(row[0])
+        window = (datetime.date.fromisoformat(row[1]), datetime.date.fromisoformat(row[2]))
+        if fetched is None:
+            raise ValueError("stored fetched_at does not parse")
+        return State(ids=ids, fetched_at=fetched, window=window, fetched_raw=row[0], accepted=flag)
+    except Exception as exc:
+        print(f"Evallo filter state unreadable ({type(exc).__name__}); keeping every event.",
+              flush=True)
+        return State(readable=False, accepted=flag)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def status(state, now=None):
+    now = now or now_utc()
+    return {"outcome": state.outcome(now), "verified_at": state.fetched_raw}
+
+
+# ── the rule ──
+
+def private_props(event):
+    props = (event.get("extendedProperties") or {}).get("private") if isinstance(event, dict) else None
+    return props if isinstance(props, dict) else {}
+
+
+def is_evallo(event):
+    props = private_props(event)
+    return any(key in props for key in EVALLO_KEYS)
+
+
+def session_id(event):
+    value = private_props(event).get("evalloSessionId")
+    return value if isinstance(value, str) and SESSION_ID.match(value) else None
+
+
+def start_date(event):
+    """The New York date of the event's start, or None when unusable."""
+    start = event.get("start") if isinstance(event, dict) else None
+    if not isinstance(start, dict):
+        return None
+    try:
+        if start.get("dateTime"):
+            moment = datetime.datetime.fromisoformat(str(start["dateTime"]).replace("Z", "+00:00"))
+            if moment.tzinfo is None:
+                return moment.date()
+            return moment.astimezone(NY).date()
+        if start.get("date"):
+            return datetime.date.fromisoformat(str(start["date"]))
+    except (ValueError, TypeError):
+        return None
+    return None
+
+
+def has_tutor_name(event):
+    title = event.get("summary") if isinstance(event, dict) else None
+    return isinstance(title, str) and bool(_NAME_RULE.match(title))
+
+
+def decide(event, state, now):
+    """(keep, row). row is the C4 row that decided, 0 when the event is not
+    Evallo's or the filter is off."""
+    if not state.on or not is_evallo(event):
+        return True, 0
+    sid = session_id(event)
+    if sid is None:
+        return True, 1
+    if sid in state.ids:
+        return True, 2
+    updated = parse_moment(event.get("updated"))
+    if updated is None or updated > state.fetched_at - CUTOFF_MARGIN:
+        return True, 3
+    fresh = now - state.fetched_at <= FRESH_FOR
+    day = start_date(event)
+    if fresh and day is not None and state.window[0] <= day < state.window[1]:
+        return False, 4
+    if has_tutor_name(event):
+        return True, 5
+    return False, 6
+
+
+def keep(event, state, now):
+    return decide(event, state, now)[0]
+
+
+# ── what he is told ──
+
+def note(outcome):
+    """The one generated line for an outcome dict, or None when active."""
+    if not outcome or outcome["outcome"] == "active":
+        return None
+    if outcome["outcome"] == "unreadable":
+        return "Evallo sessions could not be checked"
+    moment = parse_moment(outcome.get("verified_at"))
+    if moment is None:
+        return "Evallo sessions never verified"
+    local = moment.astimezone(NY)
+    return f"Evallo sessions not verified since {local.strftime('%a %b')} {local.day}, " \
+           f"{local.strftime('%-I:%M %p')}"
+
+
+def worst(outcomes):
+    """The most cautious outcome among several (unreadable, off, stale)."""
+    found = [o for o in outcomes if o]
+    return max(found, key=lambda o: _RANK[o["outcome"]]) if found else None
+
+
+_collector = contextvars.ContextVar("evallo_outcomes", default=None)
+
+
+@contextlib.contextmanager
+def collecting():
+    """Collects the outcome of every calendar read made inside the block, so a
+    caller that builds an answer from several reads can say what state its
+    events came from, without a read of its own."""
+    seen = []
+    token = _collector.set(seen)
+    try:
+        yield seen
+    finally:
+        _collector.reset(token)
+
+
+def record(outcome):
+    seen = _collector.get()
+    if seen is not None:
+        seen.append(outcome)
+
+
+# ── storing a push ──
+
+def store_snapshot(fetched_at, window_start, window_end, session_ids, now=None):
+    """Replace the set and the status row in one BEGIN IMMEDIATE transaction.
+    Returns (count, fetched_at text, pushed_at text). Raises Conflict. Sets the
+    process flag only once the push is accepted."""
+    now = now or now_utc()
+    fetched_text, pushed_text = iso_z(fetched_at), iso_z(now)
+    ids = sorted(set(session_ids))
+    conn = sqlite3.connect(database.DB_PATH, timeout=10, isolation_level=None)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute("SELECT fetched_at, pushed_at, window_start, window_end, count "
+                               "FROM evallo_verification WHERE id = 1").fetchone()
+            if row is not None:
+                stored = parse_moment(row[0])
+                if stored is not None and fetched_at < stored:
+                    raise Conflict("older_snapshot")
+                if stored is not None and fetched_at == stored:
+                    same_ids = {r[0] for r in conn.execute(
+                        "SELECT session_id FROM evallo_verified_sessions")} == set(ids)
+                    if row[2] == window_start.isoformat() and row[3] == window_end.isoformat() and same_ids:
+                        conn.execute("COMMIT")
+                        mark_accepted()
+                        return row[4], row[0], row[1]
+                    raise Conflict("conflicting_snapshot")
+            conn.execute("DELETE FROM evallo_verified_sessions")
+            conn.executemany("INSERT INTO evallo_verified_sessions (session_id) VALUES (?)",
+                             [(i,) for i in ids])
+            conn.execute("INSERT OR REPLACE INTO evallo_verification "
+                         "(id, fetched_at, pushed_at, window_start, window_end, count) "
+                         "VALUES (1, ?, ?, ?, ?, ?)",
+                         (fetched_text, pushed_text, window_start.isoformat(),
+                          window_end.isoformat(), len(ids)))
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.close()
+    mark_accepted()
+    return len(ids), fetched_text, pushed_text
