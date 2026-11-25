@@ -44,6 +44,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 import calendar_roles
+import evallo_filter
 import pending_action
 from parsing import words_for_number
 from tools import Permission, tool
@@ -504,13 +505,28 @@ def _write_calendar_id(service):
     return created
 
 
-def _fetch_events(queries):
+class FetchResult(list):
+    """The (calendar id, items, error) triples, with `outcome`: the evallo_filter
+    status of the one state this read used (active, stale, off or unreadable)."""
+    outcome = None
+
+
+def _fetch_events(queries, state=None):
     """Run several events().list queries at once, as (calendar id, items, error).
+
+    Every item passes evallo_filter.keep, so no read path can see an Evallo event
+    that is not his. The state is read once per call (or passed in by a caller
+    that makes several reads for one answer), and the result carries its outcome.
 
     One after another, nine calendars took 1621ms, measured Sep 13 2026, against
     279ms for the slowest alone. The Google client is not safe to share between
     threads, because its HTTP connection is not, so each worker builds its own,
     which costs about 3ms."""
+    now = evallo_filter.now_utc()
+    state = state if state is not None else evallo_filter.load_state()
+    outcome = evallo_filter.status(state, now)
+    evallo_filter.record(outcome)
+
     def run(query):
         try:
             # Page through nextPageToken: a calendar with more than one page of
@@ -523,14 +539,18 @@ def _fetch_events(queries):
                 token = page.get("nextPageToken")
                 if not token:
                     break
+            items = [e for e in items if evallo_filter.keep(e, state, now)]
             return query["calendarId"], items, None
         except Exception as exc:
             return query["calendarId"], None, exc
 
+    result = FetchResult()
+    result.outcome = outcome
     if not queries:
-        return []
+        return result
     with ThreadPoolExecutor(max_workers=min(len(queries), 10)) as pool:
-        return list(pool.map(run, queries))
+        result.extend(pool.map(run, queries))
+    return result
 
 
 # ── the app's view ──
@@ -843,6 +863,10 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
     mine, followed, unreadable = [], [], []
     calendars = {cid: (name, owned) for cid, (name, selected, owned)
                  in _calendars(service).items() if selected}
+    # One state for the whole answer, so the note below describes exactly what
+    # filtered the events listed, never a second read.
+    state = evallo_filter.load_state()
+    outcome = evallo_filter.status(state)
     queries = []
     for cid in calendars:
         # One more than the cap, so a listing can tell that it stopped short.
@@ -851,7 +875,7 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
         if end is not None:
             query["timeMax"] = _utc(end)
         queries.append(query)
-    for cid, items, error in _fetch_events(queries):
+    for cid, items, error in _fetch_events(queries, state=state):
         name, owned = calendars[cid]
         if error is not None:
             # One broken shared calendar should not hide the others, but it is
@@ -869,7 +893,7 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
 
     mine.sort(key=lambda pair: pair[0])
     followed.sort(key=lambda pair: pair[0])
-    lines = _already_over(calendars, asked_from, now)
+    lines = _already_over(calendars, asked_from, now, state=state)
     lines += ["His events:"]
     lines += [line for _, line in mine[:_MAX_EVENTS]] or ["Nothing on his own calendar."]
     if len(mine) > _MAX_EVENTS:
@@ -884,10 +908,13 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
         lines += [line for _, line in followed[:_MAX_FOLLOWED]]
     if unreadable:
         lines.append(f"Could not read: {', '.join(unreadable)}.")
+    evallo_note = evallo_filter.note(outcome)
+    if evallo_note:
+        lines = [evallo_note + ".", ""] + lines
     return "\n".join(lines)
 
 
-def _already_over(calendars, asked_from, now):
+def _already_over(calendars, asked_from, now, state=None):
     """His own events in the requested range that ended before now, as lines.
 
     The listing starts at now so a session he already went to is never read as
@@ -902,7 +929,7 @@ def _already_over(calendars, asked_from, now):
                 "singleEvents": True, "orderBy": "startTime", "maxResults": _MAX_EVENTS}
                for cid, (_, owned) in calendars.items() if owned]
     over = []
-    for _, items, error in _fetch_events(queries):
+    for _, items, error in _fetch_events(queries, state=state):
         for event in items or []:
             _, finish, all_day = _event_bounds(event)
             if not all_day and finish <= now:
@@ -922,9 +949,12 @@ def reviewed_events(start, end):
 
     Reads the attending table, so an event he marked "I attend" is blocking."""
     import database
-    window = events_for_app(start, end)
+    with evallo_filter.collecting() as seen:
+        window = events_for_app(start, end)
+    # "evallo" is the status of the state that read used (not part of the app's
+    # shape, which events_for_app keeps unchanged).
     return {"events": calendar_roles.annotate(window["events"], database.attending_set()),
-            "unreadable": window["unreadable"]}
+            "unreadable": window["unreadable"], "evallo": evallo_filter.worst(seen)}
 
 
 def busy_blocks(start, end, exclude_ids=()):
