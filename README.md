@@ -254,7 +254,10 @@ Live at `https://miles.lethanial.com`.
 | `/calendar/events`, `/calendar/events/{event_id}` | GET, PATCH, DELETE | Yes |
 | `/lists`, `/lists/{list_id}/items` | GET | Yes |
 | `/lists/items/{item_id}/check`, `/lists/items/{item_id}/uncheck` | POST | Yes |
-| `/tasks/today`, `/tasks/{task_id}/complete` | GET, POST | Yes |
+| `/tasks/today` | GET | Yes |
+| `/tasks/overview` | GET, today, the next days and the backlog | Yes |
+| `/tasks` | POST, add a task to today or the backlog | Yes |
+| `/tasks/{task_id}/complete`, `/tasks/{task_id}/reopen`, `/tasks/{task_id}/backlog` | POST | Yes |
 | `/sessions`, `/sessions/{session_id}` | GET, POST | Yes |
 | `/sessions/{session_id}/turns` | POST, server sent events | Yes |
 | `/sessions/{session_id}/close` | POST | Yes |

@@ -425,6 +425,12 @@ def confirm_plan(now=None):
         # turn) must not insert the tasks or book the blocks a second time.
         raise ToolNotice("This plan was already confirmed and booked. Nothing was changed.")
     day = _day(plan["day"])
+    # A task finished (in the app or by voice) while the review was open is not
+    # planned again: no day change, no block.
+    done = {e["task_id"] for e in plan["must_dos"] + plan["optional"]
+            if e.get("task_id") and (get_task(e["task_id"]) or {}).get("status") == "done"}
+    if done:
+        plan = _plan_without(plan, done)
     # The calendar may have changed since 21:30: read it again, keep every slot
     # that is still free, and place again any whose slot is not.
     plan = place_plan(plan, now, keep_slots=True)
@@ -510,6 +516,33 @@ def add_to_backlog(title, due_date=None, short_title=None, now=None):
     return f"Added {title} to the backlog (task {task_id})" + (f", due {day_words(due)}." if due else ".")
 
 
+def _plan_without(plan, task_ids=(), item=None):
+    """The plan with those tasks (and `item`, a plan entry without a task yet)
+    taken out of both lists. One place, shared by push_to_backlog and the Tasks
+    tab's backlog route, so neither can leave the other's item behind."""
+    ids = set(task_ids)
+    new = dict(plan)
+    for key in ("must_dos", "optional"):
+        new[key] = [e for e in plan[key]
+                    if e is not item and e.get("task_id") not in ids]
+    return new
+
+
+def drop_from_open_reviews(task_id):
+    """Take a task out of the saved plan of every open, unconfirmed nightly
+    review. The Tasks tab calls this after sending a task to the backlog;
+    without it confirming the review would put the task back on the day and
+    book a new block. Placement is left alone: confirm_plan places again."""
+    from database import list_sessions
+    for session in list_sessions("open", ["nightly_review"]):
+        plan = session_plan(session["id"])
+        if not plan or plan.get("confirmed"):
+            continue
+        new = _plan_without(plan, [task_id])
+        if len(new["must_dos"]) + len(new["optional"]) != len(plan["must_dos"]) + len(plan["optional"]):
+            set_session_plan(session["id"], new)
+
+
 def _remove_block_of(task, now=None):
     """Delete a task's block from MILES if it is there, and forget its id."""
     from database import clear_task_calendar_event
@@ -558,12 +591,7 @@ def push_to_backlog(task_id=None, title=None, now=None):
         name = item["title"]
         add_task(name, now=now, minutes=item.get("minutes"))
 
-    new = dict(plan)
-    ids = {task["id"]} if task else set()
-    new["must_dos"] = [m for m in plan["must_dos"]
-                       if m is not item and not (m.get("task_id") in ids)]
-    new["optional"] = [o for o in plan["optional"]
-                       if o is not item and not (o.get("task_id") in ids)]
+    new = _plan_without(plan, {task["id"]} if task else set(), item)
     if len(new["must_dos"]) + len(new["optional"]) == len(plan["must_dos"]) + len(plan["optional"]):
         return f"Moved {name} to the backlog. It was not in the plan."
     new = place_plan(new, now)

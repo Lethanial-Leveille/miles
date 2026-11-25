@@ -309,16 +309,40 @@ def week_view(events, first_day, days=7):
 
 # ── suggestions (pure) ──
 
+def day_tag(day):
+    """"Mon Nov 30", the real date a suggestion is labelled with."""
+    return _day(day).strftime("%a %b %-d")
+
+
 def due_words(due, today):
-    """"Overdue", "Due today", "Due tomorrow" or "Due Monday"."""
+    """The reason for a backlog item with a due date, always with the date:
+    "Overdue, due Sun Nov 22", "Due today, Wed Nov 25", "Due tomorrow, Thu Nov 26",
+    otherwise "Due Mon Nov 30"."""
     due, today = _day(due), _day(today)
     if due < today:
-        return "Overdue"
+        return f"Overdue, due {day_tag(due)}"
     if due == today:
-        return "Due today"
+        return f"Due today, {day_tag(due)}"
     if due == today + datetime.timedelta(days=1):
-        return "Due tomorrow"
-    return f"Due {due.strftime('%A')}"
+        return f"Due tomorrow, {day_tag(due)}"
+    return f"Due {day_tag(due)}"
+
+
+def is_project_title(title):
+    """Whether a title is a project: the word project (or projects) as a whole
+    word, any case. "Project 3" is, "Projector repair" is not. An exam title
+    is never a project (see kind_rank)."""
+    return bool(re.search(r"\bprojects?\b", title.casefold()))
+
+
+def kind_rank(title):
+    """Tie break on one due date: exam prep 0, projects 1, everything else 2."""
+    if is_exam_title(title):
+        return 0
+    return 1 if is_project_title(title) else 2
+
+
+FAR_DUE_DAYS = 7
 
 
 def suggest(today, backlog, events, planned_titles=(), limit=MUST_DO_CAP):
@@ -329,7 +353,11 @@ def suggest(today, backlog, events, planned_titles=(), limit=MUST_DO_CAP):
          holiday context), and backlog items whose title says exam or test and
          are due inside that
       3. conflicts to fix, from find_conflicts over the same days
-      4. the oldest backlog items
+      4. the rest of the backlog: soonest due first, undated last (oldest
+         first). On one due date exam prep comes before projects before
+         anything else. An item due more than FAR_DUE_DAYS days after the day being planned (tomorrow) is skipped
+         while another item is due sooner, so a far off item never fills a slot
+         only because it is old. A dated item says its real due date.
     Each is {title, task_id, reason, minutes}. Nothing is suggested twice, and
     nothing already planned for tomorrow (planned_titles) is suggested at all."""
     today = _day(today)
@@ -354,7 +382,7 @@ def suggest(today, backlog, events, planned_titles=(), limit=MUST_DO_CAP):
 
     # 1. due soon or overdue
     soon = [t for t in backlog if due_of(t) and due_of(t) <= today + datetime.timedelta(days=DUE_SOON_DAYS)]
-    for task in sorted(soon, key=lambda t: (due_of(t), t["id"])):
+    for task in sorted(soon, key=lambda t: (due_of(t), kind_rank(t["text"]), t["id"])):
         take(task["text"], task["id"], due_words(task["due_date"], today), task.get("minutes"))
 
     # 2. exams, soonest first
@@ -367,8 +395,8 @@ def suggest(today, backlog, events, planned_titles=(), limit=MUST_DO_CAP):
             continue
         first, _ = calendar_roles.event_span(e)
         if tomorrow <= first.date() <= horizon:
-            exams.append((first.date(), e["title"].strip(), None, f"Exam {first.strftime('%A')}"
-                          if first.date() != tomorrow else "Exam tomorrow"))
+            exams.append((first.date(), e["title"].strip(), None, f"Exam {day_tag(first.date())}"
+                          if first.date() != tomorrow else f"Exam tomorrow, {day_tag(first.date())}"))
     for task in backlog:
         due = due_of(task)
         if due and due <= horizon and is_exam_title(task["text"]):
@@ -390,9 +418,21 @@ def suggest(today, backlog, events, planned_titles=(), limit=MUST_DO_CAP):
         take(f"Fix {c['start'].strftime('%A')}: {a} overlaps {b}", None, "Conflict to fix",
              FIX_MINUTES)
 
-    # 4. the oldest backlog items
-    for task in sorted(backlog, key=lambda t: t["id"]):
-        take(task["text"], task["id"], "Oldest in backlog", task.get("minutes"))
+    # 4. the rest of the backlog, soonest due first, far off items held back
+    dates = [due_of(t) for t in backlog if due_of(t)]
+    earliest = min(dates) if dates else None
+    far = tomorrow + datetime.timedelta(days=FAR_DUE_DAYS)   # counted from the day being planned
+
+    def rest_key(task):
+        due = due_of(task)
+        return (due is None, due or datetime.date.max, kind_rank(task["text"]), task["id"])
+
+    for task in sorted(backlog, key=rest_key):
+        due = due_of(task)
+        if due and due > far and earliest < due:
+            continue
+        take(task["text"], task["id"],
+             due_words(due, today) if due else "Oldest in backlog", task.get("minutes"))
     return picked
 
 

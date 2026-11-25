@@ -89,7 +89,7 @@ FIXED_OPENING = "\n".join([
     "",
     "Suggested must dos",
     "1. Study for linear algebra test, 10 AM to 12 PM",
-    "   Due Monday",
+    "   Due Mon Nov 30",
     "2. Fix Friday: Test Prep with Alex overlaps Dentist, 12 to 12:30 PM",
     "   Conflict to fix",
     "3. Email professor, 2 to 3 PM",
@@ -426,11 +426,11 @@ def test_suggestions_come_in_the_decided_order_and_stop_at_three():
     picked = rp.suggest(date(2026, 11, 24), backlog, events)
     # Overdue and due within three days first (earliest due first), then exams.
     assert [(p["title"], p["reason"]) for p in picked] == [
-        ("Late form", "Overdue"), ("Pay the fee", "Due Friday"), ("Study for Midterm 2", "Exam Thursday")]
+        ("Late form", "Overdue, due Sun Nov 22"), ("Pay the fee", "Due Fri Nov 27"), ("Study for Midterm 2", "Exam Thu Nov 26")]
 
     picked = rp.suggest(date(2026, 11, 24), backlog[:1] + backlog[3:], events, limit=3)
     assert [(p["title"], p["reason"]) for p in picked] == [
-        ("Study for Midterm 2", "Exam Thursday"), ("Study for chem exam", "Due Monday"),
+        ("Study for Midterm 2", "Exam Thu Nov 26"), ("Study for chem exam", "Due Mon Nov 30"),
         ("Fix Friday: Dentist overlaps Test Prep with Alex", "Conflict to fix")]
 
     picked = rp.suggest(date(2026, 11, 24), backlog[:1], [])
@@ -566,7 +566,7 @@ def test_a_change_posts_the_plan_in_the_openings_format(db, world):
         "1. Email professor, 10 to 11 AM",
         "   Oldest in backlog",
         "2. Study for linear algebra test, 3 to 5 PM",
-        "   Due Monday",
+        "   Due Mon Nov 30",
         "3. Laundry, 11 AM to 12 PM",
         "   Your choice",
         "",

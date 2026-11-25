@@ -105,7 +105,9 @@ def test_tasks_today_with_its_day(client, db):
 def test_finishing_a_task_takes_it_off_today(client, db):
     vitamins = db.add_task("take vitamins", "daily")
     response = client.post(f"/tasks/{vitamins}/complete")
-    assert response.json() == {"completed": True, "day": db.task_day()}
+    body = response.json()
+    assert (body["completed"], body["day"]) == (True, db.task_day())
+    assert body["task"]["id"] == vitamins and body["task"]["status"] == "done"
     assert client.get("/tasks/today").json()["tasks"] == []
 
 

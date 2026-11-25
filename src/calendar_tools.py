@@ -1012,7 +1012,14 @@ def delete_miles_event(event_id):
     miles_id = _miles_calendar_id(service)
     if miles_id is None or get_miles_event(event_id) is None:
         return False
-    _write_delete(miles_id, event_id)
+    try:
+        _write_delete(miles_id, event_id)
+    except HttpError as exc:
+        # Gone between our look and the delete (a second tap, or he deleted it
+        # in Google): the block is gone, which is what was asked.
+        if exc.status_code in (404, 410):
+            return False
+        raise
     return True
 
 
