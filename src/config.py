@@ -717,7 +717,20 @@ ENROLLMENT_DATA_PATH = os.path.expanduser("~/miles/models/enrollment.npz")
 #
 # Gitignored with the rest of models/. These are recordings of a real person.
 ENROLLMENT_AUDIO_DIR = os.path.expanduser("~/miles/models/enrollment_audio")
-DB_PATH         = os.path.expanduser("~/miles/data/miles.db")
+# The one place the database path is decided. MILES_DB_PATH overrides it, read
+# on every call, so the test suite (conftest.py sets it before any import) can
+# never reach the production file, and a module that asks at call time follows
+# a test's own temporary database. Production sets nothing and gets the real
+# file. DB_PATH is the same answer taken once at import, kept for the scripts
+# that read it.
+PRODUCTION_DB_PATH = os.path.expanduser("~/miles/data/miles.db")
+
+
+def db_path():
+    return os.environ.get("MILES_DB_PATH") or PRODUCTION_DB_PATH
+
+
+DB_PATH         = db_path()
 
 # The seed corpus lives under data/ rather than in src/ because data/ is
 # gitignored and src/ is not. seed_memories.py used to carry the corpus inline

@@ -273,7 +273,7 @@ def test_units_singularize_at_one(amount, unit, expected):
 
 def test_one_minute_timer_reads_correctly(db, monkeypatch):
     # A timer is a row now, so it has to be written somewhere throwaway.
-    monkeypatch.setattr(actions, "DB_PATH", db.DB_PATH)
+    monkeypatch.setenv("MILES_DB_PATH", db.DB_PATH)
     assert actions.set_timer("1 minutes") == "Timer set for 1 minute (60 seconds)."
     assert actions.set_timer("5 minutes") == "Timer set for 5 minutes (300 seconds)."
 

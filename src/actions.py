@@ -4,7 +4,7 @@ import threading
 import requests
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from config import DEFAULT_LOCATION, DB_PATH, PUSH_KINDS
+from config import DEFAULT_LOCATION, PUSH_KINDS, db_path
 from tools import Permission, tool
 from parsing import words_for_number
 from database import due_reminders, complete_reminder
@@ -277,7 +277,7 @@ def set_timer(duration_str):
     # restart dropped every running timer. The same bug reminders had until
     # Sep 6, with the same fix: the row is the only state.
     due = datetime.now() + timedelta(seconds=seconds)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path())
     conn.execute(
         "INSERT INTO reminders (content, due_at, created_at, kind) VALUES (?, ?, ?, 'timer')",
         (f"{amount} {_attributive(unit)} timer", due.isoformat(), datetime.now().isoformat()))
@@ -349,7 +349,7 @@ def set_reminder(content, due_time=None):
             return (f"Could not read '{due_time}' as a date and time, so "
                     f"nothing was saved. Use YYYY-MM-DDTHH:MM:SS.")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path())
     c = conn.cursor()
     c.execute(
         "INSERT INTO reminders (content, due_at, created_at) VALUES (?, ?, ?)",
@@ -471,7 +471,7 @@ def start_reminder_poller(interval=REMINDER_POLL_S):
 
 
 def cancel_reminder(content, kind=None):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path())
     c = conn.cursor()
     if kind is None:
         c.execute(

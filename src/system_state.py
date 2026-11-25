@@ -15,7 +15,7 @@ import sqlite3
 import statistics
 import subprocess
 
-from config import DB_PATH, WHISPER_MODEL
+from config import WHISPER_MODEL, db_path
 from tools import Permission, tool
 
 # Recent turns to summarize. Enough to be representative of the current build,
@@ -64,7 +64,7 @@ def _service_restarts(unit="miles-voice.service"):
 
 
 def _db_stats():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path())
     try:
         turns = conn.execute("SELECT COUNT(*) FROM timing_log").fetchone()[0]
         memories = conn.execute(

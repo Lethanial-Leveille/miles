@@ -20,7 +20,7 @@ def test_registered_as_a_read_tool():
 
 
 def test_returns_every_field(db, monkeypatch):
-    monkeypatch.setattr(system_state, "DB_PATH", db.DB_PATH)
+    monkeypatch.setenv("MILES_DB_PATH", db.DB_PATH)
     out = system_state.get_system_state()
     assert set(out) == {
         "uptime_hours", "turns_served", "median_latency_ms", "whisper_model",
@@ -58,14 +58,14 @@ def test_database_failure_nulls_only_the_database_fields(monkeypatch):
 def test_median_latency_is_none_when_there_is_no_data(db, monkeypatch):
     """A fresh database has no timed turns. Reporting zero would read as
     instant rather than as unknown."""
-    monkeypatch.setattr(system_state, "DB_PATH", db.DB_PATH)
+    monkeypatch.setenv("MILES_DB_PATH", db.DB_PATH)
     stats = system_state._db_stats()
     assert stats["median_latency_ms"] is None
     assert stats["turns"] == 0
 
 
 def test_counts_come_from_the_database(db, monkeypatch):
-    monkeypatch.setattr(system_state, "DB_PATH", db.DB_PATH)
+    monkeypatch.setenv("MILES_DB_PATH", db.DB_PATH)
     db.log_timing(
         turn_type="wake", action_fired=False, transcript="hi",
         speech_end_to_endpoint_ms=900, transcribe_ms=None, verify_ms=None,

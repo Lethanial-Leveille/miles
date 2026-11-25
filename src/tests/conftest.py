@@ -1,22 +1,48 @@
 import os
+import sqlite3
 import sys
+import tempfile
+
+# Before anything from src/ is imported, so config.db_path() can never answer
+# with the production file inside a test run. server.py and modules it pulls in
+# call init_db() at import; without this the suite once applied a branch's new
+# migrations to the live ~/miles/data/miles.db (Nov 24 2026).
+_IMPORT_TIME_DIR = tempfile.mkdtemp(prefix="miles_tests_")
+os.environ["MILES_DB_PATH"] = os.path.join(_IMPORT_TIME_DIR, "import_time.db")
+
+# The guard behind that rule: any sqlite3.connect to the production file, from
+# any module, raises and is recorded. Recorded as well as raised because some
+# code swallows exceptions on purpose (a voiceprint sample "never raises"), and
+# a swallowed attempt must still fail the run. pytest_sessionfinish fails the
+# whole run if the list is not empty.
+PRODUCTION_DB = os.path.realpath(os.path.expanduser("~/miles/data/miles.db"))
+PRODUCTION_DB_ATTEMPTS = []
+_real_connect = sqlite3.connect
+
+
+def _target(database):
+    path = os.fspath(database) if not isinstance(database, str) else database
+    if path.startswith("file:"):
+        path = path[len("file:"):].split("?", 1)[0]
+    return os.path.realpath(os.path.expanduser(path))
+
+
+def _guarded_connect(database, *args, **kwargs):
+    if database != ":memory:" and _target(database) == PRODUCTION_DB:
+        import traceback
+        PRODUCTION_DB_ATTEMPTS.append("".join(traceback.format_stack(limit=8)))
+        raise RuntimeError(f"a test tried to open the production database {PRODUCTION_DB}")
+    return _real_connect(database, *args, **kwargs)
+
+
+sqlite3.connect = _guarded_connect
 
 # Test files live in src/tests/; the modules under test live in src/, one
 # directory up. Insert it so plain `import database` etc. resolve.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import tempfile
-
 import pytest
 import database
-
-# Before any test module is imported. server.py (and modules it pulls in) call
-# init_db() at import, and a test file that imports them at its top runs that
-# before the db fixture can point anywhere else. Without this, the suite applied
-# a branch's new migrations to the live ~/miles/data/miles.db (found Nov 24
-# 2026: test_agent_watchdog.py and test_voice_pipeline.py). Every test that
-# needs a database still gets its own file from the db fixture.
-database.DB_PATH = os.path.join(tempfile.mkdtemp(prefix="miles_tests_"), "import_time.db")
 
 
 @pytest.fixture
@@ -26,6 +52,8 @@ def db(tmp_path, monkeypatch):
     ~/miles/data/miles.db."""
     test_db_path = str(tmp_path / "test_miles.db")
     monkeypatch.setattr(database, "DB_PATH", test_db_path)
+    # Modules that ask config.db_path() at call time follow it too.
+    monkeypatch.setenv("MILES_DB_PATH", test_db_path)
     database.init_db()
     return database
 
@@ -130,3 +158,12 @@ def fake_claude(monkeypatch):
         return fake
 
     return install
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run if anything tried to open the production database, even
+    an attempt some code caught and ignored."""
+    if PRODUCTION_DB_ATTEMPTS:
+        print(f"\n{len(PRODUCTION_DB_ATTEMPTS)} attempt(s) to open {PRODUCTION_DB} "
+              f"during the test run. First one:\n{PRODUCTION_DB_ATTEMPTS[0]}")
+        session.exitstatus = 1

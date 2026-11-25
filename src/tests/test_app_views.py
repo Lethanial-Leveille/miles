@@ -78,7 +78,7 @@ def test_status_details_survive_systemctl_failing(client, monkeypatch):
 
 def test_a_timer_is_listed_and_cancelled_like_a_reminder(client, monkeypatch):
     import actions
-    monkeypatch.setattr(actions, "DB_PATH", database.DB_PATH)
+    monkeypatch.setenv("MILES_DB_PATH", database.DB_PATH)
     actions.set_timer("10 minutes")
     timer, = client.get("/reminders").json()
     assert (timer["content"], timer["kind"]) == ("10 minute timer", "timer")

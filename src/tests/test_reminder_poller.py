@@ -23,12 +23,10 @@ import database
 
 @pytest.fixture
 def reminders(db, monkeypatch):
-    """A throwaway database that BOTH modules point at.
-
-    The conftest fixture redirects database.DB_PATH, but actions.py holds its
-    own `from config import DB_PATH` for the insert, so redirecting one leaves
-    set_reminder writing to the real ~/miles/data/miles.db."""
-    monkeypatch.setattr(actions, "DB_PATH", database.DB_PATH)
+    """A throwaway database that both modules point at: the db fixture sets
+    database.DB_PATH and MILES_DB_PATH, and actions.py reads config.db_path()
+    at call time, so the insert and the poller read the same file."""
+    assert actions.db_path() == database.DB_PATH
     alerts.clear()
     yield database
     alerts.clear()

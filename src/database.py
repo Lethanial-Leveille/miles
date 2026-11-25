@@ -3,7 +3,11 @@ import math
 import re
 import sqlite3
 from datetime import datetime, timedelta
-from config import DAY_STARTS_AT_HOUR, DB_PATH, RECALL_MIN_DF, RRF_K
+from config import DAY_STARTS_AT_HOUR, RECALL_MIN_DF, RRF_K, db_path
+
+# Taken from config.db_path() at import; the db test fixture repoints it (and
+# MILES_DB_PATH with it) per test.
+DB_PATH = db_path()
 
 
 # ── Schema migrations ──

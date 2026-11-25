@@ -201,7 +201,7 @@ def test_a_network_failure_is_logged_not_raised(db, apns_key, monkeypatch, capsy
 @pytest.fixture
 def pushed(db, monkeypatch):
     sent = []
-    monkeypatch.setattr(actions, "DB_PATH", database.DB_PATH)
+    monkeypatch.setenv("MILES_DB_PATH", database.DB_PATH)
     monkeypatch.setattr(push, "notify_async", lambda *a, **k: sent.append((a, k)))
     return sent
 
