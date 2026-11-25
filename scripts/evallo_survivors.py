@@ -10,10 +10,15 @@ Run from the repo root, on the Pi:
     python3 scripts/evallo_survivors.py [FIRST_DAY LAST_DAY] [--out FILE]
 
 It reads the calendars (events.list only) and the verified set, and writes
-nothing but the output file. It prints no event titles and no secrets. The state
-is read as if this process had accepted a push, because it is a separate process
-from the server and has no flag of its own; if no status row exists it says so
-and writes nothing.
+nothing but the output file. It prints no event titles and no secrets.
+
+The state is the real one: the `active` flag in the database, as the server and
+the voice process see it. The file's first line says `outcome=<active, stale, off
+or unreadable>`; when it is not active the filter was not applied, so the file
+lists every Evallo event and must not be read as a verification. The file is
+written to a unique mode 600 temporary file in the same directory and renamed
+into place, so a reader never sees half a file and an existing file is never
+truncated first (a symlink at the path is replaced, never followed).
 """
 
 import argparse
@@ -29,6 +34,15 @@ DEFAULT_OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
                            "data", "evallo_survivors.txt")
 
 
+def _updated_text(event):
+    """The Google `updated` time as a normalized UTC stamp; never the raw string."""
+    raw = event.get("updated")
+    if raw is None or raw == "":
+        return "none"
+    moment = evallo_filter.parse_moment(raw)
+    return evallo_filter.iso_z(moment) if moment is not None else "unparseable"
+
+
 def survivor_lines(events, state, now):
     """One 'id updated row' line per Evallo event the filter keeps."""
     lines = []
@@ -38,15 +52,38 @@ def survivor_lines(events, state, now):
         kept, row = evallo_filter.decide(event, state, now)
         if kept:
             lines.append(f"{evallo_filter.session_id(event) or 'none'} "
-                         f"{event.get('updated') or 'none'} row {row}")
+                         f"{_updated_text(event)} row {row}")
     return lines
 
 
 def write_private(path, lines):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as handle:
-        handle.write("\n".join(lines) + ("\n" if lines else ""))
-    os.chmod(path, 0o600)
+    """Atomically: an exclusively created, unique, mode 600 temporary file in
+    the same directory, then os.replace over the destination."""
+    directory = os.path.dirname(os.path.abspath(path))
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    tmp = fd = None
+    for _ in range(10):
+        tmp = os.path.join(directory, f".{os.path.basename(path)}.{os.getpid()}."
+                                      f"{os.urandom(6).hex()}.tmp")
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
+            break
+        except FileExistsError:
+            continue
+    if fd is None:
+        raise OSError("could not create a temporary file")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write("\n".join(lines) + ("\n" if lines else ""))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def raw_events(first, last_exclusive):
@@ -79,14 +116,11 @@ def main(argv=None):
     first = datetime.date.fromisoformat(args.first)
     last = datetime.date.fromisoformat(args.last)
     state = evallo_filter.load_state()
-    if not state.readable or state.fetched_at is None:
-        print("No readable Evallo status row; nothing written.")
-        return 1
-    state.accepted = True
-    lines = survivor_lines(raw_events(first, last + datetime.timedelta(days=1)),
-                           state, evallo_filter.now_utc())
-    write_private(args.out, lines)
-    print(f"{len(lines)} surviving Evallo events written to {args.out}")
+    now = evallo_filter.now_utc()
+    outcome = evallo_filter.status(state, now)["outcome"]
+    lines = survivor_lines(raw_events(first, last + datetime.timedelta(days=1)), state, now)
+    write_private(args.out, [f"outcome={outcome}"] + lines)
+    print(f"outcome={outcome}: {len(lines)} Evallo events listed in {args.out}")
     return 0
 
 

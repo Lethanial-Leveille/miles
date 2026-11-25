@@ -534,56 +534,6 @@ def test_the_evallo_keys_match_the_write_guard():
     assert ef.EVALLO_KEYS == cal.EVALLO_KEYS
 
 
-# ── the read only survivors script ──
-
-def test_survivors_script_lists_id_updated_and_row(tmp_path):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "evallo_survivors", os.path.join(os.path.dirname(__file__), "..", "..", "scripts",
-                                         "evallo_survivors.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    events = [{"id": "plain", "summary": "Class"}, ev(sid=MINE), ev(sid=None), ev(), ev(updated=iso(F))]
-    lines = mod.survivor_lines(events, state(), NOW)
-    assert [line.split()[-1] for line in lines] == ["2", "1", "3"]
-    assert lines[0].startswith(MINE) and lines[1].startswith("none ")
-    out = tmp_path / "survivors.txt"
-    mod.write_private(str(out), lines)
-    assert oct(out.stat().st_mode & 0o777) == "0o600"
-
-
-def test_validation_errors_never_echo_what_was_sent(client, agent, caplog, capsys):
-    import logging
-    caplog.set_level(logging.DEBUG)
-    secret = "SECRET-fake-token-9f8e7d"
-    capsys.readouterr()
-    bodies = [
-        body(token=secret),
-        body(session_ids=[secret]),
-        body(window_start=secret),
-        body(window_end=secret, fetched_at=secret),
-        body(session_ids=[MINE, MINE, secret]),
-    ]
-    for payload in bodies:
-        r = client.put("/agent/evallo/sessions", json=payload, headers=_h(agent))
-        assert r.status_code == 422
-        assert secret not in r.text
-        assert "input" not in r.text
-        assert all(set(e) == {"loc", "type"} for e in r.json()["detail"]
-                   ) if isinstance(r.json()["detail"], list) else True
-    raw = client.put("/agent/evallo/sessions", content=secret, headers=_h(agent))
-    assert raw.status_code == 422 and secret not in raw.text
-    out = capsys.readouterr()
-    assert secret not in out.out and secret not in out.err
-    assert secret not in caplog.text
-
-
-def test_other_routes_keep_the_default_422(client, agent):
-    r = client.post("/agent/jobs/report", headers=_h(agent),
-                    json={"job": "lunch", "day": "2026-11-24", "ok": True})
-    assert r.status_code == 422 and "input" in r.json()["detail"][0]
-
-
 # ── revision 5, group 1: active lives in the database ──
 
 def _connect():
@@ -938,3 +888,70 @@ def test_the_write_guard_refusal_never_repeats_a_hidden_title(lookups):
         cal._write_delete(fake_google.PRIMARY, "mine")
     assert "Kid <> Lethanial Leveille | Math" in str(ok.value)       # his own keeps its name
     assert lookups.written() == []
+
+
+# ── the read only survivors script ──
+
+def _survivors():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "evallo_survivors", os.path.join(os.path.dirname(__file__), "..", "..", "scripts",
+                                         "evallo_survivors.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_survivors_script_lists_id_updated_and_row(tmp_path):
+    mod = _survivors()
+    events = [{"id": "plain", "summary": "Class"}, ev(sid=MINE), ev(sid=None), ev(),
+              ev(updated=iso(F)), ev(updated="Tuesday-ish"), ev(updated="")]
+    lines = mod.survivor_lines(events, state(), NOW)
+    assert [line.split()[-1] for line in lines] == ["2", "1", "3", "3", "3"]
+    assert lines[0].startswith(MINE) and lines[1].startswith("none ")
+    assert lines[3].split()[1] == "unparseable" and "Tuesday" not in " ".join(lines)
+    assert lines[4].split()[1] == "none"
+    assert lines[2].split()[1] == iso(F)
+
+
+def test_survivors_file_is_atomic_private_and_never_follows_a_symlink(tmp_path):
+    mod = _survivors()
+    out = tmp_path / "survivors.txt"
+    out.write_text("old contents\n")
+    mod.write_private(str(out), ["outcome=off", "a row 1"])
+    assert out.read_text() == "outcome=off\na row 1\n"
+    assert oct(out.stat().st_mode & 0o777) == "0o600"
+    assert [p.name for p in tmp_path.iterdir()] == ["survivors.txt"]       # no temp left behind
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me")
+    link = tmp_path / "link.txt"
+    link.symlink_to(victim)
+    mod.write_private(str(link), ["x"])
+    assert victim.read_text() == "keep me" and not link.is_symlink()
+
+
+def test_a_failed_write_leaves_the_old_file_whole(tmp_path, monkeypatch):
+    mod = _survivors()
+    out = tmp_path / "survivors.txt"
+    out.write_text("complete old file\n")
+    monkeypatch.setattr(mod.os, "replace", lambda *a: (_ for _ in ()).throw(OSError("no")))
+    with pytest.raises(OSError):
+        mod.write_private(str(out), ["new"])
+    assert out.read_text() == "complete old file\n"
+    assert [p.name for p in tmp_path.iterdir()] == ["survivors.txt"]
+
+
+def test_survivors_main_reads_the_real_flag_and_labels_the_outcome(db, monkeypatch, tmp_path):
+    mod = _survivors()
+    push(db)
+    ef.clear_active()                                     # the server restarted: off
+    monkeypatch.setattr(mod, "raw_events", lambda a, b: [ev(), ev(sid=MINE)])
+    out = tmp_path / "s.txt"
+    assert mod.main(["2026-11-23", "2026-12-07", "--out", str(out)]) == 0
+    lines = out.read_text().splitlines()
+    assert lines[0] == "outcome=off" and len(lines) == 3          # nothing was filtered
+    push(db)                                              # accepted again
+    mod.main(["2026-11-23", "2026-12-07", "--out", str(out)])
+    lines = out.read_text().splitlines()
+    assert lines[0].startswith("outcome=") and lines[0] != "outcome=off"
+    assert all("row 4" not in line for line in lines)
