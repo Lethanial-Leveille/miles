@@ -51,13 +51,6 @@ def ev(sid=OTHER, title="Kid <> Someone Else | Math", updated=None, start=None, 
 NOW = F + datetime.timedelta(hours=1)
 
 
-@pytest.fixture(autouse=True)
-def fresh_process():
-    ef.reset_process_flag()
-    yield
-    ef.reset_process_flag()
-
-
 # ── 1. each row of C4 ──
 
 def test_row_by_row():
@@ -231,7 +224,7 @@ def test_a_push_stores_ids_and_turns_the_filter_on(db):
 def test_restart_turns_it_off_until_a_push_is_accepted(db):
     push(db)
     assert ef.load_state().on
-    ef.reset_process_flag()                      # a restart: deploy, rollback, redeploy
+    ef.clear_active()                      # a restart: deploy, rollback, redeploy
     s = ef.load_state()
     assert not s.on and ef.status(s, NOW)["outcome"] == "off"
     assert ef.keep(ev(), s, NOW)                 # Mac offline: every Evallo event kept
@@ -239,7 +232,7 @@ def test_restart_turns_it_off_until_a_push_is_accepted(db):
 
 def test_an_idempotent_retry_after_a_restart_turns_it_on(db):
     push(db)
-    ef.reset_process_flag()
+    ef.clear_active()
     count, fetched, _ = push(db)
     assert (count, fetched) == (1, iso(F))
     assert ef.load_state().on
@@ -247,18 +240,18 @@ def test_an_idempotent_retry_after_a_restart_turns_it_on(db):
 
 def test_a_25_hour_old_row_after_a_restart_is_off_not_stale(db):
     push(db, fetched=F, now=F)
-    ef.reset_process_flag()
+    ef.clear_active()
     s = ef.load_state()
     late = F + datetime.timedelta(hours=25)
     assert ef.status(s, late)["outcome"] == "off"
     assert ef.keep(ev(title="Kid <> Someone"), s, late)
-    ef.mark_accepted()
+    push(db, fetched=F, now=F)                   # the Mac's retry turns it on again
     assert ef.status(ef.load_state(), late)["outcome"] == "stale"
 
 
 def test_a_backward_clock_correction_cannot_turn_it_on(db):
     push(db)
-    ef.reset_process_flag()
+    ef.clear_active()
     s = ef.load_state()
     assert ef.status(s, F - datetime.timedelta(hours=5))["outcome"] == "off"
     assert not s.on
@@ -367,7 +360,7 @@ def test_already_over_is_filtered_too(calendar):
 
 
 def test_without_a_push_in_this_process_everything_shows_with_the_note(calendar):
-    ef.reset_process_flag()
+    ef.clear_active()
     ids = {e["id"] for e in cal.events_for_app(DAY, DAY + datetime.timedelta(days=1))["events"]}
     assert {"theirs", "overlap"} <= ids
     listing = cal.get_upcoming_events("2026-11-30", "2026-12-01", now=datetime.datetime(2026, 11, 29))
@@ -506,7 +499,7 @@ REVIEW_NOW = datetime.datetime(2026, 11, 30, 21, 30)
 def test_the_review_opening_carries_the_note(calendar, monkeypatch):
     text, _ = nr.opening(REVIEW_NOW)
     assert "Evallo sessions" not in text                       # active
-    ef.reset_process_flag()
+    ef.clear_active()
     text, _ = nr.opening(REVIEW_NOW)
     assert text.startswith("Evallo sessions not verified since ")
     monkeypatch.setattr(ef, "load_state", lambda: ef.State(readable=False))
@@ -519,7 +512,6 @@ def test_a_stale_set_shows_the_stale_note(db, monkeypatch):
     old = ef.now_utc().replace(microsecond=0) - datetime.timedelta(hours=30)
     ef.store_snapshot(old, datetime.date(2026, 11, 1), datetime.date(2027, 3, 1), [MINE],
                       now=old)
-    ef.mark_accepted()
     listing = cal.get_upcoming_events("2026-11-30", "2026-12-01", now=datetime.datetime(2026, 11, 29))
     assert listing.startswith("Evallo sessions not verified since ")
 
@@ -590,3 +582,73 @@ def test_other_routes_keep_the_default_422(client, agent):
     r = client.post("/agent/jobs/report", headers=_h(agent),
                     json={"job": "lunch", "day": "2026-11-24", "ok": True})
     assert r.status_code == 422 and "input" in r.json()["detail"][0]
+
+
+# ── revision 5, group 1: active lives in the database ──
+
+def _connect():
+    import sqlite3
+    return sqlite3.connect(database.DB_PATH)
+
+
+def test_a_second_connection_sees_an_accepted_push(db):
+    push(db)
+    other = _connect()
+    assert other.execute("SELECT active FROM evallo_verification").fetchone() == (1,)
+    other.close()
+    assert ef.load_state().on
+
+
+def test_server_startup_clears_active_and_a_reader_restart_does_not(db):
+    push(db)
+    # a voice or review process starting up only reads
+    assert ef.load_state().on and ef.load_state().on
+    server._evallo_filter_off_until_a_push()           # miles-server's startup hook
+    s = ef.load_state()
+    assert not s.on and ef.status(s, NOW)["outcome"] == "off"
+    push(db)                                           # the idempotent retry turns it on
+    assert ef.load_state().on
+
+
+def test_startup_clear_without_a_row_or_table_does_not_raise(db, monkeypatch):
+    ef.clear_active()
+    monkeypatch.setattr(database, "DB_PATH", os.path.join(tempfile.mkdtemp(), "none", "x.db"))
+    ef.clear_active()
+
+
+def test_a_count_that_does_not_match_the_ids_is_unreadable(db):
+    push(db, ids=[MINE, NEW])
+    conn = _connect()
+    conn.execute("UPDATE evallo_verification SET count = 5")
+    conn.commit()
+    conn.close()
+    s = ef.load_state()
+    assert not s.readable and ef.status(s, NOW)["outcome"] == "unreadable"
+    assert ef.keep(ev(), s, NOW)
+
+
+def test_migration_045_is_atomic(tmp_path, monkeypatch):
+    import sqlite3
+    path = str(tmp_path / "m.db")
+    monkeypatch.setattr(database, "DB_PATH", path)
+    monkeypatch.setattr(database, "MIGRATIONS", database.MIGRATIONS[:44])
+    database.init_db()
+    full = list(database.MIGRATIONS) + [(45, database._migration_045_evallo_filter)]
+
+    def half(conn):
+        conn.execute("CREATE TABLE evallo_verified_sessions (session_id TEXT PRIMARY KEY)")
+        raise RuntimeError("between the two tables")
+    monkeypatch.setattr(database, "MIGRATIONS", database.MIGRATIONS + [(45, half)])
+    with pytest.raises(RuntimeError):
+        database.init_db()
+    conn = sqlite3.connect(path)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "evallo_verified_sessions" not in tables
+    assert conn.execute("SELECT version FROM schema_version").fetchone() == (44,)
+    conn.close()
+    monkeypatch.setattr(database, "MIGRATIONS", full)
+    database.init_db()
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT version FROM schema_version").fetchone() == (45,)
+    assert "active" in [r[1] for r in conn.execute("PRAGMA table_info(evallo_verification)")]
+    conn.close()

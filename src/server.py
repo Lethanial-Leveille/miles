@@ -906,6 +906,13 @@ async def _validation_error(request, exc):
     return JSONResponse(status_code=422, content={"detail": errors})
 
 
+@app.on_event("startup")
+def _evallo_filter_off_until_a_push():
+    """The Evallo filter is off after every miles-server start, until the Mac's
+    next push is accepted (contract C2). The only writer of that reset."""
+    evallo_filter.clear_active()
+
+
 class EvalloSessions(BaseModel):
     """The ids of his own Evallo sessions, as the Mac read them (contract C3).
     Anything else, a token included, is a 422."""

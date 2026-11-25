@@ -7,10 +7,10 @@ Evallo event that is not his. The one rule is keep() below, written out as a
 table in docs/EVALLO_FILTER_CONTRACT.md (C4). Every uncertainty errs toward
 keeping the event: busy, never free.
 
-The filter is on only when there is a status row, the state was read, and this
-process has accepted a push since it started (C2). A restart turns it off until
-the Mac's next push is accepted, so a redeploy or a rollback can never apply an
-old set.
+The filter is on only when there is a status row, the state was read, and
+`active` is 1 in the database (C2). miles-server clears it at startup, so a restart
+turns it off until the Mac's next push is accepted, and a redeploy or a rollback
+can never apply an old set.
 """
 
 import contextlib
@@ -18,7 +18,6 @@ import contextvars
 import datetime
 import re
 import sqlite3
-import threading
 from zoneinfo import ZoneInfo
 
 import database
@@ -41,27 +40,20 @@ _NAME_RULE = re.compile(
 OUTCOMES = ("active", "stale", "off", "unreadable")
 _RANK = {"active": 0, "stale": 1, "off": 2, "unreadable": 3}
 
-_accepted = False
-_accepted_lock = threading.Lock()
-
-
-def mark_accepted():
-    """Set only by an accepted push (200, an idempotent retry included)."""
-    global _accepted
-    with _accepted_lock:
-        _accepted = True
-
-
-def accepted():
-    with _accepted_lock:
-        return _accepted
-
-
-def reset_process_flag():
-    """A process restart, for tests."""
-    global _accepted
-    with _accepted_lock:
-        _accepted = False
+def clear_active():
+    """miles-server's startup: the filter stays off until a push is accepted
+    after this start. Only the server calls this; voice and the review never
+    write the flag. A failure is logged and never stops the server."""
+    try:
+        conn = sqlite3.connect(database.DB_PATH, timeout=10)
+        try:
+            conn.execute("UPDATE evallo_verification SET active = 0")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        print(f"Evallo filter: could not clear active at startup ({type(exc).__name__}).",
+              flush=True)
 
 
 def now_utc():
@@ -97,8 +89,8 @@ def parse_moment(text):
 
 class State:
     """What one read of the database found: the ids and the status row together
-    (one transaction), whether it could be read, and whether this process has
-    accepted a push."""
+    (one transaction), whether it could be read, and whether a push has
+    been accepted since miles-server started (the `active` column)."""
 
     def __init__(self, readable=True, ids=frozenset(), fetched_at=None, window=None,
                  fetched_raw=None, accepted=False):
@@ -128,26 +120,28 @@ def load_state():
     """The verified ids and the status row from one transaction. A failure is
     logged without detail beyond its type, and gives an unreadable state: every
     event is kept."""
-    flag = accepted()
     conn = None
     try:
         conn = sqlite3.connect(database.DB_PATH, timeout=5, isolation_level=None)
         conn.execute("BEGIN")
-        row = conn.execute("SELECT fetched_at, window_start, window_end FROM evallo_verification "
-                           "WHERE id = 1").fetchone()
+        row = conn.execute("SELECT fetched_at, window_start, window_end, count, active "
+                           "FROM evallo_verification WHERE id = 1").fetchone()
         ids = frozenset(r[0] for r in conn.execute("SELECT session_id FROM evallo_verified_sessions"))
         conn.execute("COMMIT")
         if row is None:
-            return State(accepted=flag)
+            return State()
+        if row[3] != len(ids):
+            raise ValueError("stored count does not match the stored ids")
         fetched = parse_moment(row[0])
         window = (datetime.date.fromisoformat(row[1]), datetime.date.fromisoformat(row[2]))
         if fetched is None:
             raise ValueError("stored fetched_at does not parse")
-        return State(ids=ids, fetched_at=fetched, window=window, fetched_raw=row[0], accepted=flag)
+        return State(ids=ids, fetched_at=fetched, window=window, fetched_raw=row[0],
+                     accepted=row[4] == 1)
     except Exception as exc:
         print(f"Evallo filter state unreadable ({type(exc).__name__}); keeping every event.",
               flush=True)
-        return State(readable=False, accepted=flag)
+        return State(readable=False)
     finally:
         if conn is not None:
             conn.close()
@@ -276,7 +270,7 @@ def record(outcome):
 def store_snapshot(fetched_at, window_start, window_end, session_ids, now=None):
     """Replace the set and the status row in one BEGIN IMMEDIATE transaction.
     Returns (count, fetched_at text, pushed_at text). Raises Conflict. Sets the
-    process flag only once the push is accepted."""
+    active flag in the same transaction as the replacement."""
     now = now or now_utc()
     fetched_text, pushed_text = iso_z(fetched_at), iso_z(now)
     ids = sorted(set(session_ids))
@@ -294,16 +288,16 @@ def store_snapshot(fetched_at, window_start, window_end, session_ids, now=None):
                     same_ids = {r[0] for r in conn.execute(
                         "SELECT session_id FROM evallo_verified_sessions")} == set(ids)
                     if row[2] == window_start.isoformat() and row[3] == window_end.isoformat() and same_ids:
+                        conn.execute("UPDATE evallo_verification SET active = 1 WHERE id = 1")
                         conn.execute("COMMIT")
-                        mark_accepted()
                         return row[4], row[0], row[1]
                     raise Conflict("conflicting_snapshot")
             conn.execute("DELETE FROM evallo_verified_sessions")
             conn.executemany("INSERT INTO evallo_verified_sessions (session_id) VALUES (?)",
                              [(i,) for i in ids])
             conn.execute("INSERT OR REPLACE INTO evallo_verification "
-                         "(id, fetched_at, pushed_at, window_start, window_end, count) "
-                         "VALUES (1, ?, ?, ?, ?, ?)",
+                         "(id, fetched_at, pushed_at, window_start, window_end, count, active) "
+                         "VALUES (1, ?, ?, ?, ?, ?, 1)",
                          (fetched_text, pushed_text, window_start.isoformat(),
                           window_end.isoformat(), len(ids)))
             conn.execute("COMMIT")
@@ -313,5 +307,4 @@ def store_snapshot(fetched_at, window_start, window_end, session_ids, now=None):
             raise
     finally:
         conn.close()
-    mark_accepted()
     return len(ids), fetched_text, pushed_text
