@@ -254,6 +254,38 @@ Found by the Codex adversarial reviews of the Evallo session id filter and delib
 * Survivors report: sub second precision of Google `updated` is lost at the cutoff, and its header text about stale runs is wrong.
 * Lows: a `Date` header with year 0026 is accepted, and the `--id-file` path check and `getpass` fall back are loose (details in the review output).
 
+### Routine phase (planned Nov 26 2026, after Phase 2)
+
+Planned only, not built. The phase starts with a plan and contract shown to him. When planning it, ask him his workout split, his target bedtime and his usual wake time.
+
+* Workouts: MILES schedules 4 workout blocks a week on the MILES calendar, each labeled with that day's split. After each block it checks Hevy for a logged workout. If there is none, it removes the block and reschedules later that day or later in the week, keeping the split order and 4 per week.
+* Hevy: MILES may create and update Hevy routines, including progressive overload targets and the ab wheel. Logged workouts are read only unless he asks to fix a specific one and confirms. Needs Hevy Pro and an API key stored like the other secrets (a mode 600 file, never printed).
+* Sleep: a wind down block before his target bedtime; the nightly review plans around his real wake time from Oura; later, morning blocks shift when Oura shows he woke late.
+* Nova Action Button (replaces the iPhone capture Shortcut; the Mac hotkey keeps using capture):
+  * A Nova App Intent for the iPhone Action Button that starts voice right away.
+  * The result shows in a small card at the top of the screen without opening the app, and a cyan indicator shows in the Dynamic Island while it works.
+  * A Control Center control with Nova's icon runs the same intent.
+  * From the lock screen without Face ID it runs at the lowest clearance: add tasks and list items, and ask what is next. Anything higher requires Face ID.
+
+### Jobs phase (planned Nov 26 2026, after the Routine phase)
+
+Planned only, not built.
+
+* First a Gmail recruiting watcher that reads only recruiting emails. It proposes tasks with deadlines and prep blocks for online assessments and interviews, through his approval checkmarks, and logs every application and online assessment to PROWL.
+* Then the `job_apply` form filler moves here from Phase 6, starting with Greenhouse and Lever, Workday later, and always stopping before submit.
+
+### Kitchen phase (planned Nov 26 2026, after Phase 3)
+
+Planned only, not built.
+
+* A hands free voice cooking mode on the Pi: one step at a time, "next", and timers.
+* Meal planning for his bulk from his Cronometer totals; ingredients are added to his grocery list; a weekly meal prep block on the calendar.
+
+### Private data out of the repo (Nov 26 2026)
+
+* Done in the history scrub of Nov 26 2026: the real calendar ids moved out of `src/config.py` into the untracked `data/calendar_roles.json`; tests and docs use fake names, emails and ids.
+* Queued: a pre push scan script (`scripts/pre_push_scan.py`, run by a git pre push hook) that checks the commits being pushed for names from the Evallo student list, emails, calendar ids, tutor ids, tokens and keys, and refuses the push on any hit. Also decide whether to rewrite the public history that still holds one student's first name (committed before Nov 26 2026); that needs a force push and his approval.
+
 ### Model audit: local models for background jobs (planned Nov 25 2026, after the Tasks follow ups)
 
 Planned only, not built. The phase starts with a plan and contract shown to him, as every phase does.

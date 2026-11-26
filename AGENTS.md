@@ -10,6 +10,11 @@ Rules for coding agents (Codex, Claude Code and their subagents) that apply to t
 - Never print a secret (API keys, JWTs, OAuth tokens, capture keys, `.env` values) in command output, logs or replies. Write it to a mode 600 file (on the Pi under `~/.miles-keys/`) and report only the path and key id. Verify by hash or length, never by value. If one is printed, say so and rotate it.
 - Never commit secrets or private data; the list is under Things to Never Commit in CLAUDE.md. Run `git status` before `git add`.
 
+## Private data stays out of the repo
+- This repo is PUBLIC. Never put real names of students, clients or other people, real email addresses, or real calendar ids in code, tests, docs, comments or commit messages. Use obvious fakes: first names like Alex and Jordan, addresses like `primary.fake@example.com`, ids like `fake-calendar-01@example.com`.
+- The real calendar ids live in `data/calendar_roles.json` (untracked, mode 600), loaded by `src/config.py` through `CALENDAR_ROLES_FILE` (env `MILES_CALENDAR_ROLES_FILE`). The placeholder ids in `config.py` are fakes. Tests set the variable to a missing file so they never read the real ids.
+- Before any push to GitHub, scan the commits being pushed (added lines, commit messages, file paths and branch names) for names, emails, calendar ids, tutor ids, tokens and keys, and say so in the deploy plan. Pushing is never done on a guess.
+
 ## UF password
 - Never store, type or ask for his UF password, and never try to get around Duo or MFA.
 - Any 401, `invalid_grant`, or redirect to the UF login or Duo page stops the job at once with no retries (no lockouts) and marks it as needing login. He logs in himself.
