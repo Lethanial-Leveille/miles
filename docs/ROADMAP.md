@@ -290,6 +290,10 @@ Planned only, not built.
 * A hands free voice cooking mode on the Pi: one step at a time, "next", and timers.
 * Meal planning for his bulk from his Cronometer totals; ingredients are added to his grocery list; a weekly meal prep block on the calendar.
 
+### Tailscale hostname cleanup (queued Nov 26 2026)
+
+Small cleanup, planned only. The Pi's raw Tailscale address is written in scripts and docs (`docs/INFRASTRUCTURE.md`, the login and watchdog scripts, `docs/BACKEND_TODO.md`, `docs/INCIDENTS.md`, `docs/SESSION_START.md` and the Mac agent's helper scripts). Switch them to the Tailscale MagicDNS hostname of the Pi instead of the address, so the address is not repeated in the public repo and a changed address breaks nothing. The address already in public history stays as is (decided Nov 26 2026). Check each script still reaches the Pi by hostname from the Mac and from the phone's network before removing the address, and keep the address out of any new commit.
+
 ### Private data out of the repo (Nov 26 2026)
 
 * Done in the history scrub of Nov 26 2026: the real calendar ids moved out of `src/config.py` into the untracked `data/calendar_roles.json`; tests and docs use fake names, emails and ids.
