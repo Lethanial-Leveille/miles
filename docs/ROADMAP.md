@@ -181,7 +181,7 @@ Begin by reading the repo and giving me the summary and Phase 1 plan. Do not wri
 
 ### Order and working rules
 
-* Order: nightly review v2, then the Evallo session id filter, then the Tasks tab fix (see Tasks tab follow ups), then Phases 2, 3, 4, 5 and 6 in that order, then Phase 6.5, then Phase S before any errand runs unattended, then Phase 7.
+* Order: nightly review v2, then the Evallo session id filter, then the nightly backup (see Nightly backup), then the Tasks tab fix (see Tasks tab follow ups), then Phases 2, 3, 4, 5 and 6 in that order, then Phase 6.5, then Phase S before any errand runs unattended, then Phase 7.
 * Each phase: plan shown before building, tests, one builder subagent at a time, an independent review at the end, a fresh database backup before its own separate deploy, and a warning before anything touches production. If a usage limit hits, stop at the end of the current phase, never half built.
 * Phase 2 and 3 use the MAS3114 Exam 3 (Monday Nov 30 2026) as their first real data: syllabus import, study plan, first learn and quiz sessions. Source material lives in `~/MILES/source_material/MAS3114/Exam3/`. Every Lesson 19 to 27 topic starts as new; determinants and null space are the prerequisites to check first.
 
@@ -213,6 +213,15 @@ Begin by reading the repo and giving me the summary and Phase 1 plan. Do not wri
 * Exception to the stale set fallback (decided Nov 25 2026): with a fresh set, an Evallo event that is not in the set but falls outside the set's window, or has an unusable start, is still kept when his full name is in the tutor position of the title. This is wider than the rule above, which grants the fallback only for a stale set; it errs toward busy.
 * A kept Evallo event still follows the ordinary availability flags: one marked transparent or declined is not busy time.
 * Every deploy plan that restarts the Pi includes an immediate Mac session push right after the restart, instead of waiting for the hourly run. After any Pi restart the filter stays off until a push is accepted.
+
+### Nightly backup (approved Nov 26 2026, next item right after the Evallo deploy is verified, before the Tasks follow ups)
+
+Planned only, not built; it is planned after the Evallo deploy is verified, and the phase starts with a plan and contract shown to him. Today nothing regular backs up `miles.db`: only manual pre deploy copies in `data/backups/`, all on the same SD card.
+
+* A nightly systemd timer on the Pi takes a consistent copy of `miles.db` (the SQLite backup API, then `PRAGMA integrity_check`) together with `data/calendar_roles.json` (mode 600), into `data/backups/` as one dated set, and keeps 14 days.
+* The newest set is copied to the Mac over Tailscale (the Mac pulls it, so the Pi never holds Mac credentials) so a failed SD card does not take the only copy. The Mac copy lives outside any git repo, mode 600.
+* A failed or missing backup is reported like any other failed job (watchdog alert and push), once a day. Restores are tested once on a scratch copy before the phase is called done.
+* Never backed up: tokens and login state (`evallo_state.json`, `.env`, keys), which stay out of the backup set.
 
 ### Tasks tab follow ups (queued Nov 25 2026, right after the Evallo filter)
 
