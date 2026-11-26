@@ -44,6 +44,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 import calendar_roles
+import evallo_filter
 import pending_action
 from parsing import words_for_number
 from tools import Permission, tool
@@ -152,6 +153,23 @@ class EvalloProtectedError(EventLookupError):
 EVALLO_KEYS = ("evalloEvent", "evalloSessionId", "orgId")
 
 
+def _visible(items):
+    """Raw events through the Evallo filter, for the lookups that do not go
+    through _fetch_events: another tutor's session is gone, and an uncertain one
+    is an anonymous block. The same view every read path gets."""
+    state = evallo_filter.load_state()
+    now = evallo_filter.now_utc()
+    return [v for v in (evallo_filter.view(e, state, now)[0] for e in items) if v is not None]
+
+
+def _safe_title(event):
+    """The title to quote about an Evallo event: his own session keeps its
+    name, anything else the anonymous label, so a refusal never repeats a name
+    the filter would have hidden."""
+    shown = _visible([event])
+    return shown[0].get("summary", "That event") if shown else evallo_filter.ANONYMOUS_TITLE
+
+
 def _guard_not_evallo(calendar_id, event_id, event=None):
     """Fetch the event now and refuse, writing nothing, if it carries any
     Evallo private property. Every delete and patch goes through here before
@@ -171,7 +189,7 @@ def _guard_not_evallo(calendar_id, event_id, event=None):
     private = (event.get("extendedProperties") or {}).get("private") or {}
     if any(key in private for key in EVALLO_KEYS):
         raise EvalloProtectedError(
-            f"{event.get('summary', 'That event')} is an Evallo tutoring session, synced "
+            f"{_safe_title(event)} is an Evallo tutoring session, synced "
             "two ways with Evallo, so it is never changed or deleted from here. Nothing "
             "was changed.")
 
@@ -504,13 +522,28 @@ def _write_calendar_id(service):
     return created
 
 
-def _fetch_events(queries):
+class FetchResult(list):
+    """The (calendar id, items, error) triples, with `outcome`: the evallo_filter
+    status of the one state this read used (active, stale, off or unreadable)."""
+    outcome = None
+
+
+def _fetch_events(queries, state=None):
     """Run several events().list queries at once, as (calendar id, items, error).
+
+    Every item passes evallo_filter.keep, so no read path can see an Evallo event
+    that is not his. The state is read once per call (or passed in by a caller
+    that makes several reads for one answer), and the result carries its outcome.
 
     One after another, nine calendars took 1621ms, measured Sep 13 2026, against
     279ms for the slowest alone. The Google client is not safe to share between
     threads, because its HTTP connection is not, so each worker builds its own,
     which costs about 3ms."""
+    now = evallo_filter.now_utc()
+    state = state if state is not None else evallo_filter.load_state()
+    outcome = evallo_filter.status(state, now)
+    evallo_filter.record(outcome)
+
     def run(query):
         try:
             # Page through nextPageToken: a calendar with more than one page of
@@ -523,14 +556,19 @@ def _fetch_events(queries):
                 token = page.get("nextPageToken")
                 if not token:
                     break
+            items = [v for v in (evallo_filter.view(e, state, now)[0] for e in items)
+                     if v is not None]
             return query["calendarId"], items, None
         except Exception as exc:
             return query["calendarId"], None, exc
 
+    result = FetchResult()
+    result.outcome = outcome
     if not queries:
-        return []
+        return result
     with ThreadPoolExecutor(max_workers=min(len(queries), 10)) as pool:
-        return list(pool.map(run, queries))
+        result.extend(pool.map(run, queries))
+    return result
 
 
 # ── the app's view ──
@@ -596,11 +634,15 @@ def _miles_event(service, event_id):
     if miles_id is None:
         raise EventLookupError("there is no MILES calendar, so there is nothing to change")
     try:
-        return miles_id, service.events().get(calendarId=miles_id, eventId=event_id).execute()
+        event = service.events().get(calendarId=miles_id, eventId=event_id).execute()
     except HttpError as exc:
         if exc.status_code in (404, 410):
             raise EventLookupError("that event is not on the MILES calendar") from exc
         raise
+    shown = _visible([event])
+    if not shown:
+        raise EventLookupError("that event is not on the MILES calendar")
+    return miles_id, shown[0]
 
 
 def _local(moment):
@@ -695,6 +737,7 @@ def _find_miles_event(service, title, day, now, nearby=False):
         calendarId=calendar_id, timeMin=_utc(_start_of_day(when)),
         timeMax=_utc(_end_of_day(when)), singleEvents=True, orderBy="startTime",
     ).execute().get("items", [])
+    items = _visible(items)
 
     wanted = set(_words(title))
     matches = [e for e in items if wanted and wanted <= set(_words(e.get("summary", "")))]
@@ -742,6 +785,7 @@ def _matching_that_week(service, calendar_id, wanted, when):
         timeMax=_utc(_end_of_day(when + datetime.timedelta(days=7))),
         singleEvents=True, orderBy="startTime",
     ).execute().get("items", [])
+    items = _visible(items)
     return [e for e in items if wanted <= set(_words(e.get("summary", "")))]
 
 
@@ -843,6 +887,10 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
     mine, followed, unreadable = [], [], []
     calendars = {cid: (name, owned) for cid, (name, selected, owned)
                  in _calendars(service).items() if selected}
+    # One state for the whole answer, so the note below describes exactly what
+    # filtered the events listed, never a second read.
+    state = evallo_filter.load_state()
+    outcome = evallo_filter.status(state)
     queries = []
     for cid in calendars:
         # One more than the cap, so a listing can tell that it stopped short.
@@ -851,7 +899,7 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
         if end is not None:
             query["timeMax"] = _utc(end)
         queries.append(query)
-    for cid, items, error in _fetch_events(queries):
+    for cid, items, error in _fetch_events(queries, state=state):
         name, owned = calendars[cid]
         if error is not None:
             # One broken shared calendar should not hide the others, but it is
@@ -869,7 +917,7 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
 
     mine.sort(key=lambda pair: pair[0])
     followed.sort(key=lambda pair: pair[0])
-    lines = _already_over(calendars, asked_from, now)
+    lines = _already_over(calendars, asked_from, now, state=state)
     lines += ["His events:"]
     lines += [line for _, line in mine[:_MAX_EVENTS]] or ["Nothing on his own calendar."]
     if len(mine) > _MAX_EVENTS:
@@ -884,10 +932,13 @@ def get_upcoming_events(time_min=None, time_max=None, now=None):
         lines += [line for _, line in followed[:_MAX_FOLLOWED]]
     if unreadable:
         lines.append(f"Could not read: {', '.join(unreadable)}.")
+    evallo_note = evallo_filter.note(outcome)
+    if evallo_note:
+        lines = [evallo_note + ".", ""] + lines
     return "\n".join(lines)
 
 
-def _already_over(calendars, asked_from, now):
+def _already_over(calendars, asked_from, now, state=None):
     """His own events in the requested range that ended before now, as lines.
 
     The listing starts at now so a session he already went to is never read as
@@ -902,7 +953,7 @@ def _already_over(calendars, asked_from, now):
                 "singleEvents": True, "orderBy": "startTime", "maxResults": _MAX_EVENTS}
                for cid, (_, owned) in calendars.items() if owned]
     over = []
-    for _, items, error in _fetch_events(queries):
+    for _, items, error in _fetch_events(queries, state=state):
         for event in items or []:
             _, finish, all_day = _event_bounds(event)
             if not all_day and finish <= now:
@@ -922,9 +973,12 @@ def reviewed_events(start, end):
 
     Reads the attending table, so an event he marked "I attend" is blocking."""
     import database
-    window = events_for_app(start, end)
+    with evallo_filter.collecting() as seen:
+        window = events_for_app(start, end)
+    # "evallo" is the status of the state that read used (not part of the app's
+    # shape, which events_for_app keeps unchanged).
     return {"events": calendar_roles.annotate(window["events"], database.attending_set()),
-            "unreadable": window["unreadable"]}
+            "unreadable": window["unreadable"], "evallo": evallo_filter.worst(seen)}
 
 
 def busy_blocks(start, end, exclude_ids=()):
@@ -982,6 +1036,10 @@ def get_miles_event(event_id):
         raise
     if event.get("status") == "cancelled":
         return None
+    shown = _visible([event])
+    if not shown:
+        return None
+    event = shown[0]
     first, last, all_day = _event_bounds(event)
     return {"id": event["id"], "title": event.get("summary", "Untitled"),
             "start": first, "end": last, "all_day": all_day}
@@ -1030,7 +1088,10 @@ def delete_miles_event(event_id):
         "every calendar he has selected, with overlapping events merged and the "
         "free gaps already computed. Call this when he asks if he is free, or "
         "before proposing a time for something new. Use the free list as given "
-        "rather than working out gaps yourself. " + _WINDOW_HELP
+        "rather than working out gaps yourself. If the answer has no free list and "
+        "says it cannot tell when he is free, a calendar that blocks his time "
+        "could not be read: say exactly that, give only the busy times you were "
+        "given, and never offer or guess free times. " + _WINDOW_HELP
     ),
     input_schema={
         "type": "object",
@@ -1044,17 +1105,38 @@ def delete_miles_event(event_id):
     returns_to_model=True,
     min_tier="hokage",
 )
+def _unreadable_blocking(names):
+    """Which of these unreadable calendars (by name) count toward busy time:
+    MILES, and every calendar not classified as a club or holiday calendar."""
+    if not names:
+        return []
+    service = _service()
+    miles_id = _miles_calendar_id(service)
+    blocking = {name for cid, (name, _, _) in _calendars(service).items()
+                if calendar_roles.role_of(cid, miles_id) == calendar_roles.BLOCKING}
+    return [n for n in names if n in blocking]
+
+
 def check_calendar_freebusy(time_min, time_max):
     start, end = resolve_window(time_min, time_max)
     busy, unreadable = busy_blocks(start, end)
-    free = free_gaps(busy, start.astimezone(), end.astimezone())
     result = {
         "range": f"{_spoken(start)} to {_spoken(end)}",
         "busy": [{"from": _spoken(a), "until": _spoken(b)} for a, b in busy],
-        "free": [{"from": _spoken(a), "until": _spoken(b)} for a, b in free],
     }
-    if unreadable:
+    blocking_down = _unreadable_blocking(unreadable)
+    if blocking_down:
+        # A calendar that blocks his time could not be read, so any gap here may
+        # be covered by an event nobody saw. No free list: busy only, and why.
         result["could_not_read"] = unreadable
+        result["cannot_tell_free"] = (
+            f"I cannot tell when he is free: {', '.join(blocking_down)} could not be read, "
+            "so there may be events missing. Say that, and do not offer free times.")
+        return result
+    free = free_gaps(busy, start.astimezone(), end.astimezone())
+    result["free"] = [{"from": _spoken(a), "until": _spoken(b)} for a, b in free]
+    if unreadable:
+        result["could_not_read"] = unreadable      # context only calendars: named, not blocking
     return result
 
 
@@ -1842,6 +1924,7 @@ def rename_calendar_events(find, replace_with, time_min=None, time_max=None, now
     items = service.events().list(calendarId=calendar_id, timeMin=_utc(start), timeMax=_utc(end),
                                   singleEvents=True, orderBy="startTime", maxResults=250,
                                   ).execute().get("items", [])
+    items = _visible(items)
     matches = [e for e in items if word.search(e.get("summary", ""))]
     if not matches:
         raise EventLookupError(f"no event on the MILES calendar has {find!r} in its title in that range")
@@ -1861,7 +1944,9 @@ def rename_calendar_events(find, replace_with, time_min=None, time_max=None, now
                 _write_patch(calendar_id, event["id"], {"summary": new_title}, event)
                 done += 1
             except Exception as exc:
-                failed.append(f"{event.get('summary')} ({exc})")
+                # The title was captured when he was asked; the filter may have
+                # turned on since, so it is judged again now, never quoted raw.
+                failed.append(f"{_safe_title(event)} ({exc})")
         reply = f"Renamed {done} event{'' if done == 1 else 's'}."
         return reply + (f" Failed, not renamed: {'; '.join(failed)}." if failed else "")
 

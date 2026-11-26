@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -8,11 +9,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from jose import JWTError
 
 from auth import (verify_password, create_token, decode_token, DEVICE_SCOPE,
@@ -34,6 +37,7 @@ from system_state import get_system_state
 import embeddings
 import memory_merge
 import calendar_tools
+import evallo_filter
 import push
 import agent_watchdog
 import approvals
@@ -867,7 +871,7 @@ class Heartbeat(BaseModel):
 
 
 class JobReport(BaseModel):
-    job: Literal["draft", "summaries"]
+    job: Literal["draft", "summaries", "evallo_sessions"]
     day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     ok: bool
     detail: str = Field(default="", max_length=2000)
@@ -888,6 +892,99 @@ def agent_heartbeat(body: Heartbeat, user: str = Depends(get_agent_user)):
 def agent_job_report(body: JobReport, user: str = Depends(get_agent_user)):
     agent_watchdog.job_report(body.job, body.day, body.ok, body.detail)
     return {"recorded": True}
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request, exc):
+    """FastAPI's default 422 echoes the submitted values. On the Evallo push
+    route that body can hold a token, so there it answers with the field and the
+    error type only. Every other route keeps the default answer."""
+    if request.url.path != "/agent/evallo/sessions":
+        return await request_validation_exception_handler(request, exc)
+    declared = set(EvalloSessions.model_fields)
+
+    def safe(part):
+        # Only the model's own field names and list indexes may appear. Anything
+        # else came from the request (an unknown property's name) and is replaced.
+        if isinstance(part, int):
+            return part
+        return part if part in declared else "extra field"
+
+    errors = [{"loc": [safe(part) for part in err.get("loc", ()) if part != "body"],
+               "type": str(err.get("type", "invalid"))} for err in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
+def _evallo_422(problems):
+    """The route's own 422s, in the same shape as the validation ones: fixed
+    field names and fixed type strings, never any submitted text."""
+    return JSONResponse(status_code=422, content={"detail": [
+        {"loc": [field], "type": kind} for field, kind in problems]})
+
+
+@app.on_event("startup")
+def _evallo_filter_off_until_a_push():
+    """The Evallo filter is off after every miles-server start, until the Mac's
+    next push is accepted (contract C2). The only writer of that reset."""
+    evallo_filter.clear_active()
+
+
+class EvalloSessions(BaseModel):
+    """The ids of his own Evallo sessions, as the Mac read them (contract C3).
+    Anything else, a token included, is a 422."""
+    model_config = ConfigDict(extra="forbid")
+    fetched_at: str
+    window_start: date
+    window_end: date
+    session_ids: list[str] = Field(max_length=2000)
+
+
+_EVALLO_ID = re.compile(r"^[0-9a-f]{24}\Z")
+
+
+@app.put("/agent/evallo/sessions")
+def agent_evallo_sessions(body: EvalloSessions, user: str = Depends(get_agent_user)):
+    """Replace the verified set. The body is never logged: only the count, the
+    window and fetched_at."""
+    now = evallo_filter.now_utc()
+    fetched = evallo_filter.parse_moment(body.fetched_at)
+    problems = []
+    if fetched is None:
+        problems.append(("fetched_at", "invalid_timestamp"))
+    else:
+        fetched = fetched.replace(microsecond=0)      # whole seconds, everywhere
+        if fetched > now + timedelta(minutes=5):
+            problems.append(("fetched_at", "ahead_of_clock"))
+        if fetched < now - timedelta(hours=24):
+            problems.append(("fetched_at", "more_than_24_hours_old"))
+    ids = body.session_ids
+    if any(not _EVALLO_ID.match(i) for i in ids):
+        problems.append(("session_ids", "invalid_session_id"))
+    if len(set(ids)) != len(ids):
+        problems.append(("session_ids", "duplicate_session_ids"))
+    today = now.astimezone(evallo_filter.NY).date()
+    if not body.window_start < body.window_end:
+        problems.append(("window_start", "window_not_ordered"))
+    elif body.window_end - body.window_start > timedelta(days=120):
+        problems.append(("window_end", "window_too_long"))
+    elif not body.window_start <= today < body.window_end:
+        problems.append(("window_start", "window_excludes_today"))
+    if problems:
+        return _evallo_422(problems)
+    try:
+        count, fetched_text, pushed_text = evallo_filter.store_snapshot(
+            fetched, body.window_start, body.window_end, ids, now)
+    except evallo_filter.Conflict as conflict:
+        return JSONResponse(status_code=409, content={"reason": conflict.reason})
+    # The push is committed (and active) by now. The log line comes after, and
+    # a failure of it must not turn a stored push into an error.
+    try:
+        print(f"Evallo sessions accepted: count={count} "
+              f"window={body.window_start}..{body.window_end} fetched_at={fetched_text}",
+              flush=True)
+    except Exception:
+        pass
+    return {"stored": count, "fetched_at": fetched_text, "pushed_at": pushed_text}
 
 
 @app.post("/agent/login-expired")

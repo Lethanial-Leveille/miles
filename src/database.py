@@ -1163,6 +1163,31 @@ def _migration_044_review_v2(conn):
     """)
 
 
+def _migration_045_evallo_filter(conn):
+    """The ids of his own Evallo sessions, pushed by the Mac, and when the set
+    was taken. One row in evallo_verification (id is always 1), replaced with
+    the set in one transaction. active is 1 only after a push was accepted since
+    miles-server last started; the server clears it at startup, so every process
+    that reads the calendar sees the same answer. See
+    docs/EVALLO_FILTER_CONTRACT.md, C2."""
+    conn.execute("""
+        CREATE TABLE evallo_verified_sessions (
+            session_id TEXT PRIMARY KEY
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE evallo_verification (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            fetched_at TEXT NOT NULL,
+            pushed_at TEXT NOT NULL,
+            window_start TEXT NOT NULL,
+            window_end TEXT NOT NULL,
+            count INTEGER NOT NULL,
+            active INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -1208,7 +1233,11 @@ MIGRATIONS = [
     (42, _migration_042_session_metrics),
     (43, _migration_043_capture),
     (44, _migration_044_review_v2),
+    (45, _migration_045_evallo_filter),
 ]
+
+# Migrations from this one on run inside one transaction with their version update.
+ATOMIC_FROM = 45
 
 # Tool results are capped rather than kept whole. Weather from three weeks ago
 # has no value, and once Calendar lands these rows carry real event contents.
@@ -1226,6 +1255,33 @@ def _run_migrations(conn):
 
     for version, migration_fn in MIGRATIONS:
         if version > current:
+            if version >= ATOMIC_FROM:
+                # DDL and the version update commit together or not at all, so a
+                # failure between two CREATE TABLEs cannot leave half a migration
+                # behind with the version unchanged.
+                #
+                # The version is read only after taking the writer lock, so a
+                # second starter (the server, voice and the review timer all call
+                # init_db) that waited for the first sees the new version and
+                # skips instead of running the migration again.
+                conn.commit()
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    now_at = conn.execute("SELECT version FROM schema_version").fetchone()[0]
+                    if version > now_at:
+                        migration_fn(conn)
+                        conn.execute("UPDATE schema_version SET version = ?", (version,))
+                        applied = True
+                    else:
+                        applied = False
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                if applied:
+                    print(f"Applied migration {version}: {migration_fn.__name__}", flush=True)
+                current = max(current, version)
+                continue
             migration_fn(conn)
             conn.execute("UPDATE schema_version SET version = ?", (version,))
             conn.commit()

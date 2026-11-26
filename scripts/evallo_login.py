@@ -15,10 +15,10 @@ readable by you alone and ignored by git. It lasts 30 days; the nightly
 canary warns three days before it runs out. The throwaway Chrome profile, which
 also holds your Google login, is deleted once the session is saved.
 
-The Pi has no screen, so run this on the Mac and copy the file over:
+The Pi has no screen, so run this on the Mac. The login stays on the Mac: the
+file is never copied, sent or pasted anywhere else.
 
     .venv-evallo/bin/python scripts/evallo_login.py
-    scp data/evallo_state.json theycallmelee@100.99.248.127:~/miles/data/
 
 It saves on its own once you are past the sign in page, so there is nothing to press.
 """

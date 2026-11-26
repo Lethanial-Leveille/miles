@@ -61,6 +61,22 @@ def no_real_google(monkeypatch):
     calendar_tools._calendar_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def quiet_evallo_filter(monkeypatch, request):
+    """Calendar tests that never set up a database should neither read one nor
+    hear the Evallo "not verified" line. Their state is filter off, outcome
+    active. test_evallo_filter.py uses the real state loader."""
+    if request.module.__name__.endswith("test_evallo_filter"):
+        return
+    import evallo_filter
+
+    class Quiet(evallo_filter.State):
+        def outcome(self, now):
+            return "active"
+
+    monkeypatch.setattr(evallo_filter, "load_state", lambda: Quiet())
+
+
 @pytest.fixture
 def db(tmp_path, monkeypatch):
     """Point database.py at a throwaway sqlite file for the duration of one
