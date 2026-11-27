@@ -122,3 +122,14 @@ writes and the app version if rolling the backend back.
 
 No production or physical device check was run. Preserve the existing rollout
 gates and stop before migration 046 and voice work.
+
+## Focused scheduling amendment checkpoint
+
+The [proposed scheduling amendment](tasks-scheduling-amendment.md) reconciles
+revision three H1 and H2 and the related title and clarification cases. It
+records the migration 046 boundary and synthetic cases for ambiguous timing,
+unsupported recurrence and mixed start and deadline requests. The paired
+implementation remains backend `a9d2fda` and Nova `43dde91`. Await owner
+approval on the amendment before migration, structured API or resolver
+implementation. The voice dispatch and provisional speech findings remain
+separately gated. No code, shared approved contract or Nova files changed.
