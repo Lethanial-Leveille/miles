@@ -67,3 +67,13 @@ requirements are reconciled. Once the phase gate is cleared, implement
 only the guarded backend complete and reopen slice first. No application
 tests were run for this documentation checkpoint. Production, pushes,
 deployment and new review rounds remain separately authorized.
+
+## Focused day guard contract checkpoint
+
+The owner authorized isolated local Tasks development while backup acceptance
+remains pending. The exception leaves production rollout order and backup
+verification intact. [The focused contract](tasks-day-guard-contract.md)
+reconciles the backend action boundary and Nova row snapshot rule. It awaits
+owner approval. The next implementation unit is the guarded backend complete
+and reopen pair, independent of migration 046 and voice changes. No code or
+canonical shared contract was changed at this checkpoint.
