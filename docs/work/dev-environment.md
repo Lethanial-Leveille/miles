@@ -129,3 +129,108 @@ Require the focused lifecycle test to pass without a skip. It exercises login, r
 Use synthetic state and checked in source. Keep canonical main, scratch work and the Pi untouched. Retain normal Git guards. No push, cloud session connection, production access or deployment was performed. Nova, CI, cloud orchestration, hardware diagnostics and roadmap features remain separate scopes.
 
 Next action: the owner verifies remote trigger settings and authorizes a redacted local history scan. After those gates are resolved, run the Linux sequence above at the approved revision. Cross platform acceptance remains open. The independent review of `59f7627` and `13cb8ac` is complete.
+
+## Readiness follow up from 77b9aad
+
+Publication and cloud checkout remain on hold. This documentation branch starts at `77b9aad32978ca4cc4d10293f227658ec0328e6c`. The accepted macOS development result at `6e72b9e` stands. Normal Linux acceptance still requires the clean setup, real loopback and synthetic compatibility sequence above. Docker Desktop is installed locally. Its local daemon reported no matching scanner or standard Linux base image, and no suitable scanner executable was found on PATH or in the checked standard locations. No source history content was scanned and no Linux environment was started.
+
+| Checkout | Branch | Verified local revision |
+| --- | --- | --- |
+| `$HOME/PersonalProjects/MILES-dev/backend` | `main` | `51676b912eac708d03024d02942ba05364ba89e6`, clean and equal to cached `origin/main` |
+| `$HOME/PersonalProjects/MILES-dev/backend-dev-environment` | `experiment/conversational-latency` | `653e31a`, clean |
+| `$HOME/PersonalProjects/Nova` | `feature/lists-tasks` | `724f07b` with its preexisting local project file edit |
+| Canonical Nova's linked feature worktree | `experiment/early-talk-speech` | `cf6a257`, clean and contains the committed offline prototype and handoff |
+
+Keep both experimental branches local and available for later continuation. The preserved backend experiment's `docs/work/conversational-latency.md` at `653e31a` records the paused archive work and completed measurements.
+
+### Owner publication checks
+
+1. In the GitHub repository's **Settings**, confirm **General** visibility, **Rulesets** or **Branches** for `main`, **Actions → General**, **Environments**, and **Webhooks**. Review repository access for installed GitHub Apps in the owning account or organization, and inspect any external CI or deployment dashboard that receives repository events. Verify separately that the named topic branch and any pull request, merge queue, or preview deployment cannot reach production or execute unapproved external actions. A zero workflow count in the old local tree is only local evidence. [Actions settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository) · [Repository rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository)
+2. Confirm the live remote refs and intended topic SHA privately. Match any approved scan to an up to date complete local copy of the refs a normal cloud clone would receive, and separately scan the exact proposed outgoing ref. Record verification status and selected SHAs only. Use a trusted owner offline environment for history and private identifier scanning. Resolve any credential or private data findings and explicitly decide the disposition of the known historic personal identifier before publication or normal cloud cloning. A remediation that rewrites or force pushes history requires separate approval. Review unusual binary and archive objects and identifiers that pattern rules cannot infer.
+3. After the privacy and automation gates pass, authorize publication of the specific ref or a previously approved clean source export, and separately authorize the Linux environment. Use an isolated Linux x86_64 or aarch64 environment with Python 3.13, uv, SQLite with FTS5 and a real IPv4 loopback listener. An approved registry fetch is needed only for a cold dependency cache. Use the exact commands and pass conditions in [Linux verification](#minimum-owner-actions-and-linux-verification). A skipped lifecycle test or in process fallback leaves the Linux listener gate open. A clean source export can support Linux testing before branch publication when approved and checked, and does not clear the normal clone gate.
+
+### Redacted scan in the owner's Terminal
+
+First supply a trusted current Gitleaks binary, such as a checksum verified official release, and approve the scan scope. Run the procedure on the Mac. This uses the built in rules with a clean ignore file, no baseline, full redaction and no raw reports. Pattern matching for private names, emails, calendar IDs and tutor IDs is a separate pass. Prepare the owner selected literals in a mode 600 file outside Git and cloud sync with one nonempty entry per line. Keep the resulting values out of command arguments and messages. Substitute an absolute Gitleaks binary path, the verified remote base commit and the exact ref proposed for publication. Do not use shell tracing. [Gitleaks command reference](https://github.com/gitleaks/gitleaks)
+
+```sh
+# Set these to the owner approved local inputs.
+SCAN_BIN=/path/to/verified/gitleaks
+SCAN_BASE=verified_remote_main_commit
+SCAN_TOPIC=refs/heads/docs/cloud-readiness-followup
+SCAN_LITERALS="$HOME/.miles-private/publication-literals.txt"
+SCAN_REPO="$HOME/PersonalProjects/MILES-dev/backend"
+
+(
+  set -o pipefail
+  umask 077
+  scratch=$(mktemp -d /private/tmp/miles-publication-scan.XXXXXX) || exit 2
+  printf '%s\n' '[extend]' 'useDefault = true' > "$scratch/rules.toml"
+  : > "$scratch/.gitleaksignore"
+  cd "$scratch" || exit 2
+
+  clean_git() {
+    env -i PATH=/usr/bin:/bin GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+      GIT_NO_REPLACE_OBJECTS=1 /usr/bin/git -C "$SCAN_REPO" "$@" 2>/dev/null
+  }
+  scan() {
+    env -i PATH=/usr/bin:/bin GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+      GIT_NO_REPLACE_OBJECTS=1 "$SCAN_BIN" "$@" --config "$scratch/rules.toml" \
+      --gitleaks-ignore-path "$scratch/.gitleaksignore" --ignore-gitleaks-allow \
+      --redact=100 --exit-code 23 >/dev/null 2>&1
+  }
+  status() {
+    case "$2" in
+      0) printf '%s clear\n' "$1" ;;
+      23) printf '%s findings present\n' "$1"; return 23 ;;
+      *) printf '%s incomplete or failed\n' "$1"; return 2 ;;
+    esac
+  }
+  metadata() {
+    clean_git log --full-history -m --root --no-show-signature --name-only \
+      --format='%B%n%an%n%ae%n%cn%n%ce' "$@" || return 2
+  }
+  private_input() {
+    clean_git log --full-history -m --root --no-show-signature --no-ext-diff --no-textconv \
+      --format='%B%n%an%n%ae%n%cn%n%ce' -p "$@" || return 2
+  }
+  literal_scan() {
+    if LC_ALL=C rg -a -F -i --count-matches -f "$SCAN_LITERALS" >/dev/null 2>&1; then
+      return 23
+    else
+      case "$?" in 1) return 0 ;; *) return 2 ;; esac
+    fi
+  }
+
+  test -x "$SCAN_BIN" && command -v rg >/dev/null 2>&1 &&
+    test -f "$SCAN_LITERALS" && test -s "$SCAN_LITERALS" &&
+    test "$(stat -f %Lp "$SCAN_LITERALS" 2>/dev/null)" = 600 &&
+    test "$(clean_git rev-parse --is-shallow-repository)" = false &&
+    clean_git show-ref --verify --quiet "$SCAN_TOPIC" &&
+    clean_git merge-base --is-ancestor "$SCAN_BASE" "$SCAN_TOPIC" ||
+    { printf 'Scan prerequisites failed\n'; exit 2; }
+  if LC_ALL=C rg -q '^[[:space:]]*$' "$SCAN_LITERALS" >/dev/null 2>&1; then
+    printf 'Private literal list contains a blank entry\n'
+    exit 2
+  fi
+
+  result=0
+  scan git --log-opts='--all --full-history -m --root --no-ext-diff --no-textconv' "$SCAN_REPO"
+  status 'Reachable patches' "$?" || result=1
+  scan git --log-opts="--full-history -m --root --no-ext-diff --no-textconv $SCAN_BASE..$SCAN_TOPIC" "$SCAN_REPO"
+  status 'Outgoing patches' "$?" || result=1
+  (metadata --all && clean_git for-each-ref --format='%(refname)') | scan stdin
+  status 'Reachable metadata' "$?" || result=1
+  (private_input --all && metadata --all && clean_git for-each-ref --format='%(refname)') | literal_scan
+  status 'Private literals' "$?" || result=1
+  exit "$result"
+)
+```
+
+For an outgoing ref, also privately review the exact new commit messages, paths, added lines, author metadata and ref name, including binary and archive additions, under the project privacy rules. The automated scans return only status labels. Any failure or finding keeps this gate open pending owner disposition. Scanner coverage is limited to its rules and the owner supplied literals. A synthetic repository and scanner stub verified output suppression, failure handling and literal matches. The real scanner and project history remain unverified.
+
+### Nightly backup and deferred research
+
+The [approved nightly backup item](../ROADMAP.md#nightly-backup-approved-nov-26-2026-next-item-right-after-the-evallo-deploy-is-verified-before-the-tasks-follow-ups) is the next implementation after the owner confirms that the preceding Evallo deploy was verified. The appropriate isolated base is the canonical post Evallo backend `main` commit `51676b912eac708d03024d02942ba05364ba89e6`, subject to the owner's verification of the intended base. Create a dedicated local worktree and feature branch from that SHA after the existing phase plan, contract and review gates are satisfied. A local implementation can use synthetic data and does not need to wait for publication or cloud checkout. This follow up creates no backup implementation branch.
+
+Environmental Intelligence, Mission Control and Halo integration are deferred research. The first concerns environmental context, the second oversight of jobs and operational state, and the third wearable interaction. This record leaves their implementation priority and the approved phase order intact.
