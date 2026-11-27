@@ -69,14 +69,63 @@ macOS arm64 with CPython 3.13.1 and SQLite 3.45.3. The implementation revision u
 - **SQLite residual risk accepted.** The owner accepted the possibility that an independent process running as the same user can replace a database file or sidecar between validation and the native SQLite open. The [contract](../DEV_ENVIRONMENT_CONTRACT.md#c2-startup-and-production-compatibility) records the limit under the accidental failure threat model.
 - **Cross platform acceptance open.** Clean setup, startup and shutdown on a real loopback listener, and the supported suite still need verification on Linux.
 
-## Restrictions and exact next action
+## Cloud readiness preflight
 
-Use synthetic state and checked in source. Keep canonical main, the scratch work, and the Pi untouched. Retain normal Git guards. Do not push or deploy. Nova, CI, cloud orchestration, hardware diagnostics, and roadmap features have separate scopes.
+**Disposition: hold publication and normal cloud checkout.** The Linux command path is identified. Privacy clearance, live repository automation settings and Linux execution remain open.
 
-Run the following from the infrastructure worktree on a supported Linux host that permits IPv4 loopback binds.
+This was a Medium, read only preflight from the clean macOS worktree on `docs/engineering-workflow` at `a39167f`, whose parent is the accepted macOS infrastructure checkpoint `6e72b9e`. The local `infra/dev-environment` ref remains at `6e72b9e`. The launcher, lock and listener tests match the accepted checkpoint. The local `main` and cached `origin/main` both resolved to `51676b9`. This section's commit records the preflight. It changes only this handoff.
+
+### Publication and automation
+
+- The inspected Git trees at `a39167f` and `51676b9` contain zero tracked GitHub Actions workflows and no definitions for the other common CI systems checked. The effective local hooks path has no executable `pre-push` hook.
+- If installed and enabled, [the deployment timer](../../systemd/miles-deploy.timer) invokes [the deployment service](../../systemd/miles-deploy.service). [Auto deploy](../../scripts/auto_deploy.sh) fetches and selects `origin/main`, checks the local `main` state, and tests the candidate before calling [the manual deploy script](../../scripts/deploy.sh). That script requires local `main`, pulls `origin main` and restarts services. A push to a separate topic ref that leaves `main` unchanged does not select that topic commit through these checked in scripts. A later update to `main` could deploy if the live timer is active and its gates pass.
+- Current GitHub refs, Actions settings, webhooks, installed apps, branch settings and external deployment or CI integrations are unverified. The local refs are cached, and the available GitHub connector does not expose the repository administration surfaces needed to clear these triggers. Current Pi timer state is also unverified under the production access restriction. The dated installation note in [Infrastructure](../INFRASTRUCTURE.md#systemd-services) is historical evidence.
+
+### Privacy
+
+- The repository is documented as public. Seven representative paths for dotenv files, generated development state, calendar roles, a browser session file and a database matched ignore rules. Ignore rules do not inspect committed history.
+- **History scan unverified.** No approved scanner was available in the repository, on PATH or at standard local binary locations. The checks found none of Gitleaks, TruffleHog, detect-secrets or git-secrets. No history content scan was run and there is no finding count to report. No private datasets, credentials or production state were opened.
+- The [privacy roadmap](../ROADMAP.md#private-data-out-of-the-repo-nov-26-2026) records a completed calendar identifier scrub in current source and one known personal name in earlier public history. The owner has yet to decide on the history rewrite, which requires separate force push approval. A pre push scanner for private names, emails, calendar and tutor identifiers and credentials is queued. The roadmap also queues [removal of raw tailnet addresses from current paths](../ROADMAP.md#tailscale-hostname-cleanup-queued-nov-26-2026) and [retirement of the temporary Pi Evallo login copy](../ROADMAP.md#login-failsafe-and-the-evallo-token-planned-nov-25-2026). The separate [Phase S audit](../ROADMAP.md#phase-s-security-audit) remains required before unattended errands. None of these items authorizes accessing private data for this preflight.
+
+### Minimum owner actions and Linux verification
+
+1. Clear the publication gate. Check the actual remote visibility, intended refs, Actions, webhooks, installed apps and deployment integrations from the owner account. Confirm the proposed topic ref and any PR events cannot reach production or cause unapproved external actions. Keep `main` untouched. Approve a read only history scan on the Mac and the disposition of known historical exposure before allowing a normal clone into the cloud. Review the exact outgoing commits, added lines, messages, paths and branch name. Keep scanner match text, paths containing private data, and author or credential values out of agent output and shared reports. Record only sanitized counts and dispositions. Publish or transfer the selected revision only with separate owner authorization and normal guards.
+2. Select a fresh Linux x86_64 or aarch64 session with Python 3.13, uv, an FTS5 capable SQLite build and permission to bind IPv4 loopback. Keep port forwarding and live integrations off. Allow the locked public registry and wheel host during bootstrap if the cache is empty. Use the owner approved checkout and record its exact revision. Use only checked in source and generated synthetic state. Keep local environment files, database copies, browser profiles and credentials out of the session.
+3. From the repository root, confirm a clean checkout and run the following. Stop on an unexpected result.
 
 ```sh
-./scripts/dev bootstrap && ./scripts/dev verify-production && ./scripts/dev test -- --tb=short -rs
+git status --short --branch
+git rev-parse HEAD
+uname -m
+command -v python3.13
+command -v uv
+./scripts/dev bootstrap
+./scripts/dev init
+./scripts/dev seed
+./scripts/dev start --port 42000
 ```
 
-Record the Linux architecture, tested revision, outcomes, skips, and real loopback startup and shutdown evidence before closing cross platform acceptance. The independent review of `59f7627` and `13cb8ac` is complete.
+Bootstrap runs `uv sync --locked --no-build --no-config --no-python-downloads` against `uv.lock` with the existing Python 3.13 interpreter and the public PyPI index, then probes FTS5. The lock lists 67 packages and 164 SHA256 wheel entries. While the API is running, use a second shell in the same session for a credential free loopback response check. Use an unused approved loopback port and change both commands together if the example port is occupied.
+
+```sh
+python3.13 -c 'import http.client; c = http.client.HTTPConnection("127.0.0.1", 42000, timeout=5); c.request("GET", "/openapi.json"); status = c.getresponse().status; print(status); raise SystemExit(status != 200)'
+```
+
+Expect HTTP 200. Stop the listener with Ctrl+C and record clean shutdown. Then run the supported verification commands.
+
+```sh
+./scripts/dev test -- tests/test_dev_environment.py::test_real_loopback_api_lifecycle --tb=short -rs
+./scripts/dev verify-direct
+./scripts/dev verify-production
+sh scripts/tests/test_dev_venv.sh
+./scripts/dev test -- --tb=short -rs
+git status --short --branch
+```
+
+Require the focused lifecycle test to pass without a skip. It exercises login, refresh, invalid credential refusal, authenticated status, streaming and shutdown over a real socket. Require `Synthetic production loopback HTTP passed` from the guarded synthetic compatibility verifier. Its in process fallback does not close the listener gate. Record the architecture, Python and SQLite versions, tested SHA, command outcomes, skip counts and reasons. The historical macOS results are comparison evidence. Linux test counts have yet to be measured.
+
+## Restrictions and exact next action
+
+Use synthetic state and checked in source. Keep canonical main, scratch work and the Pi untouched. Retain normal Git guards. No push, cloud session connection, production access or deployment was performed. Nova, CI, cloud orchestration, hardware diagnostics and roadmap features remain separate scopes.
+
+Next action: the owner verifies remote trigger settings and authorizes a redacted local history scan. After those gates are resolved, run the Linux sequence above at the approved revision. Cross platform acceptance remains open. The independent review of `59f7627` and `13cb8ac` is complete.
