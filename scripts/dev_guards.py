@@ -193,7 +193,14 @@ class State:
                 self.deny("checkout private data")
 
         def audit(event, args):
-            if event in {"open", "os.listdir", "os.scandir", "os.chdir"}:
+            if event == "open":
+                path, _mode, flags = args
+                # open's audit event does not expose dir_fd. The descriptor
+                # walk opens the root by basename with O_DIRECTORY|O_NOFOLLOW.
+                if path == self.root.name and flags & DIR_FLAGS == DIR_FLAGS:
+                    return
+                check(path)
+            elif event in {"os.listdir", "os.scandir", "os.chdir"}:
                 check(args[0])
             elif event in {"os.remove", "os.rmdir"}:
                 check(args[0], args[1])
