@@ -98,3 +98,27 @@ integration is authorized, sync the shared contract to the paired checkout
 first, then verify complete and reopen on a rendered row held across a
 refresh. Migration 046 and voice corrections remain separate. No rollout
 or new independent review was initiated.
+
+## Paired Nova checkpoint
+
+The backend implementation is `a9d2fda` on `feature/tasks-followups`.
+Nova `feature/tasks-day-guard` is at `43dde91`, forked from canonical Nova
+`d9e8c9f`. The Nova Tasks contract copy matches the backend at `a9d2fda`.
+In the Nova repository, see `docs/tasks-day-guard.md` for reproducible checks
+and the compatibility matrix. The original Nova project file edit and the
+early speech branch at `cf6a257` were preserved.
+
+Complete and reopen send the rendered overview day through refresh and
+retry. An outdated day displays the 04:00 notice and reloads without
+replaying the mutation. The unsigned generic iOS build and standalone Swift
+regressions passed with Xcode 26.4.1. The Swift checks use fake login and
+transport and exercise stale rows, overlapping refreshes, repeated taps and
+notice persistence. Four synthetic FastAPI pairings were checked against
+each actual backend revision, `51676b9` and `a9d2fda`, using separate scratch
+databases. Legacy apps keep working on the guarded backend without stale day
+protection. The legacy backend silently ignores the day sent by updated
+Nova, so release and verify the backend before updating the app. Coordinate
+writes and the app version if rolling the backend back.
+
+No production or physical device check was run. Preserve the existing rollout
+gates and stop before migration 046 and voice work.
