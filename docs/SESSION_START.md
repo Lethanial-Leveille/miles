@@ -5,9 +5,16 @@ Start from [AGENTS.md](../AGENTS.md), the authorized revision and the relevant a
 | Request | What to do |
 |---|---|
 | “Start work on …” | Confirm the objective, authorized base, worktree and task class. Open the relevant files through the map. Create a short handoff in [docs/work](work/) for work that spans sessions or has a phase contract. |
+| “Work with Claude and Codex” or “Continue with Claude only” or “Codex, take it from here” | Use the requested operating mode and keep the assignment scope and gates. In collaboration, identify who owns the next step. |
 | “Continue …” or “Resume …” | Find the named branch and its handoff. Match the branch, HEAD and working tree to the recorded state. Resolve discrepancies before editing and continue from the documented next action within scope. |
 | “Wrap up” or “Hand this off” | Stop at a coherent checkpoint. Run proportionate verification, record results and outstanding work, and stage only intended files for an authorized local commit using normal hooks. Push and deployment require their own approval. |
 | “Get an independent review” | Follow the owner's review scope. For a contract, supply only that contract and the named roadmap section. For implementation, supply the exact reviewed SHA, base or diff range, diff, touched files and contract. Record findings against the reviewed revision. |
+
+## Continue after an interruption
+
+1. The outgoing agent, if available, records a coherent checkpoint in the existing handoff. Include the commit and dirty worktree status, completed checks, pending approvals or review gates, and the next action. Preserve partial work in place if it is unsafe to commit.
+2. At the owner's direction, the available agent reads the handoff, contract and recorded test results. Confirm the repository, branch, base, HEAD and working tree. If the outgoing agent could not finish the handoff, reconstruct the checkpoint from Git and available test evidence and label any gaps.
+3. Resume the next authorized step. Run targeted checks if changes or missing evidence warrant them. When an independent review is due, prepare the scoped packet for a fresh reviewer session. If the review is unavailable, record the gate and exact revision and stop there.
 
 ## Handoff record
 

@@ -21,3 +21,12 @@ On macOS, `git diff --check` and `git diff --cached --check` passed on the docum
 The Nova copy remains pending separately authorized reconciliation against the selected backend revision. CI, cloud setup, Nova development configuration, backend refactoring, production work and new product features remain deferred. The accepted SQLite residual risk remains recorded in the [infrastructure handoff](dev-environment.md).
 
 Next, inspect the local checkpoint with `git log --oneline 6e72b9e..docs/engineering-workflow` and `git diff --stat 6e72b9e..docs/engineering-workflow` before any integration decision.
+
+
+## November 27 continuation
+
+`docs/agent-operation-modes` starts at `6e6cf04`. The owner requested collaborative, Claude only and Codex only operation under the same shared rules. The owner intends to reserve at least half of the next Codex allowance for collaboration with Claude tonight. This is a session intention.
+
+The nightly backup checkpoint is `feature/nightly-backup` at `f4e4fab`. Read its contract and handoff with `git show f4e4fab:docs/NIGHTLY_BACKUP_CONTRACT.md` and `git show f4e4fab:docs/work/nightly-backup.md`. The existing authorization covers synthetic local backup development subject to phase gates. The recorded November 27 hold until 20:00 Eastern governs when implementation may start. No explicit instruction lifting that hold was found. If the earlier authorization was meant to allow a local build before 20:00, the owner needs to confirm that exception. The full database push routing identifier decision and applicable contract gate remain pending. Any real backup, transfer, timer installation or deployment requires its own authorization, and the rollout decisions on FileVault and the privileged installer remain open.
+
+Verification for this update uses a staged whitespace check, relative link checks and a comparison of the classification, production and secrets rules against the base. No application tests are needed for these documentation changes.

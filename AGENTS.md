@@ -1,6 +1,6 @@
 # Shared engineering instructions
 
-This file governs Claude and Codex in this repository. [CLAUDE.md](CLAUDE.md) covers Claude coordination. Owner instructions, approved contracts and phase gates continue to apply.
+This file is the shared engineering authority for Claude and Codex. [CLAUDE.md](CLAUDE.md) covers Claude coordination under these rules. Owner instructions, approved contracts and phase gates continue to apply.
 
 ## Start with the assignment
 
@@ -16,6 +16,12 @@ Classify by risk, affected surfaces, dependencies and consequences. Choose the h
 
 Use ordinary reasoning for routine implementation and documentation. Use High for difficult architectural decisions and material risks. Reserve Astra High for genuinely consequential independent reviews, within the owner's configured workflow. Use prior findings and avoid repeated planning, broad exploration and loading unrelated files. Independent reviews are limited to one contract review and one implementation review per phase. A repeat requires owner approval and a material unresolved risk.
 
+## Work together or independently
+
+The owner may ask Claude and Codex to collaborate, or ask either agent to work alone. Either agent can plan, implement, test and document an approved assignment within its role and permissions. In collaboration, agree who owns the next step and keep one active writer per worktree. When an agent becomes unavailable or reaches its usage limit, use the [continuation procedure](docs/SESSION_START.md) and the existing contract, branch, handoff and test evidence.
+
+A required independent review must use a fresh reviewer session that did not draft the contract or implement the changes under review. Follow the configured reviewer, scope and review limits. The owner or authorized coordinator arranges the review. If it cannot be completed, preserve the work, record the pending gate and stop at that gate. A change of agent or operating mode carries forward all approved scope, holds, review gates, permission limits and requirements for separate approval.
+
 ## Choose the environment
 
 - Prefer a supported cloud session for portable backend work, research, planning and synthetic tests when the correct revision and isolated tooling are available.
@@ -28,6 +34,7 @@ Use ordinary reasoning for routine implementation and documentation. Use High fo
 - The Pi services, Cloudflare tunnel and `~/miles/data/miles.db` are production. Keep ordinary work isolated. Do not touch running services, live data, or production settings without explicit owner authority and role permission. The tunnel is dashboard managed. Leave `~/.cloudflared/config.yml` alone.
 - Before any deployment or migration against real data, warn the owner, take a fresh backup at `~/miles/data/backups/miles-before-<what>-<YYYYMMDD-HHMMSS>.db` and prepare rollback. Never restart the voice service during a conversation. Follow the [permanent Evallo restart procedure](docs/ROADMAP.md#evallo-rules-permanent) in every deploy plan that restarts the Pi.
 - Codex never deploys, accesses production or starts another Codex run. Push only with explicit authority. Use normal Git hooks and guards. Report a guard failure and follow the authorized workflow.
+- The owner grants standing authorization for routine local Git branch creation, staging and commits within approved development assignments. Check the branch and working tree, and stage only intended paths. If the sandbox blocks an authorized operation, request approval for that exact Git command. Keep Git hooks and guards active. This authorization is limited to the approved development branch and excludes pushes, changes to `main`, history rewrites, and broader filesystem or network access.
 - Work on the authorized branch or worktree. Keep changes within scope. Nova is a separate repository and requires separate scope. Follow the [approved roadmap](docs/ROADMAP.md) and amendments one phase at a time, with a real use checkpoint between phases. Complete the roadmap security review before permitting any Phase 6 errand to run unattended. Leave the owner's resume untouched.
 
 ## Secrets and private data
