@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import re
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from runtime_profile import current, development, headless
 
 current()
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
@@ -591,21 +592,59 @@ def create_task(body: TaskCreate, user: str = Depends(get_current_user)):
     return {"task": tasks_view.create(title, body.where, body.due_date)}
 
 
-@app.post("/tasks/{task_id}/complete")
-def finish_task(task_id: int, user: str = Depends(get_current_user)):
+def _unique_task_body(pairs):
+    body = dict(pairs)
+    if len(body) != len(pairs):
+        raise ValueError("Duplicate keys")
+    return body
+
+
+async def _task_action_day(request: Request, user: str = Depends(get_current_user)):
+    # Read raw bytes so explicit JSON null and malformed JSON cannot look like no body.
+    raw = await request.body()
+    if not raw:
+        return None
     try:
-        task = tasks_view.complete(task_id)
+        body = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_task_body)
+        if body == {}:
+            return None
+        if not isinstance(body, dict) or set(body) != {"day"}:
+            raise ValueError("Expected day")
+        day = body["day"]
+        if not isinstance(day, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", day):
+            raise ValueError("Expected YYYY-MM-DD")
+        date.fromisoformat(day)
+    except (ValueError, RecursionError):
+        raise HTTPException(status_code=422, detail="Expected a valid day in YYYY-MM-DD form") from None
+    return day
+
+
+def _apply_task_action(task_id, day, *, complete):
+    if day is None:
+        action = "complete" if complete else "reopen"
+        logging.getLogger("uvicorn.error").info("Legacy Tasks %s for task %s", action, task_id)
+    try:
+        today, task = tasks_view.apply_completion(task_id, day, complete=complete)
     except tasks_view.TaskError as exc:
-        raise _task_http(exc)
-    return {"completed": True, "day": task_day(tasks_view.now()), "task": task}
+        error = {"detail": exc.detail}
+        if exc.code is not None:
+            error["code"] = exc.code
+        if exc.today is not None:
+            error["today"] = exc.today
+        return JSONResponse(status_code=exc.status, content=error)
+    if complete:
+        return {"completed": True, "day": today, "task": task}
+    return {"task": task}
+
+
+@app.post("/tasks/{task_id}/complete")
+def finish_task(task_id: int, day: Optional[str] = Depends(_task_action_day)):
+    return _apply_task_action(task_id, day, complete=True)
 
 
 @app.post("/tasks/{task_id}/reopen")
-def reopen_task(task_id: int, user: str = Depends(get_current_user)):
-    try:
-        return {"task": tasks_view.reopen(task_id)}
-    except tasks_view.TaskError as exc:
-        raise _task_http(exc)
+def reopen_task(task_id: int, day: Optional[str] = Depends(_task_action_day)):
+    return _apply_task_action(task_id, day, complete=False)
 
 
 @app.post("/tasks/{task_id}/backlog")

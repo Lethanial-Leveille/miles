@@ -72,8 +72,29 @@ deployment and new review rounds remain separately authorized.
 
 The owner authorized isolated local Tasks development while backup acceptance
 remains pending. The exception leaves production rollout order and backup
-verification intact. [The focused contract](tasks-day-guard-contract.md)
-reconciles the backend action boundary and Nova row snapshot rule. It awaits
-owner approval. The next implementation unit is the guarded backend complete
-and reopen pair, independent of migration 046 and voice changes. No code or
-canonical shared contract was changed at this checkpoint.
+verification intact. The owner approved the [focused contract](tasks-day-guard-contract.md)
+at `9e1fd59`. Its backend rules are incorporated in the
+[shared contract](../TASKS_CONTRACT.md).
+
+The backend captures the task day once and derives completion and response
+from that capture. A single SQLite writer transaction checks active status,
+applies the guard, mutates the eligible occurrence and reads the resulting
+Task. Rejected actions leave task and completion rows unchanged. Legacy
+requests are accepted and counted by an info log. A client that omits the
+rendered date can still act on the new task day after 04:00.
+
+Backend verification used Python 3.13, a disposable home and synthetic
+fixtures. The following command passed all 299 tests, including concurrent
+archive and duplicate action races, authorization and rejected writes.
+
+```sh
+python -m pytest -q src/tests/test_tasks_api.py src/tests/test_lists_tasks.py \
+  src/tests/test_lists_tasks_api.py src/tests/test_sessions_api.py \
+  src/tests/test_memory_api.py src/tests/test_nightly_review.py src/tests/test_review_v2.py
+```
+
+Stop at the backend checkpoint. Nova was left untouched. When Nova
+integration is authorized, sync the shared contract to the paired checkout
+first, then verify complete and reopen on a rendered row held across a
+refresh. Migration 046 and voice corrections remain separate. No rollout
+or new independent review was initiated.

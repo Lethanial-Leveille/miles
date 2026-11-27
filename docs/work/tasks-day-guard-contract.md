@@ -1,10 +1,9 @@
 # Proposed Tasks day guard and Nova row binding
 
-**Status** Awaiting owner approval. This reconciles sections 3.4 through 3.6
+**Status** Approved at `9e1fd59`. This file preserves the proposal as approved. This reconciles sections 3.4 through 3.6
 and the rendered row rule in section 3.9 of the
 [recovered revision three proposal](tasks-revision-three.md). The
-[current shared contract](../TASKS_CONTRACT.md) remains authoritative until
-approval. The owner authorized isolated local Tasks development while backup
+[current shared contract](../TASKS_CONTRACT.md) incorporates the approved behavior. The owner authorized isolated local Tasks development while backup
 acceptance remains pending. That exception leaves production rollout order and
 all backup verification requirements in force.
 

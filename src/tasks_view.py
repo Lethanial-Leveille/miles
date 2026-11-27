@@ -9,18 +9,19 @@ Dates are plain YYYY-MM-DD strings and "today" is the 4am day (task_day)."""
 from datetime import date, datetime, timedelta
 
 from database import (
-    add_task, backlog_tasks, clear_task_calendar_event, complete_task, get_task,
-    set_task_status, task_completed_on, task_day, tasks_between, tasks_for_day,
-    unschedule_task, remove_task_completion,
+    add_task, apply_task_completion, backlog_tasks, clear_task_calendar_event,
+    get_task, task_completed_on, task_day, tasks_between, tasks_for_day,
+    unschedule_task,
 )
 
 
 class TaskError(Exception):
     """status is the HTTP status the route answers with."""
 
-    def __init__(self, status, detail):
+    def __init__(self, status, detail, *, code=None, today=None):
         super().__init__(detail)
         self.status, self.detail = status, detail
+        self.code, self.today = code, today
 
 
 def now():
@@ -94,25 +95,20 @@ def create(title, where, due_date):
     return one(task_id)
 
 
-def complete(task_id):
-    if not complete_task(task_id, now()):
+def apply_completion(task_id, expected_day, *, complete):
+    captured = now()
+    today = task_day(captured)
+    result, task = apply_task_completion(task_id, complete=complete, now=captured,
+                                         today=today, expected_day=expected_day)
+    if result == "inactive":
         raise TaskError(404, "No active task with that id")
-    return one(task_id)
-
-
-def reopen(task_id):
-    task = get_task(task_id)
-    if task is None or task["archived_at"] is not None:
-        raise TaskError(404, "No active task with that id")
-    today = task_day(now())
-    if task["recurrence"] is not None:
-        if not remove_task_completion(task_id, today):
-            raise TaskError(409, "That task is not done today")
-    else:
-        if task["status"] != "done":
-            raise TaskError(409, "That task is not done")
-        set_task_status(task_id, "pending", now())
-    return one(task_id)
+    if result == "day_changed":
+        raise TaskError(409, "The day changed at 4 a.m. Nothing was changed.",
+                        code="day_changed", today=today)
+    if result == "not_done":
+        detail = "That task is not done today" if task["recurrence"] is not None else "That task is not done"
+        raise TaskError(409, detail, code="not_done")
+    return today, serialize(task, today, done_on=complete)
 
 
 def to_backlog(task_id, remove_block, drop_from_reviews=None):

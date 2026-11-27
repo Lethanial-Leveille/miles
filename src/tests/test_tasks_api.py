@@ -2,7 +2,12 @@
 ordering, the 409 and 422 cases, and the backlog route's guarded block removal."""
 
 import os
+import sqlite3
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from threading import Barrier, Event
+from types import SimpleNamespace
 from datetime import datetime
 
 import database
@@ -362,3 +367,229 @@ def test_a_500_on_delete_is_still_502(client, db, monkeypatch):
         return ev
     monkeypatch.setattr(fake, "events_", failing)
     assert client.post(f"/tasks/{task}/backlog").status_code == 502
+
+
+def _task_state(db):
+    with closing(sqlite3.connect(db.DB_PATH)) as conn:
+        return tuple(conn.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+                     for table in ("tasks", "task_completions"))
+
+
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+@pytest.mark.parametrize("hour", [0, 3])
+def test_guard_uses_previous_task_day_at_midnight_and_until_four(client, db, clock, action, hour):
+    clock["now"] = datetime(2026, 11, 26, hour, 0)
+    task = _add(db, "Daily", recurrence="daily")
+    if action == "reopen":
+        db.complete_task(task, NOW)
+    response = client.post(f"/tasks/{task}/{action}", json={"day": "2026-11-25"})
+    assert response.status_code == 200
+    assert response.json()["task"]["status"] == ("done" if action == "complete" else "pending")
+    assert db.task_completed_on(task, "2026-11-25") == (action == "complete")
+    assert not db.task_completed_on(task, "2026-11-26")
+
+
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+def test_guard_captures_clock_once_when_request_crosses_four(client, db, monkeypatch, action):
+    task = _add(db, "Daily", recurrence="daily")
+    if action == "reopen":
+        db.complete_task(task, NOW)
+    calls = []
+
+    def clock_crosses_four():
+        instant = datetime(2026, 11, 26, 3, 59, 59) if not calls else datetime(2026, 11, 26, 4)
+        calls.append(instant)
+        return instant
+
+    monkeypatch.setattr(tasks_view, "now", clock_crosses_four)
+    result = client.post(f"/tasks/{task}/{action}", json={"day": "2026-11-25"})
+    assert len(calls) == 1
+    assert result.status_code == 200
+    if action == "complete":
+        assert result.json()["day"] == "2026-11-25"
+    assert result.json()["task"]["status"] == ("done" if action == "complete" else "pending")
+    assert db.task_completed_on(task, "2026-11-25") == (action == "complete")
+    assert not db.task_completed_on(task, "2026-11-26")
+
+
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+@pytest.mark.parametrize("recurrence", [None, "daily"])
+@pytest.mark.parametrize("day", ["2026-11-25", "2026-11-27"])
+def test_reject_stale_and_future_dates_at_four_without_writes(client, db, clock, action, recurrence, day):
+    clock["now"] = datetime(2026, 11, 26, 4)
+    task = _add(db, "Sample", recurrence=recurrence)
+    db.complete_task(task, NOW)
+    db.complete_task(task, clock["now"])
+    before = _task_state(db)
+    response = client.post(f"/tasks/{task}/{action}", json={"day": day})
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "The day changed at 4 a.m. Nothing was changed.",
+        "code": "day_changed", "today": "2026-11-26"}
+    assert _task_state(db) == before
+
+
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+@pytest.mark.parametrize("day", ["2026-11-25", "2026-11-24"])
+def test_inactive_task_has_precedence_over_day_mismatch(client, db, action, day):
+    task = _add(db, "Archived", recurrence="daily")
+    db.complete_task(task, NOW)
+    db.archive_task(task, NOW)
+    before = _task_state(db)
+    for task_id in (task, 9999):
+        response = client.post(f"/tasks/{task_id}/{action}", json={"day": day})
+        assert response.status_code == 404
+    assert _task_state(db) == before
+
+
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+@pytest.mark.parametrize("raw", [
+    b"null", b"[]", b"1", b"true", b'"2026-11-25"', b" ", b'{"day":',
+    b'{"day":null}', b'{"day":42}', b'{"day":"2026-02-30"}',
+    b'{"day":"20261125"}', b'{"day":"2026-1-25"}', b'{"day":"2026-11-25T00:00"}',
+    b'{"date":"2026-11-25"}', b'{"day":"2026-11-25","extra":true}',
+    b'{"day":"2026-11-24","day":"2026-11-25"}', b"\xff",
+])
+def test_invalid_action_body_precedes_lookup_and_cannot_write(client, db, action, raw):
+    task = _add(db, "Sample")
+    db.complete_task(task, NOW)
+    before = _task_state(db)
+    for task_id in (task, 9999):
+        response = client.post(f"/tasks/{task_id}/{action}", content=raw,
+                               headers={"Content-Type": "application/json"})
+        assert response.status_code == 422
+    assert _task_state(db) == before
+
+
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+@pytest.mark.parametrize("legacy", [{}, {"content": b""}, {"json": {}}])
+def test_legacy_forms_target_server_day_and_log(client, db, clock, caplog, action, legacy):
+    clock["now"] = datetime(2026, 11, 26, 4)
+    task = _add(db, "Daily", recurrence="daily")
+    db.complete_task(task, NOW)
+    if action == "reopen":
+        db.complete_task(task, clock["now"])
+    with caplog.at_level("INFO", logger="uvicorn.error"):
+        response = client.post(f"/tasks/{task}/{action}", **legacy)
+    assert response.status_code == 200
+    assert f"Legacy Tasks {action} for task {task}" in caplog.text
+    assert db.task_completed_on(task, "2026-11-25")
+    assert db.task_completed_on(task, "2026-11-26") == (action == "complete")
+
+
+@pytest.mark.parametrize("recurrence", [None, "daily"])
+def test_repeated_actions_leave_consistent_occurrences(client, db, recurrence):
+    task = _add(db, "Sample", recurrence=recurrence)
+    db.complete_task(task, datetime(2026, 11, 24, 12))
+    body = {"day": "2026-11-25"}
+    for _ in range(2):
+        assert client.post(f"/tasks/{task}/complete", json=body).status_code == 200
+    assert _task_state(db)[1] == [(task, "2026-11-24"), (task, "2026-11-25")]
+    response = client.post(f"/tasks/{task}/reopen", json=body)
+    assert response.status_code == 200 and response.json()["task"]["status"] == "pending"
+    after = _task_state(db)
+    assert after[1] == ([(task, "2026-11-24")] if recurrence else [])
+    response = client.post(f"/tasks/{task}/reopen", json=body)
+    assert response.status_code == 409 and response.json()["code"] == "not_done"
+    assert _task_state(db) == after
+
+
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+def test_guarded_retry_after_four_keeps_original_occurrence(client, db, clock, action):
+    task = _add(db, "Daily", recurrence="daily")
+    if action == "reopen":
+        db.complete_task(task, NOW)
+    body = {"day": "2026-11-25"}
+    assert client.post(f"/tasks/{task}/{action}", json=body).status_code == 200
+    clock["now"] = datetime(2026, 11, 26, 4)
+    db.complete_task(task, clock["now"])
+    before = _task_state(db)
+    response = client.post(f"/tasks/{task}/{action}", json=body)
+    assert response.status_code == 409 and response.json()["code"] == "day_changed"
+    assert _task_state(db) == before
+
+
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+def test_action_loses_to_concurrent_archive(client, db, monkeypatch, action):
+    task = _add(db, "Daily", recurrence="daily")
+    if action == "reopen":
+        db.complete_task(task, NOW)
+    writer_requested = Event()
+
+    def observe_connection(*args, **kwargs):
+        conn = sqlite3.connect(*args, **kwargs)
+
+        def trace(statement):
+            if statement == "BEGIN IMMEDIATE":
+                writer_requested.set()
+
+        conn.set_trace_callback(trace)
+        return conn
+
+    monkeypatch.setattr(db, "sqlite3", SimpleNamespace(connect=observe_connection, Row=sqlite3.Row))
+    with ThreadPoolExecutor(max_workers=1) as pool, closing(sqlite3.connect(db.DB_PATH)) as other:
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("UPDATE tasks SET archived_at = ? WHERE id = ?", (NOW.isoformat(), task))
+        try:
+            future = pool.submit(client.post, f"/tasks/{task}/{action}", json={"day": "2026-11-25"})
+            assert writer_requested.wait(timeout=5)
+        finally:
+            other.commit()
+        assert future.result(timeout=5).status_code == 404
+    assert db.get_task(task)["archived_at"] == NOW.isoformat()
+    assert _task_state(db)[1] == ([(task, "2026-11-25")] if action == "reopen" else [])
+
+
+@pytest.mark.parametrize("recurrence", [None, "daily"])
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+def test_competing_actions_serialize_mutation_and_response(client, db, monkeypatch, action, recurrence):
+    task = _add(db, "Sample", recurrence=recurrence)
+    if action == "reopen":
+        db.complete_task(task, NOW)
+    ready = Barrier(2)
+
+    def clock():
+        ready.wait(timeout=5)
+        return NOW
+
+    def submit():
+        return client.post(f"/tasks/{task}/{action}", json={"day": "2026-11-25"})
+
+    monkeypatch.setattr(tasks_view, "now", clock)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(submit) for _ in range(2)]
+        responses = [future.result(timeout=6) for future in futures]
+    if action == "complete":
+        assert [response.status_code for response in responses] == [200, 200]
+        assert _task_state(db)[1] == [(task, "2026-11-25")]
+    else:
+        assert sorted(response.status_code for response in responses) == [200, 409]
+        assert next(r for r in responses if r.status_code == 409).json()["code"] == "not_done"
+        assert _task_state(db)[1] == []
+
+
+@pytest.mark.parametrize("action", ["complete", "reopen"])
+def test_guarded_actions_keep_full_login_requirement(db, clock, monkeypatch, action):
+    import auth
+
+    monkeypatch.setenv("MILES_JWT_SECRET", "synthetic-test-signing-value")
+    client = TestClient(server.app)
+    task = _add(db, "Sample")
+    if action == "reopen":
+        db.complete_task(task, NOW)
+    before = _task_state(db)
+    for scope in (auth.AGENT_SCOPE, auth.DEVICE_SCOPE):
+        token = auth.create_token("test-user", scope=scope)
+        assert client.post(f"/tasks/{task}/{action}", content=b"null",
+                           headers={"Authorization": f"Bearer {token}"}).status_code == 401
+    assert client.post(f"/tasks/{task}/{action}", content=b"null").status_code == 401
+    assert _task_state(db) == before
+    token = auth.create_token("test-user")
+    assert client.post(f"/tasks/{task}/{action}", json={"day": "2026-11-25"},
+                       headers={"Authorization": f"Bearer {token}"}).status_code == 200
+
+
+def test_impossible_due_date_leaves_task_tables_unchanged(client, db):
+    before = _task_state(db)
+    response = client.post("/tasks", json={"title": "Synthetic", "where": "today", "due_date": "2026-02-30"})
+    assert response.status_code == 422 and _task_state(db) == before

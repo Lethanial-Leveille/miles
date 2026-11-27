@@ -2,6 +2,7 @@
 
 Approved Nov 25 2026. The backend and the Nova app build against this file and nothing else.
 Neither side changes it; a change is proposed, approved, then written here first.
+The local action day guard was approved at `9e1fd59`.
 
 ## Task object
 
@@ -22,7 +23,7 @@ Neither side changes it; a change is proposed, approved, then written here first
 
 ## Routes
 
-All need the normal login JWT. Errors are `{"detail": "..."}`.
+All need the normal full login JWT. Errors include `detail` and may have additional fields as documented below.
 
 ### `GET /tasks/overview?days=3`
 
@@ -47,17 +48,53 @@ All need the normal login JWT. Errors are `{"detail": "..."}`.
 Body `{"title": "...", "where": "today" | "backlog", "due_date": "YYYY-MM-DD" | null}`. `title` is 1 to
 200 characters. `today` sets `scheduled_for` to today's 4am day; `backlog` leaves it null. Answers 201
 `{"task": Task}`. An invalid date or `where` is 422. Scheduling a backlog item onto a specific day is
-not offered here; that stays in the nightly review.
+not offered here; that stays in the nightly review. An impossible due date such as
+`2026-02-30` returns 422 and creates no task.
 
-### `POST /tasks/{id}/complete` (existing)
+### Day guard for complete and reopen
 
-Unchanged behavior and keys (`completed`, `day`), plus `"task": Task`. 404 when there is no active
-task with that id.
+Send `{"day":"YYYY-MM-DD"}` using the `today` from the overview that rendered
+the row. The route captures the backend clock once and uses that task day for
+validation, the write, and the returned Task. Midnight stays on the previous
+task day until 04:00 local time. A request captured before 04:00 keeps that day
+even if it finishes later.
+
+After authorization, an invalid body returns 422 before task lookup. The
+guarded form must contain one `day` with a real date in the exact format.
+Unknown or duplicate keys, top level JSON null, explicit null or nonstring
+`day`, and malformed JSON are invalid. A missing or zero byte body and an
+empty JSON object remain accepted legacy forms. They act on the current server
+task day and are logged by route and task ID. Legacy clients cannot protect a
+tap or retry from crossing 04:00 because they omit the rendered date.
+
+Both routes return 404 for a missing or archived task before checking a valid
+supplied date against the server day. On an active task, an earlier or later
+supplied day returns 409 without changing task or completion state:
+
+```json
+{"detail":"The day changed at 4 a.m. Nothing was changed.",
+ "code":"day_changed","today":"2026-11-26"}
+```
+
+A retry keeps its original day and follows the same checks. A guarded request
+that succeeded before 04:00 receives `day_changed` if repeated afterward
+with its original day and the task is still active.
+
+### `POST /tasks/{id}/complete`
+
+Answers 200 `{"completed":true,"day":"<captured day>","task":Task}`. A daily
+task records only the captured day's occurrence. A one time task is also
+marked done. Repeating completion on the same day succeeds and leaves one
+completion for that day.
 
 ### `POST /tasks/{id}/reopen`
 
-Undoes done for today: a one time task returns to pending and its completion for today is removed; a
-daily task loses today's completion. Answers `{"task": Task}`. 404 unknown, 409 when it is not done.
+Answers 200 `{"task":Task}`. A one time task returns to pending and all its
+completion rows are removed. A daily task loses only the captured day's
+completion, and other days are preserved. When the task is already open,
+including a second same day reopen, the route returns 409 with
+`code: "not_done"` and the detail `That task is not done` for a one time task
+or `That task is not done today` for a daily task. No task state changes.
 
 ### `POST /tasks/{id}/backlog`
 
@@ -77,3 +114,9 @@ guarded, MILES only delete path (an Evallo or non MILES event is never touched).
 - Actions: tap the circle to complete, tap again to reopen; swipe to Backlog (not offered on daily
   tasks or backlog items); pull to refresh; a plus button to create a task with a title, Today or
   Backlog, and an optional due date.
+
+- Bind the day for both actions to the overview snapshot that rendered the
+  tapped row, including later sections and Backlog. Keep that day through
+  refresh and retry. On `day_changed`, show the notice and reload without
+  replaying the action. The client change must be paired with a backend that
+  supports the guard.

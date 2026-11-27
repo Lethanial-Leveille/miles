@@ -2,6 +2,7 @@ import json
 import math
 import re
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta
 from config import DAY_STARTS_AT_HOUR, RECALL_MIN_DF, RRF_K, db_path
 
@@ -2609,19 +2610,22 @@ def complete_task(task_id, now=None):
             (task_id,)).fetchone()
         if active is None:
             return False
-        conn.execute(
-            "INSERT OR IGNORE INTO task_completions (task_id, date) VALUES (?, ?)",
-            (task_id, task_day(now)))
-        # A one time task's status is its truth since migration 41; keep the
-        # two in step so "I did it" by voice shows as done in the review.
-        conn.execute(
-            "UPDATE tasks SET status = 'done', updated_at = ? "
-            "WHERE id = ? AND recurrence IS NULL",
-            ((now or datetime.now()).isoformat(), task_id))
+        _record_task_completion(conn, task_id, task_day(now), now or datetime.now())
         conn.commit()
         return True
     finally:
         conn.close()
+
+
+def _record_task_completion(conn, task_id, day, now):
+    conn.execute(
+        "INSERT OR IGNORE INTO task_completions (task_id, date) VALUES (?, ?)",
+        (task_id, day))
+    # One time status and its completion must agree. Daily status is per occurrence.
+    conn.execute(
+        "UPDATE tasks SET status = 'done', updated_at = ? "
+        "WHERE id = ? AND recurrence IS NULL",
+        (now.isoformat(), task_id))
 
 
 def tasks_today(now=None):
@@ -3073,17 +3077,43 @@ def _task_dict(row, done_on=None):
     return task
 
 
+def _task_row(conn, task_id):
+    return conn.execute(
+        f"SELECT {_TASK_COLUMNS}, archived_at FROM tasks WHERE id = ?",
+        (task_id,)).fetchone()
+
+
 def get_task(task_id):
     """One task as a dict, archived or not, or None."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        row = conn.execute(
-            f"SELECT {_TASK_COLUMNS}, archived_at FROM tasks WHERE id = ?",
-            (task_id,)).fetchone()
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        row = _task_row(conn, task_id)
         return dict(row) if row else None
-    finally:
-        conn.close()
+
+
+def apply_task_completion(task_id, *, complete, now, today, expected_day):
+    """Apply an API action and read its result under one writer transaction."""
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        with conn:
+            # Acquire the writer slot before checking active status or completions.
+            # An archive or competing action cannot slip between validation and mutation.
+            conn.execute("BEGIN IMMEDIATE")
+            task = _task_row(conn, task_id)
+            if task is None or task["archived_at"] is not None:
+                return "inactive", None
+            if expected_day is not None and expected_day != today:
+                return "day_changed", None
+            if complete:
+                _record_task_completion(conn, task_id, today, now)
+            elif task["recurrence"] is not None:
+                if not _delete_task_completion(conn, task_id, today):
+                    return "not_done", task
+            else:
+                if task["status"] != "done":
+                    return "not_done", task
+                _set_task_status(conn, task_id, "pending", now)
+            return "ok", _task_row(conn, task_id)
 
 
 def tasks_for_day(day, today=None):
@@ -3208,17 +3238,27 @@ def task_completed_on(task_id, day):
         conn.close()
 
 
+def _delete_task_completion(conn, task_id, day):
+    cursor = conn.execute("DELETE FROM task_completions WHERE task_id = ? AND date = ?",
+                          (task_id, day))
+    return cursor.rowcount > 0
+
+
 def remove_task_completion(task_id, day):
     """Delete the completion dated `day` (a daily task's tick for that day).
     False when there was none."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        with conn:
-            cursor = conn.execute("DELETE FROM task_completions WHERE task_id = ? AND date = ?",
-                                  (task_id, day))
-        return cursor.rowcount > 0
-    finally:
-        conn.close()
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        return _delete_task_completion(conn, task_id, day)
+
+
+def _set_task_status(conn, task_id, status, now):
+    cursor = conn.execute(
+        "UPDATE tasks SET status = ?, updated_at = ? "
+        "WHERE id = ? AND recurrence IS NULL AND archived_at IS NULL",
+        (status, now.isoformat(), task_id))
+    if cursor.rowcount and status == "pending":
+        conn.execute("DELETE FROM task_completions WHERE task_id = ?", (task_id,))
+    return cursor.rowcount > 0
 
 
 def set_task_status(task_id, status, now=None):
@@ -3231,18 +3271,8 @@ def set_task_status(task_id, status, now=None):
     False when there is no active one time task with that id."""
     if status not in ("skipped", "pending"):
         raise ValueError(f"set_task_status takes skipped or pending, not {status!r}")
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        with conn:
-            cursor = conn.execute(
-                "UPDATE tasks SET status = ?, updated_at = ? "
-                "WHERE id = ? AND recurrence IS NULL AND archived_at IS NULL",
-                (status, (now or datetime.now()).isoformat(), task_id))
-            if cursor.rowcount and status == "pending":
-                conn.execute("DELETE FROM task_completions WHERE task_id = ?", (task_id,))
-        return cursor.rowcount > 0
-    finally:
-        conn.close()
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        return _set_task_status(conn, task_id, status, now or datetime.now())
 
 
 def move_task(task_id, new_day, now=None):
