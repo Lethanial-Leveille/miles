@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from uuid import uuid4
 
 from tools import Permission, permits, tool
 
@@ -44,6 +45,7 @@ class _Pending:
     presented: bool = False
     source_cancelled: threading.Event | None = None
     delivered: threading.Event | None = None
+    receipt: str | None = None
 
 
 _lock = threading.Lock()
@@ -69,6 +71,8 @@ class _Turn:
     cancelled: threading.Event
     delivery: threading.Event | None
     announcements: list = field(default_factory=list)
+    app: bool = False
+    received_receipt: str | None = None
 
 
 _conversations = {}
@@ -79,7 +83,7 @@ _NO = {"no", "no thanks", "no cancel", "cancel", "cancel it", "do not do it", "d
 
 
 @contextmanager
-def committed_turn(scope, tier, utterance, cancelled, delivery=None):
+def committed_turn(scope, tier, utterance, cancelled, delivery=None, *, app=False, receipt=None):
     now = time.monotonic()
     with _lock:
         for key, state in list(_conversations.items()):
@@ -90,7 +94,8 @@ def committed_turn(scope, tier, utterance, cancelled, delivery=None):
             state.active.cancelled.set()
         state.index += 1
         state.last_active = now
-        context = _Turn(state, state.index, tier, utterance, cancelled, delivery)
+        context = _Turn(state, state.index, tier, utterance, cancelled, delivery,
+                        app=app, received_receipt=receipt)
         state.active = context
     token = _turn_context.set(context)
     try:
@@ -120,13 +125,24 @@ def _matches(context, proposal, approved, now):
             and context.index == context.conversation.index
             and proposal is not None and proposal.presented
             and (proposal.source_cancelled is None or not proposal.source_cancelled.is_set())
-            and (proposal.delivered is None or proposal.delivered.is_set())
+            and ((proposal.receipt is not None and proposal.receipt == context.received_receipt)
+                 if context.app else (proposal.delivered is None or proposal.delivered.is_set()))
             and proposal.turn == context.index - 1
             and 0 <= now - proposal.created <= CONFIRM_WINDOW_S
             and _reply_words(context.utterance) in (_YES if approved else _NO)
             and context.tier == proposal.tier
             and all(permits(spec, context.tier) for spec in proposal.specs))
 
+
+
+def expects_confirmation():
+    context = _turn_context.get()
+    if context is None or _reply_words(context.utterance) not in (_YES | _NO):
+        return False
+    with _lock:
+        proposal = context.conversation.proposal
+        return (context.received_receipt is not None
+                or (proposal is not None and proposal.turn == context.index - 1))
 
 def confirmation_allowed(approved):
     context = _turn_context.get()
@@ -146,6 +162,19 @@ def mark_presented(question):
                 and proposal is not None and proposal.turn == context.index
                 and question == _question(proposal.changes)):
             proposal.presented = True
+
+
+
+def presented_receipt():
+    context = _turn_context.get()
+    if context is None or not context.app:
+        return None
+    with _lock:
+        proposal = context.conversation.proposal
+        if (not context.cancelled.is_set() and proposal and proposal.presented
+                and proposal.turn == context.index == context.conversation.index):
+            return proposal.receipt
+    return None
 
 
 def begin_turn():
@@ -194,6 +223,7 @@ def propose(description, run, now=None):
             proposal.changes.append((description, run))
             proposal.specs.append(spec)
             proposal.presented = False
+            proposal.receipt = uuid4().hex if context.app else None
             return _question(proposal.changes)
     with _lock:
         if _pending is not None and _pending.turn == _turn:
@@ -277,7 +307,9 @@ def resolve(approved, now=None):
                 outcomes.append("Remaining changes were cancelled before execution.")
                 break
             try:
-                outcomes.append(str(run()))
+                outcome = run()
+                outcomes.append(outcome if isinstance(outcome, str) and outcome.strip()
+                                else f"Could not confirm the result of: {description}.")
             except Exception:
                 outcomes.append(f"Could not confirm the result of: {description}.")
         return " ".join(outcomes)

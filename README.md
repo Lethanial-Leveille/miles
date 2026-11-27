@@ -246,8 +246,8 @@ Live at `https://miles.lethanial.com`.
 |----------|--------|------|
 | `/auth/login` | POST | No |
 | `/auth/refresh` | POST | Yes |
-| `/chat` | POST | Yes |
-| `/chat/stream` | POST, server sent events | Yes |
+| `/chat` | POST, request identity required for mutations | Yes |
+| `/chat/stream` | POST, server sent events with the same mutation identity | Yes |
 | `/speak` | POST, returns mp3 | Yes |
 | `/memories` | GET, POST | Yes |
 | `/memories/{memory_id}` | PATCH, DELETE | Yes |

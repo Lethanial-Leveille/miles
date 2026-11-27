@@ -13,6 +13,7 @@ ToolNotice instead of returned. It goes back to her like an error, so she says
 it rather than "Done.", and is logged as a notice rather than an error.
 """
 
+from datetime import datetime
 from database import (
     TaskNotStarted,
     active_tasks_matching,
@@ -232,10 +233,17 @@ def task_add_tool(task, recurrence=None):
     task = written_form(task)
     # A one time task said aloud is for today, so it gets today's day. With no
     # day it would be in the backlog, which is not on today's list.
-    add_task(task, recurrence, scheduled_for=task_day() if recurrence is None else None)
+    captured = datetime.now()
+    add_task(task, recurrence, now=captured,
+             scheduled_for=task_day(captured) if recurrence is None else None)
     if recurrence == "daily":
         return f"Added the daily task: {task}."
     return f"Added the task: {task}."
+
+
+
+class TaskEligibilityNotice(ToolNotice):
+    """User facing explanation of a daily task's first eligible day."""
 
 
 @tool(
@@ -259,7 +267,7 @@ def task_complete_tool(task):
         if not complete_task(task_id):
             raise ToolNotice("That task is no longer active. Nothing was changed.")
     except TaskNotStarted as exc:
-        raise ToolNotice(f"{text} starts {exc.start_date}. Nothing was marked done.") from None
+        raise TaskEligibilityNotice(f"{text} starts {exc.start_date}. Nothing was marked done.") from None
     return f"Marked done: {text}."
 
 

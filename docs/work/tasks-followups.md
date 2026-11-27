@@ -196,3 +196,84 @@ connecting the resolver to live voice. Include the authorization scope,
 proposal delivery, cancel and retry semantics, and the full timing and
 tool batch regressions. Keep production rollout and hardware checks
 separately gated.
+
+## Independent review corrections
+
+The [independent Tasks review](tasks-independent-review.md) is preserved at
+`aa3e009`, directly above backend `fb4a786`. The candidate correction
+descends from that handoff. The paired Nova correction is `f2fd799` above
+`43dde91`. The canonical Tasks worktrees were checked against those bases.
+This candidate still needs independent verification before connecting the
+scheduling resolver to voice.
+
+- The live guard recognizes the existing ordinary add and daily forms and
+  refuses unsupported timing before it can become part of a default title.
+  The offline parser now refuses the missed clock and month clauses and
+  recognizes the lowercase media title. Voice has no scheduling resolver
+  registration or dated add path. Full restatement and the current limit on
+  voice deadlines remain in force.
+- A task request reserves its mutation before dispatch. The first batch
+  rejects unrelated writes and conflicting controls before an effect.
+  Later model rounds cannot acquire new mutation authority after an
+  earlier proposal, including a refused one. Vetted reads and existing
+  external confirmation batches retain their roles. The shared brain
+  holds control draft speech until preflight and uses the observed outcome
+  for guarded actions, refusals and unmatched approval. A prestart task
+  gives its first eligible day. A missing result in an external confirmation
+  batch names the action whose outcome could not be established.
+- Main chat mutation requests carry a client conversation ID and a unique
+  request ID. The two HTTP routes reserve the same request identity in
+  SQLite before invoking the brain. A replay returns the recorded reply
+  or a conflict for an unfinished or changed request. Reservations with
+  uncertain outcomes survive process restart and never run again
+  automatically. A caller can read through the older envelope, but
+  mutation approval requires the paired Nova or another client supplying
+  the identity. Nova falls back to blocking chat only when the stream route
+  is missing and preserves the envelope when it does.
+- App confirmation requires the receipt issued for the exact question in
+  the completed response, in addition to the original authenticated actor,
+  channel, conversation, expiry, next turn and clearance. A fresh app
+  conversation, a lost final response, or a replay of a recorded response
+  cannot acquire a receipt. A room proposal still requires completed
+  playback and room conversation continuity. The app receipt proves
+  delivery to the client, with physical audibility outside synthetic checks.
+- Migration 046 retains its exact additive column and eligibility behavior.
+  Migration 047 adds a separate main chat receipt table without changing
+  existing task, completion or Evallo data. The receipt ledger retains
+  identities to preserve replay protection. Approval receipts and callbacks
+  stay in memory. Release verification must account for 047 as well as
+  the 045 prerequisite and the paired client behavior.
+
+### Original findings after these corrections
+
+| ID | Candidate disposition |
+| --- | --- |
+| H1 | Corrected for the reproduced live and offline timing fallbacks. Independent verification remains required. |
+| H2 | Corrected for the reproduced clock and recurrence clause losses. Offline qualifier, role and phrase checks remain in place. |
+| H3 | Corrected for the reproduced control draft and missing execution outcomes. Confirmed app speech delivery remains a paired client check. |
+| H4 | Corrected for the reproduced earlier round, sibling and repeated delivery cases. Same request identity is required across transports. |
+| H5 | Previously resolved by the paired rendered day guard. |
+| M1 | Corrected for ordinary add examples and the case insensitive media title. Ambiguous titles still require clarification. Explicit first day handling remains offline. |
+| M2 | Resolved offline under the approved full restatement rule. Verify the original utterance and clarification binding before voice integration. |
+| M3 | Prestart detail and missing callback outcomes are corrected. The full dropped detail schema and user versus model result separation remain outstanding for the guarded tools. |
+| M4 | Request replay is covered by H4. Active title uniqueness across independent requests and the atomic voice duplicate check remain outstanding. |
+| M5 | Voice creation now uses one captured instant. New York clock normalization and end to end resolver integration remain outstanding. |
+| M6 | Previously resolved at the guarded HTTP boundary. Nightly review still needs to report a concurrent archive accurately. |
+| M7 | 046 remains verified synthetically. Check the exact release order 045, 046, 047 and the applied 045 prerequisite before a separately authorized rollout. |
+| M8 | Rollout and rollback coordination remains open for the day guard, future starts and the chat envelope. Reconcile affected writes before any rollback. |
+| L1 | Previously resolved. Rechecked impossible dates and JSON null handling. |
+| L2 | Record exact rollback commits and merge parent with the release history. |
+
+The standalone Nova check covers the rendered day, live client request
+identity, and carry forward of the final response receipt with a synthetic
+transport. The app build and physical device remain separate checks.
+Keep the nightly backup branches and all outstanding backup acceptance
+checks at the recorded checkpoint above.
+
+Final local verification passed 692 backend tests for Tasks, Lists, review,
+migration, app transport, dispatch and speech, plus 431 tests for Calendar,
+tool registration, interruption, resume and reminders. The runs used
+Python 3.13, disposable homes and synthetic databases. The Swift
+standalone check compiled the changed services and passed with the
+synthetic transport. For the standalone compilation, the UI session router
+was substituted with a fixture. This is builder verification.

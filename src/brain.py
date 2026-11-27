@@ -138,6 +138,7 @@ class TurnResult(NamedTuple):
     # from dismissed: dismissed ends a conversation he ended, this ends one he
     # was never having with her, and the difference is whether she says anything.
     ignored: bool = False
+    proposal_receipt: str | None = None
 
 # Turn counter for the A/B alternation. Resets on service restart, which is
 # harmless: alternation stays balanced from whatever point it resumes.
@@ -1071,7 +1072,10 @@ def _run_tools(tool_uses, model, tier, *, safety=None):
         except ToolNotice as exc:
             # Before the general case, which would catch it too. Sent as an
             # error so Nova speaks it, without "failed", because nothing did.
-            output = str(exc) if safety is None or not safety.guarded else "Nothing was changed by that action."
+            if safety is None or not safety.guarded or isinstance(exc, lists_tasks.TaskEligibilityNotice):
+                output = str(exc)
+            else:
+                output = "Nothing was changed by that action."
             is_error = True
             notice = True
         except Exception as exc:
@@ -1155,7 +1159,7 @@ def _code_reply(results, staged=None):
     for result in results:
         block = result["block"]
         permission = _tool_permission(block)
-        if permission is Permission.CONTROL:
+        if permission is Permission.CONTROL and not result["is_error"]:
             continue
         if permission is Permission.READ and block.name not in PARALLEL_READS:
             if not result["is_error"]:
@@ -1207,13 +1211,17 @@ def _track(safety, coroutine):
 async def ask_nova_async(user_text: str, device: str = "pi", channel: str = "voice",
                          tier: str = "hokage", on_text=None, speculation=None,
                          named=False, conversation_start=None, followup=False,
-                         *, actor=None, cancelled=None, delivery=None):
-    safety = TurnSafety(user_text, cancelled or threading.Event())
-    scope = (device, channel, actor, conversation_start)
+                         *, actor=None, cancelled=None, delivery=None, app_conversation=None,
+                         proposal_receipt=None, allow_writes=True):
+    safety = TurnSafety(user_text, cancelled or threading.Event(), allow_writes=allow_writes)
+    scope = (device, channel, actor, app_conversation if device == "app" else conversation_start)
     try:
-        with pending_action.committed_turn(scope, tier, user_text, safety.cancelled, delivery):
-            return await _committed_turn(user_text, device, channel, tier, on_text, speculation,
-                                         named, conversation_start, followup, safety)
+        with pending_action.committed_turn(scope, tier, user_text, safety.cancelled, delivery,
+                                           app=device == "app", receipt=proposal_receipt):
+            safety.expected_confirmation = pending_action.expects_confirmation()
+            result = await _committed_turn(user_text, device, channel, tier, on_text, speculation,
+                                           named, conversation_start, followup, safety)
+            return result._replace(proposal_receipt=pending_action.presented_receipt())
     except asyncio.CancelledError:
         safety.cancelled.set()
         raise
@@ -1413,9 +1421,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
         neutral = {"let me check.": "Let me check.", "let me see.": "Let me see."}
         safe_lead = neutral.get(accumulated.strip().casefold()) if not mutating else None
         if hold_speech and not safety.cancelled.is_set():
-            if only_control_draft:
-                await router.feed(accumulated)
-            elif safe_lead:
+            if safe_lead and not only_control_draft:
                 await router.feed(safe_lead)
         await router.finalize()
 
@@ -1457,8 +1463,9 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
         staged = pending_action.words_for_turn()
         needs_second_call = _needs_second_call(results) and staged is None
 
-        authoritative = safety.guarded or staged is not None or (
-            mutating and any(r["is_error"] for r in results))
+        authoritative = (safety.guarded or staged is not None
+                         or any(r["is_error"] and _tool_permission(r["block"]) is not Permission.READ
+                                for r in results))
         if safety.cancelled.is_set():
             final_text = ""
         elif authoritative:
@@ -1519,7 +1526,11 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
             second_first = None
             for round_index in range(MAX_TOOL_ROUNDS):
                 last_round = round_index == MAX_TOOL_ROUNDS - 1
-                kwargs = {} if last_round or only_stored else {"tools": registry.api_schemas()}
+                schemas = [] if last_round or only_stored else registry.api_schemas()
+                if safety.used:
+                    schemas = [schema for schema in schemas if schema["name"] not in registry
+                               or registry.get(schema["name"]).permission is Permission.READ]
+                kwargs = {"tools": schemas} if schemas else {}
 
                 round_text = ""
                 hold_round = bool(kwargs.get("tools"))
@@ -1613,7 +1624,10 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
             # the call is the answer. A second round trip here would spend a
             # second of latency rephrasing "Timer set."
             final_text = accumulated if mutating else " ".join(spoken_parts).strip()
-            if mutating and final_text:
+            if dismissed and not ignored and not safety.cancelled.is_set():
+                final_text = accumulated
+                await _deliver_tool_reply(final_text, channel, device, None, safety, heard, leaks_seen)
+            elif mutating and final_text:
                 await _say(final_text, channel, device)
             if staged is not None:
                 await _say(staged, channel, device)
@@ -1707,7 +1721,8 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
 def ask_nova(user_text: str, device: str = "pi",
              channel: str = "voice", tier: str = None, on_text=None,
              speculation=None, named=False,
-             conversation_start=None, followup=False, *, actor=None, cancelled=None, delivery=None) -> TurnResult:
+             conversation_start=None, followup=False, *, actor=None, cancelled=None, delivery=None,
+             app_conversation=None, proposal_receipt=None, allow_writes=True) -> TurnResult:
     # None means "look it up", so a demotion set in one turn is in force on the
     # next without the caller having to thread it through.
     loop = _thread_loop()
@@ -1717,6 +1732,7 @@ def ask_nova(user_text: str, device: str = "pi",
                            tier=tier or effective_tier(), on_text=on_text,
                            speculation=speculation, named=named, followup=followup,
                            conversation_start=conversation_start, actor=actor, cancelled=cancelled,
-                           delivery=delivery))
+                           delivery=delivery, app_conversation=app_conversation,
+                           proposal_receipt=proposal_receipt, allow_writes=allow_writes))
     finally:
         _cancel_leftovers(loop)

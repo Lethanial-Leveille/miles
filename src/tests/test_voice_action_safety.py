@@ -341,3 +341,254 @@ def test_absent_mutation_result_never_authorizes_success(voice, monkeypatch):
     result = asyncio.run(voice.run("Add reading", [block("task_add", {"task": "reading"})]))
     assert "could not confirm" in result.text
     assert "Done" not in " ".join(voice.audio)
+
+
+@pytest.mark.parametrize("title", [
+    "water plants Saturdays", "call the bank at half past five",
+    "water plants on the first of the month", "water plants fortnightly",
+    "send the report EOD",
+])
+def test_unsupported_timing_does_not_become_an_ordinary_task(voice, db, title):
+    result = asyncio.run(voice.run(f"Add {title}", [block("task_add", {"task": title})]))
+    assert not db.active_tasks_matching(title)
+    assert "Nothing was changed" in result.text
+    assert all("saved the task" not in text for text in voice.audio)
+
+
+@pytest.mark.parametrize(("utterance", "args"), [
+    ("Add call the bank to my tasks", {"task": "call the bank"}),
+    ("I need to take my vitamins every day", {"task": "take my vitamins", "recurrence": "daily"}),
+    ("Create a daily task to read", {"task": "read", "recurrence": "daily"}),
+    ("Add watch friday night lights", {"task": "watch friday night lights"}),
+])
+def test_ordinary_task_add_forms_keep_working(voice, db, utterance, args):
+    result = asyncio.run(voice.run(utterance, [block("task_add", args)]))
+    [task] = db.active_tasks_matching(args["task"])
+    assert task[2] == args.get("recurrence")
+    assert "Added the" in result.text
+
+
+@pytest.mark.parametrize(("utterance", "blocks"), [
+    ("Add reading daily", [block("dismiss")]),
+    ("I need to take my vitamins every day", []),
+])
+def test_control_refusal_and_missing_tool_cannot_speak_success(voice, db, utterance, blocks):
+    result = asyncio.run(voice.run(utterance, blocks))
+    assert not result.dismissed
+    assert result.text and "saved the task" not in result.text
+    assert all("saved the task" not in line for line in voice.audio)
+    assert not db.active_tasks_matching("reading") and not db.active_tasks_matching("vitamins")
+
+
+@pytest.mark.parametrize("utterance", ["Add reading", "Could you add reading?"])
+def test_unrelated_earlier_round_cannot_change_state_before_task_refusal(voice, db, monkeypatch, utterance):
+    actual = brain.registry.call
+
+    def call(name, args):
+        if name == "set_timer":
+            db.add_task("Synthetic side effect marker")
+            return "Synthetic timer set."
+        return actual(name, args)
+
+    monkeypatch.setattr(brain.registry, "call", call)
+    result = asyncio.run(voice.run(utterance, [
+        block("set_timer", {"amount": 4, "unit": "minutes"}), block("tasks_today"),
+    ], extra=[Stream([block("task_add", {"task": "reading"})], "Done.")]))
+    assert "Nothing was changed" in result.text
+    assert not db.active_tasks_matching("side effect marker")
+    assert not db.active_tasks_matching("reading")
+
+
+def test_confirmation_reports_absent_results_by_action(voice, monkeypatch):
+    actual = brain.registry.call
+
+    def call(name, args):
+        if name == "create_calendar_event":
+            pa.propose("Create synthetic first", lambda: None)
+            return pa.propose("Create synthetic second", lambda: False)
+        return actual(name, args)
+
+    monkeypatch.setattr(brain.registry, "call", call)
+    asyncio.run(voice.run("Propose synthetic changes", [block("create_calendar_event", {
+        "summary": "Synthetic", "start_time": "Tomorrow at two", "duration_minutes": 60})]))
+    result = asyncio.run(voice.run("Yes", [block("confirm_pending_action", {"approved": True})]))
+    assert result.text == ("Could not confirm the result of: Create synthetic first. "
+                           "Could not confirm the result of: Create synthetic second.")
+    assert voice.audio[-1] == result.text
+
+
+@pytest.fixture
+def app_chat(voice, monkeypatch):
+    from fastapi.testclient import TestClient
+    import server
+
+    rounds = []
+    monkeypatch.setattr(brain, "_claude", lambda: SimpleNamespace(
+        messages=SimpleNamespace(stream=lambda **kwargs: rounds.pop(0))))
+    monkeypatch.setattr(brain, "effective_tier", lambda: "hokage")
+    monkeypatch.setitem(server.app.dependency_overrides, server.get_current_user, lambda: "fake-actor")
+    return server.app, TestClient(server.app), rounds
+
+
+def test_app_replay_across_transports_returns_recorded_reply_once(app_chat, db):
+    import json
+    from uuid import uuid4
+
+    _, client, rounds = app_chat
+    rounds.append(Stream([block("task_add", {"task": "reading"}, "same-event")], ""))
+    body = {"message": "Add reading", "channel": "text",
+            "conversation_id": str(uuid4()), "request_id": str(uuid4())}
+    with client.stream("POST", "/chat/stream", json=body) as streamed:
+        frames = [json.loads(line[6:]) for line in streamed.iter_lines() if line.startswith("data: ")]
+    assert frames[-1]["text"] == "Added the task: Reading."
+    assert client.post("/chat", json=body).json() == {"response": frames[-1]["text"]}
+    assert client.post("/chat", json={**body, "message": "Add writing"}).status_code == 409
+    assert not rounds
+    assert len(db.active_tasks_matching("reading")) == 1
+    assert not db.active_tasks_matching("writing")
+
+
+def test_concurrent_or_unfinished_app_replay_is_not_resubmitted(app_chat, db):
+    from concurrent.futures import ThreadPoolExecutor
+    from uuid import uuid4
+    import server
+
+    _, client, _ = app_chat
+    entered, release = Event(), Event()
+    body = {"message": "Add reading", "channel": "text",
+            "conversation_id": str(uuid4()), "request_id": str(uuid4())}
+
+    def failed_worker(*args, **kwargs):
+        db.add_task("Reading")
+        entered.set()
+        assert release.wait(timeout=5)
+        raise RuntimeError("Synthetic failure before acknowledgement")
+
+    with pytest.MonkeyPatch.context() as patch, ThreadPoolExecutor(max_workers=1) as executor:
+        patch.setattr(server, "ask_nova", failed_worker)
+        first = executor.submit(client.post, "/chat", json=body)
+        try:
+            assert entered.wait(timeout=5)
+            assert client.post("/chat", json=body).status_code == 409
+        finally:
+            release.set()
+        with pytest.raises(RuntimeError, match="Synthetic failure"):
+            first.result(timeout=5)
+    assert client.post("/chat", json=body).status_code == 409
+    assert len(db.active_tasks_matching("reading")) == 1
+
+
+@pytest.mark.parametrize("route", ["/chat", "/chat/stream"])
+@pytest.mark.parametrize("confirmation", ["delivered", "wrong conversation", "wrong receipt", "lost body"])
+def test_app_approval_binds_exact_delivery_and_conversation(app_chat, monkeypatch, route, confirmation):
+    import json
+    from uuid import uuid4
+    from fastapi.testclient import TestClient
+
+    app, client, rounds = app_chat
+    actual = brain.registry.call
+    changes = []
+
+    def call(name, args):
+        if name == "create_calendar_event":
+            return pa.propose("Create the synthetic event", lambda: changes.append(1) or "Event created.")
+        return actual(name, args)
+
+    monkeypatch.setattr(brain.registry, "call", call)
+    rounds.extend([
+        Stream([block("create_calendar_event", {
+            "summary": "Synthetic", "start_time": "Tomorrow at two", "duration_minutes": 60})], ""),
+        Stream([block("confirm_pending_action", {"approved": True})], ""),
+    ])
+    conversation = str(uuid4())
+    proposal = {"message": "Propose the synthetic event", "channel": "text",
+                "conversation_id": conversation, "request_id": str(uuid4())}
+    receipt = None
+    if confirmation == "lost body":
+        async def lose_body(scope, receive, send):
+            async def fail(message):
+                if message["type"] == "http.response.body":
+                    raise OSError("Synthetic disconnect")
+                await send(message)
+
+            await app(scope, receive, fail)
+
+        TestClient(lose_body, raise_server_exceptions=False).post(route, json=proposal)
+    elif route == "/chat/stream":
+        with client.stream("POST", route, json=proposal) as streamed:
+            frames = [json.loads(line[6:]) for line in streamed.iter_lines() if line.startswith("data: ")]
+        assert all("proposal_receipt" not in frame for frame in frames[:-1])
+        assert frames[-1]["text"] == "Create the synthetic event?"
+        receipt = frames[-1]["proposal_receipt"]
+    else:
+        response = client.post(route, json=proposal).json()
+        assert response["response"] == "Create the synthetic event?"
+        receipt = response["proposal_receipt"]
+    assert not changes
+    reply = {"message": "Yes", "channel": "text", "request_id": str(uuid4()),
+             "conversation_id": str(uuid4()) if confirmation == "wrong conversation" else conversation,
+             "proposal_receipt": str(uuid4()) if confirmation == "wrong receipt" else receipt}
+    second_client = TestClient(app)
+    answer = second_client.post("/chat", json=reply).json()["response"]
+    if confirmation == "delivered":
+        assert answer == "Event created." and changes == [1]
+        assert second_client.post("/chat", json=reply).json()["response"] == answer
+        assert changes == [1]
+    else:
+        assert "no matching confirmation" in answer and not changes
+
+
+def test_legacy_chat_keeps_conversation_but_refuses_unidentifiable_mutation(app_chat, db):
+    _, client, rounds = app_chat
+    rounds.extend([
+        Stream([], "Hello."),
+        Stream([block("task_add", {"task": "reading"})], "Done."),
+    ])
+    assert client.post("/chat", json={"message": "Hi"}).json() == {"response": "Hello."}
+    answer = client.post("/chat", json={"message": "Add reading"}).json()["response"]
+    assert "send this change safely" in answer
+    assert not db.active_tasks_matching("reading")
+
+
+def test_prestart_completion_explains_the_actual_first_day(voice, db, monkeypatch):
+    from datetime import datetime
+    import lists_tasks
+
+    captured = datetime(2026, 11, 25, 12)
+    task = db.add_task("Reading", "daily", now=captured, start_date="2026-11-26")
+    monkeypatch.setattr(lists_tasks, "complete_task", lambda task_id: db.complete_task(task_id, captured))
+    result = asyncio.run(voice.run("Complete reading", [block("task_complete", {"task": "reading"})]))
+    assert result.text == "Reading starts 2026-11-26. Nothing was marked done."
+    assert voice.audio == [result.text]
+    assert not db.task_completed_on(task, "2026-11-25")
+
+
+def test_confirmation_without_tool_result_cannot_speak_success(voice, monkeypatch):
+    def propose(name, args):
+        return pa.propose("Create the synthetic event", lambda: pytest.fail("Ran without confirmation"))
+
+    monkeypatch.setattr(brain.registry, "call", propose)
+    asyncio.run(voice.run("Propose a synthetic event", [block("create_calendar_event", {
+        "summary": "Synthetic", "start_time": "Tomorrow at two", "duration_minutes": 60})]))
+    result = asyncio.run(voice.run("Yes", [], draft="Done. I created the event."))
+    assert result.text == "I could not confirm that action."
+    assert voice.audio[-1] == result.text
+
+
+def test_cancelled_app_worker_leaves_an_uncertain_reservation(app_chat, db, monkeypatch):
+    from uuid import uuid4
+    import server
+
+    _, client, _ = app_chat
+    body = {"message": "Add reading", "channel": "text",
+            "conversation_id": str(uuid4()), "request_id": str(uuid4())}
+
+    def cancelled_worker(*args, cancelled, **kwargs):
+        db.add_task("Reading")
+        cancelled.set()
+        return brain.TurnResult(text="")
+
+    monkeypatch.setattr(server, "ask_nova", cancelled_worker)
+    assert client.post("/chat", json=body).json() == {"response": ""}
+    assert client.post("/chat", json=body).status_code == 409
+    assert len(db.active_tasks_matching("reading")) == 1

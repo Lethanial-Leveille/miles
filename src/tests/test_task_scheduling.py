@@ -95,3 +95,15 @@ def test_resolver_uses_the_captured_task_day_instead_of_wall_date():
     after = date.fromisoformat(task_day(datetime(2026, 11, 26, 4)))
     assert resolve_task_schedule(text, title="reading", starts="tomorrow", today=before).start_date == "2026-11-26"
     assert resolve_task_schedule(text, title="reading", starts="tomorrow", today=after).start_date == "2026-11-27"
+
+
+@pytest.mark.parametrize("title", ["call the bank at half past five", "water plants on the first of the month"])
+def test_unsupported_clause_cannot_be_accepted_as_a_matching_title(title):
+    plan = resolve_task_schedule(f"Add {title}", title=title, today=date(2026, 11, 25))
+    assert plan.outcome == "reject"
+
+
+def test_media_title_can_be_lowercase_in_a_transcript():
+    title = "watch friday night lights"
+    plan = resolve_task_schedule(f"Add {title}", title=title, today=date(2026, 11, 25))
+    assert plan.outcome == "supported" and plan.recurrence is None

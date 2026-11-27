@@ -1199,6 +1199,41 @@ def _migration_046_task_start_date(conn):
     conn.execute("ALTER TABLE tasks ADD COLUMN start_date TEXT")
 
 
+def _migration_047_chat_request_receipts(conn):
+    conn.execute("""
+        CREATE TABLE chat_request_receipts (
+            actor TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            reply TEXT,
+            PRIMARY KEY (actor, request_id)
+        )
+    """)
+
+
+def reserve_chat_request(actor, request_id, fingerprint):
+    """Reserve before processing. A reservation without a reply is never retried."""
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        cursor = conn.execute("""
+            INSERT INTO chat_request_receipts (actor, request_id, fingerprint)
+            VALUES (?, ?, ?) ON CONFLICT (actor, request_id) DO NOTHING
+        """, (actor, request_id, fingerprint))
+        if cursor.rowcount:
+            return None
+        return conn.execute("""
+            SELECT fingerprint, reply FROM chat_request_receipts
+            WHERE actor = ? AND request_id = ?
+        """, (actor, request_id)).fetchone()
+
+
+def finish_chat_request(actor, request_id, reply):
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("""
+            UPDATE chat_request_receipts SET reply = ?
+            WHERE actor = ? AND request_id = ?
+        """, (reply, actor, request_id))
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -1246,6 +1281,7 @@ MIGRATIONS = [
     (44, _migration_044_review_v2),
     (45, _migration_045_evallo_filter),
     (46, _migration_046_task_start_date),
+    (47, _migration_047_chat_request_receipts),
 ]
 
 # Migrations from this one on run inside one transaction with their version update.

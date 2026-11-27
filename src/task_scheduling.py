@@ -19,6 +19,7 @@ _OTHER_REPEAT = re.compile(
     rf"\b(?:(?:every|each) (?!day\b)\w+|alternate days|weekdays|weekends|weekly|fortnightly|"
     rf"biweekly|monthly|quarterly|annually|yearly|(?:{_WEEKDAY})s|"
     r"daily\s+(?:except|only)|(?:once|twice|three times) (?:a|per) (?:day|week|month)|"
+    r"on the (?:first|second|third|fourth|last) of (?:each|the) (?:week|month)|"
     r"per (?:day|week|month))\b", re.I)
 _WEEKDAY_LIST = re.compile(rf"\bon (?:{_WEEKDAY})\s*(?:,|and|or)\s*(?:{_WEEKDAY})\b", re.I)
 _DEADLINE = re.compile(
@@ -27,7 +28,7 @@ _DEADLINE = re.compile(
 _CLOCK_TIME = re.compile(
     r"\b(?:\d{1,2}:\d{2}|\d{1,2}\s*[ap]\.?m\.?|noon|midnight|"
     r"at\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
-    r"(?:\s+o'clock)?)\b", re.I)
+    r"(?:\s+o'clock)?|at (?:half|quarter) (?:past|to) \w+|at (?:lunchtime|bedtime))\b", re.I)
 _TIMING_HINT = re.compile(
     rf"\b(?:{_DAY}|(?:next|this)\s+(?:week|month|year)|soon|later|tonight|yesterday|"
     rf"morning|afternoon|evening|weekend|by|before|after|from\s+now|"
@@ -41,7 +42,7 @@ _EDIT = re.compile(r"^(?:please )?(?:make|change|edit|move|reschedule|update)\b"
 _QUOTE = re.compile(r'"([^"]+)"|“([^”]+)”')
 # A title such as Watch Friday Night Lights is ordinary task text, even unquoted.
 _MEDIA = re.compile(
-    rf"\b(?i:watch|read|listen to) +((?i:{_WEEKDAY}) "
+    rf"\b(?i:watch|read|listen to) +((?i:friday night lights)|(?i:{_WEEKDAY}) "
     r"(?!(?i:due|starting|starts|by|from|after|before|at)\b)[A-Z][a-z]+ "
     r"(?!(?i:due|starting|starts|by|from|after|before|at)\b)[A-Z][a-z]+)\b")
 _YEARLESS = re.compile(

@@ -14,15 +14,27 @@ PARALLEL_READS = {"get_weather", "tasks_today", "list_show"}
 REFUSED = "Nothing was changed. I could not validate that request."
 ONE_CHANGE = "Nothing was changed. Please ask for one change at a time."
 _NO_TIME = re.compile(
-    r"\b(?:start\w*|begin\w*|deadline|due|by|until|before|after|tomorrow|today|tonight|"
-    r"mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|"
-    r"january|february|march|april|may|june|july|august|september|october|november|december|morning|evening|afternoon|"
-    r"week\w*|month\w*|year\w*|alternate|everyday|recurr\w*|repeat\w*|every|each|at|on|from|when|once|later|soon|"
-    r"next|twice|in \d+)\b|\d{1,4}[-/:]\d", re.I)
-_TASK_REQUEST = re.compile(
-    r"^(?:please )?(?:archive|stop tracking|check off|cross off|complete|(?:add|create|put) .*(?:\btask\b|\blist\b|\bdaily\b|\bevery day\b))",
-    re.I)
-_ACTION_REQUEST = re.compile(r"^(?:please )?(?:add|create|archive|stop tracking|check off|cross off|complete|mark)\b", re.I)
+    r"\b(?:start\w*|begin\w*|deadline|due|by|until|through|before|after|"
+    r"tomorrow|todays?|tonight|yesterday|"
+    r"mon(?:day)?s?|tue(?:sday)?s?|wed(?:nesday)?s?|thu(?:rsday)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?|"
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|"
+    r"morning|evening|afternoon|lunchtime|bedtime|noon|midnight|eod|cob|end of (?:day|business)|"
+    r"daily|biweekly|fortnight\w*|week\w*|month\w*|year\w*|quarterly|annual\w*|alternate|everyday|recurr\w*|repeat\w*|"
+    r"every|each|at|on|from|when|once|later|soon|next|twice|"
+    r"in (?:\d+|one|two|three|a few|several)|"
+    r"(?:\d+|one|two|three|four|five|several) times? (?:a|per) (?:day|week|month))\b|\d{1,4}[-/:]\d", re.I)
+_ADD_REQUEST = re.compile(
+    r"^(?:(?:add|create) (?:(a daily task) (?:to |for )?|a task(?: to| for)? )?|"
+    r"i need to |remind me to )(.+)$")
+_OTHER_ADD = re.compile(
+    r"^(?:(?:add|create) (?:an? |the )?(?:calendar event|event|appointment|reminder|timer)\b|"
+    r"remind me to .+ (?:at|in|on|tomorrow|tonight)\b|i need to (?:set|start) (?:an? |my )?(?:timer|reminder)\b)")
+_POLITE = re.compile(r"^(?:can|could|would|will) you (?:please )?")
+_TASK_ACTION = re.compile(
+    r"^(?:archive|stop tracking|check off|cross off|complete|mark|finish|"
+    r"i (?:finished|completed|did|took|called|paid|got|bought))\b")
+_MEDIA_TITLE = re.compile(r"(?:watch|read|listen to) friday night lights")
 _COMPOUND = re.compile(
     r"\b(?:and|then)\s+(?:add|create|archive|complete|mark|stop tracking|check off|put)\b", re.I)
 _PREFIX = {
@@ -37,19 +49,38 @@ def _normalized(text):
     return " ".join(text.casefold().split()).strip(" .!?,")
 
 
+def _request_words(utterance):
+    words = _normalized(utterance).removeprefix("please ").removesuffix(" please")
+    return _POLITE.sub("", words)
+
+
+def _task_request(utterance):
+    text = _request_words(utterance)
+    return bool(_TASK_ACTION.match(text) or re.match(r"^put .+ on .+ list$", text)
+                or (_ADD_REQUEST.fullmatch(text) and not _OTHER_ADD.match(text)))
+
+
 def _intent_matches(name, args, utterance):
-    text = _normalized(utterance).removeprefix("please ").removesuffix(" please")
+    text = _request_words(utterance)
     if name == "task_add":
-        match = re.fullmatch(r"(?:add|create) (?:a task(?: to| for)? )?(.+)", text)
-        if not match:
+        match = _ADD_REQUEST.fullmatch(text)
+        if not match or _OTHER_ADD.match(text):
             return False
-        title, count = re.subn(r"\s+(?:as a daily task|every day|each day|daily)$", "", match[1])
-        return (bool(count) == (args.get("recurrence") == "daily")
-                and not _NO_TIME.search(title) and title == _normalized(args["task"]))
+        title = re.sub(r" (?:to|on) (?:my|the) (?:tasks|to do list)$", "", match[2])
+        title, count = re.subn(r"\s+(?:as a daily task|every day|each day|daily)$", "", title)
+        quoted = (title.startswith('"') and title.endswith('"')
+                  or title.startswith("“") and title.endswith("”"))
+        if quoted:
+            title = title[1:-1].strip()
+        return (bool(count or match[1]) == (args.get("recurrence") == "daily")
+                and title == _normalized(args["task"])
+                and (quoted or not _NO_TIME.search(title) or _MEDIA_TITLE.fullmatch(title)))
     target = _normalized(args["task"] if "task" in args else args["item"])
     if not target:
         return False
     suffix = r"(?: (?:as )?done)?" if name == "task_complete" else ""
+    if name == "list_add" and _NO_TIME.search(target) and not text.endswith(" list"):
+        return False
     if name.startswith("list_"):
         # Keep the existing grocery default. A nondefault list needs an explicit name.
         from lists_tasks import stored_list_name
@@ -115,15 +146,16 @@ def _valid_args(spec, args):
 class TurnSafety:
     utterance: str
     cancelled: Event = field(default_factory=Event)
+    allow_writes: bool = True
+    expected_confirmation: bool = False
     guarded: bool = False
     used: bool = False
-    prior_mutation: bool = False
     finished: dict = field(default_factory=dict)
     workers: list = field(default_factory=list)
 
     @property
     def expects_action(self):
-        return bool(_ACTION_REQUEST.match(_normalized(self.utterance)))
+        return self.expected_confirmation or _task_request(self.utterance)
 
     def preflight(self, blocks, registry, tier, can_confirm):
         """Decide the complete batch before any executor submission."""
@@ -150,7 +182,7 @@ class TurnSafety:
                 refusals[index] = REFUSED
         candidates = [index for index in mutations if index not in refusals]
         covered = any(blocks[index].name in GUARDED or blocks[index].name == CONFIRM for index in mutations)
-        self.guarded = self.guarded or covered or bool(_TASK_REQUEST.match(_normalized(self.utterance)))
+        self.guarded = self.guarded or covered or self.expects_action
         for index in candidates:
             block = blocks[index]
             key = (block.name, json.dumps(block.input, sort_keys=True))
@@ -162,22 +194,24 @@ class TurnSafety:
         # An invalid sibling must stop all writes, while vetted independent reads may proceed.
         blocked = any(index in refusals and index not in candidates for index in mutations)
         common = REFUSED if blocked else None
-        if covered or self.guarded:
-            if self.used or self.prior_mutation:
-                common = "A new request is needed for another change."
-            elif len(distinct) > 1 or _COMPOUND.search(self.utterance):
-                common = ONE_CHANGE
-            elif distinct:
-                block = blocks[distinct[0]]
-                if block.name not in GUARDED and block.name != CONFIRM:
-                    common = REFUSED
-                elif block.name in GUARDED and not _intent_matches(block.name, block.input, self.utterance):
-                    common = REFUSED
-                elif block.name == CONFIRM and not can_confirm(block.input["approved"]):
-                    common = "Nothing was changed. There is no matching confirmation to apply."
-            if mutations:
-                self.used = True
-        self.prior_mutation |= bool(mutations)
+        if self.used:
+            common = "A new request is needed for another change."
+        elif not self.allow_writes and any(
+                registry.get(blocks[index].name).permission is not Permission.CONTROL
+                for index in distinct):
+            common = "Update Nova to send this change safely."
+        elif (len(distinct) > 1 and self.guarded) or (self.guarded and _COMPOUND.search(self.utterance)):
+            common = ONE_CHANGE
+        elif self.guarded and distinct:
+            block = blocks[distinct[0]]
+            if block.name not in GUARDED and block.name != CONFIRM:
+                common = REFUSED
+            elif block.name in GUARDED and not _intent_matches(block.name, block.input, self.utterance):
+                common = REFUSED
+            elif block.name == CONFIRM and not can_confirm(block.input["approved"]):
+                common = "Nothing was changed. There is no matching confirmation to apply."
+        if mutations:
+            self.used = True
         if self.cancelled.is_set():
             common = "The request was cancelled."
         if common:

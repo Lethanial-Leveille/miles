@@ -1,10 +1,12 @@
 import asyncio
+import hashlib
 import json
 import logging
 import re
 import subprocess
 import sys
 import threading
+from uuid import uuid4
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -20,12 +22,12 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, UUID4, field_validator
 from jose import JWTError
 
 from auth import (verify_password, create_token, decode_token, DEVICE_SCOPE,
                   DEVICE_TOKEN_EXPIRE_DAYS, AGENT_SCOPE, AGENT_TOKEN_EXPIRE_DAYS)
-from brain import ask_nova
+from brain import TurnResult, ask_nova
 from database import (
     init_db, get_active_memories, get_pending_memories,
     approve_memory, delete_memory, get_history,
@@ -35,7 +37,7 @@ from database import (
     all_lists, list_items, check_list_item, uncheck_list_item, list_item_exists,
     task_day, tasks_today, complete_task,
     save_push_device, remove_push_device, save_health_sync,
-    log_phone_presence, latest_phone_presence,
+    log_phone_presence, latest_phone_presence, reserve_chat_request, finish_chat_request,
 )
 from config import MEMORY_SIMILAR_LIST
 from system_state import get_system_state
@@ -111,8 +113,13 @@ class ChatRequest(BaseModel):
     # before this field and its callers should not have to be updated at once.
     channel: Literal["voice", "text"] = "voice"
 
+    conversation_id: UUID4 | None = None
+    request_id: UUID4 | None = None
+    proposal_receipt: UUID4 | None = None
+
 class ChatResponse(BaseModel):
     response: str
+    proposal_receipt: str | None = None
 
 class SpeakRequest(BaseModel):
     text: str
@@ -201,10 +208,35 @@ def refresh(user: str = Depends(get_current_user)):
 
 # ── Core endpoints ──
 
-@app.post("/chat", response_model=ChatResponse)
+def _app_chat_turn(body, user, **transport):
+    identified = body.conversation_id is not None and body.request_id is not None
+    if identified:
+        request_id = body.request_id.hex
+        fingerprint = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        prior = reserve_chat_request(user, request_id, fingerprint)
+        if prior is not None:
+            previous_fingerprint, reply = prior
+            if previous_fingerprint != fingerprint:
+                raise HTTPException(status_code=409, detail="That request identifier was already used.")
+            if reply is None:
+                raise HTTPException(status_code=409, detail="That request is already recorded. Check its outcome before asking again.")
+            # A duplicate gets the recorded reply, but cannot acquire approval authority.
+            return TurnResult(text=reply)
+    cancelled = transport.setdefault("cancelled", threading.Event())
+    result = ask_nova(
+        body.message, device="app", channel=body.channel, actor=user,
+        app_conversation=body.conversation_id.hex if identified else uuid4().hex,
+        proposal_receipt=body.proposal_receipt.hex if body.proposal_receipt and identified else None,
+        allow_writes=identified, **transport)
+    if identified and not cancelled.is_set():
+        finish_chat_request(user, request_id, result.text)
+    return result
+
+
+@app.post("/chat", response_model=ChatResponse, response_model_exclude_none=True)
 def chat(body: ChatRequest, user: str = Depends(get_current_user)):
-    response = ask_nova(body.message, device="app", channel=body.channel, actor=user).text
-    return ChatResponse(response=response)
+    result = _app_chat_turn(body, user)
+    return ChatResponse(response=result.text, proposal_receipt=result.proposal_receipt)
 
 
 # How long the stream waits with nothing to send before writing a comment
@@ -213,10 +245,10 @@ def chat(body: ChatRequest, user: str = Depends(get_current_user)):
 _KEEPALIVE_S = 15
 
 
-def _sse(kind: str, text: str) -> str:
+def _sse(kind: str, text: str, **extra) -> str:
     """One Server Sent Event. The blank line at the end is what ends the event,
     and json keeps a reply containing newlines from ending it early."""
-    return f"event: {kind}\ndata: {json.dumps({'text': text})}\n\n"
+    return f"event: {kind}\ndata: {json.dumps({'text': text, **extra})}\n\n"
 
 
 @app.post("/chat/stream")
@@ -225,23 +257,24 @@ async def chat_stream(body: ChatRequest, user: str = Depends(get_current_user)):
 
     ask_nova runs its own event loop, so it runs on a worker thread and hands
     each piece back here with call_soon_threadsafe, which is the only safe way
-    into this loop from another thread. The turn finishes whatever happens to
-    this response: it is already writing to the database and, on voice, to the
-    speaker."""
+    into this loop from another thread. A disconnect cancels unused authority.
+    A mutation that already started may finish."""
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     cancelled = threading.Event()
     delivered = threading.Event()
 
-    def on_text(kind: str, text: str):
+    def on_text(kind: str, text: str, **extra):
         if not cancelled.is_set():
-            loop.call_soon_threadsafe(queue.put_nowait, (kind, text))
+            loop.call_soon_threadsafe(queue.put_nowait, (kind, text, extra))
 
     def run_turn():
         try:
-            result = ask_nova(body.message, device="app", channel=body.channel, actor=user,
-                              on_text=on_text, cancelled=cancelled, delivery=delivered)
-            on_text("done", result.text)
+            result = _app_chat_turn(body, user, on_text=on_text, cancelled=cancelled, delivery=delivered)
+            receipt = {"proposal_receipt": result.proposal_receipt} if result.proposal_receipt else {}
+            on_text("done", result.text, **receipt)
+        except HTTPException as exc:
+            on_text("error", exc.detail)
         except Exception as exc:
             on_text("error", str(exc))
 
@@ -251,11 +284,11 @@ async def chat_stream(body: ChatRequest, user: str = Depends(get_current_user)):
         try:
             while True:
                 try:
-                    kind, text = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
+                    kind, text, extra = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
                     continue
-                yield _sse(kind, text)
+                yield _sse(kind, text, **extra)
                 if kind == "done":
                     delivered.set()
                     return
@@ -1231,10 +1264,14 @@ async def websocket_chat(ws: WebSocket):
             channel = data.get("channel", "voice")
             if channel not in ("voice", "text"):
                 channel = "voice"
+            turn = ChatRequest(message=message, channel=channel)
+            # Production keeps the direct call; only the headless profile moves
+            # the turn to a worker thread (dev environment contract).
             if headless():
-                result = await asyncio.to_thread(ask_nova, message, device="app", channel=channel)
+                result = await asyncio.to_thread(_app_chat_turn, turn, payload["sub"])
             else:
-                result = ask_nova(message, device="app", channel=channel)
-            await ws.send_json({"response": result.text})
+                result = _app_chat_turn(turn, payload["sub"])
+            response = result.text
+            await ws.send_json({"response": response})
     except WebSocketDisconnect:
         pass

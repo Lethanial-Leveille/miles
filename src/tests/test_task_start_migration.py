@@ -16,6 +16,12 @@ def _start_columns(conn):
     return [row for row in conn.execute("PRAGMA table_info(tasks)") if row[1] == "start_date"]
 
 
+@pytest.fixture(autouse=True)
+def isolate_migration_046(monkeypatch):
+    monkeypatch.setattr(database, "MIGRATIONS", [
+        entry for entry in database.MIGRATIONS if entry[0] <= 46])
+
+
 def _run(path):
     with closing(sqlite3.connect(path)) as conn:
         database._run_migrations(conn)
