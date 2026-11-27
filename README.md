@@ -8,6 +8,10 @@ It is an exploration of full stack systems engineering: real time audio on embed
 
 ---
 
+## Long term direction
+
+MILES is intended to become a responsive, persistent personal intelligence that keeps context across room audio, Nova, computers and future wearable interfaces. Priorities are natural conversation, low latency, continuity, reliability, appropriate initiative and useful personal intelligence. These qualities guide roadmap choices ahead of adding features. JARVIS and EDITH inspire the interaction, with eventual Brilliant Labs Halo integration as a possible future wearable interface. Future work follows the [approved roadmap](docs/ROADMAP.md) and its approval process.
+
 ## Demo
 
 Watch the full system demo (voice and companion app): [linkedin.com/in/lethanial-lee-leveille](https://www.linkedin.com/in/lethanial-lee-leveille)
@@ -324,7 +328,7 @@ miles/
 ├── src/            Runtime. The three services import from here
 │   └── tests/      pytest suite
 ├── scripts/        Operator tools run by hand: pronunciation, phrase bank, labelling, analysis
-├── docs/           Engineering docs. Start with docs/SESSION_START.md
+├── docs/           Engineering docs. Start with docs/REPOSITORY_MAP.md
 ├── systemd/        Every unit and timer, versioned
 └── assets/         Wake chime
 ```

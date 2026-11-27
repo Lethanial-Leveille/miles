@@ -8,13 +8,9 @@
 > STT tables were measured Aug 12 and Aug 13 2026; the wake word sections were
 > measured Aug 12, Sep 8 and Sep 13 2026.
 >
-> **Live config values are declared in [CLAUDE.md](../CLAUDE.md), not here.**
-> This file carries the reasoning and the measurements behind them. A number
-> quoted inside a measurement is what was recorded on the date given and is
-> left exactly as measured, so it may differ from what is live now. The config
-> table in CLAUDE.md is the one that tracks the present.
+> Verify current settings in source using the [repository map](REPOSITORY_MAP.md). Dated values here describe the evidence available at the time.
 
-Up: [CLAUDE.md](../CLAUDE.md) · [SESSION_START.md](SESSION_START.md) ·
+Up: [Repository map](REPOSITORY_MAP.md) · [Engineering sessions](SESSION_START.md) ·
 [BACKEND_TODO.md](BACKEND_TODO.md) · [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md) ·
 [LATENCY.md](LATENCY.md) · [VOICE_OUTPUT.md](VOICE_OUTPUT.md) ·
 [BRAIN.md](BRAIN.md) · [INFRASTRUCTURE.md](INFRASTRUCTURE.md) ·
@@ -79,13 +75,13 @@ built; the open question is clock drift between two USB devices.
 
 ## Capture values, and what each is for
 
-The values themselves are declared in [CLAUDE.md](../CLAUDE.md). What each one
+Current values are defined in [config.py](../src/config.py). What each one
 is *for* was previously carried as a parenthetical beside it, and is kept here so
 the table can stay a plain reference:
 
 - **`CHUNK`** is 80ms frames, which openWakeWord requires.
 - **`VAD_MODE`** selects webrtcvad, which replaced the amplitude threshold that
-  never fired. See the decision log in [SESSION_START.md](SESSION_START.md).
+  never fired. See the [engineering decision log](ENGINEERING_HISTORY.md#decision-log).
 - **`VAD_PREROLL_MS`** retains frames before onset so soft leading consonants
   survive.
 - **`MAX_RECORD`** was raised from 15.0, which truncated 15 percent of follow ups,
@@ -456,7 +452,7 @@ word instead was rejected: the ack and a median command put the request about
 **Every recording leaves the Pi, including the false wakes**, which is how other
 people in the apartment end up transcribed. That was decided rather than
 overlooked, along with the `verify_voice` gate that was declined; both are in the
-decision log in [SESSION_START.md](SESSION_START.md).
+[engineering decision log](ENGINEERING_HISTORY.md#decision-log).
 
 Errors concentrate in **short follow ups**, where there is least context for the
 decoder's language prior: "what's the date" to "was the beat", "Hey Nova" to

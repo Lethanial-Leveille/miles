@@ -1,6 +1,6 @@
 # Repository navigation
 
-Start at [AGENTS.md](../AGENTS.md). Use the [development commands](DEVELOPMENT.md) for ordinary coding and [Infrastructure](INFRASTRUCTURE.md) for production operator context. Open only the rows relevant to the task.
+Start at [AGENTS.md](../AGENTS.md). Use the [development commands](DEVELOPMENT.md) for ordinary coding and [Infrastructure](INFRASTRUCTURE.md) for production operator context. Open only the rows relevant to the task. See [config.py](../src/config.py) for current defaults and follow the subsystem entry point for settings owned outside that file.
 
 | Area | Contract or design | Entry points | Tests and dependencies |
 |---|---|---|---|
@@ -13,11 +13,14 @@ Start at [AGENTS.md](../AGENTS.md). Use the [development commands](DEVELOPMENT.m
 | Integrations and workers | [Infrastructure](INFRASTRUCTURE.md), [roadmap](ROADMAP.md) | [push](../src/push.py), [Apple keys](../src/apple_keys.py), [Oura](../src/oura_tools.py), [Hevy](../src/hevy_tools.py), [Prowl](../src/prowl_tools.py), [watchdog](../src/agent_watchdog.py), [approvals](../src/approvals.py) | [push](../src/tests/test_push.py), [watchdog](../src/tests/test_agent_watchdog.py), [approvals](../src/tests/test_approvals.py). Mock transports, synthetic state, no dev workers. |
 | Voice and hardware | [Audio pipeline](AUDIO_PIPELINE.md), [Voice output](VOICE_OUTPUT.md) | [voice entry point](../src/voice_main.py), [audio](../src/audio.py), [TTS](../src/tts.py), [presence](../src/presence.py) | [speculation](../src/tests/test_speculation.py), [voice pipeline](../src/tests/test_voice_pipeline.py), [testing ladder](TESTING.md). Platform audio tools, speech models and radar are separate from headless setup. |
 
-## Typical session
+## Workflows and references
 
-1. **Start.** Confirm the approved base and worktree with `git status --short --branch`, `git rev-parse HEAD`, and `git worktree list`. Read the relevant contract and use the planning and review gates. Open a handoff under [docs/work](work/) with scope, measures of success, and the next action.
-2. **Resume.** Match the branch, HEAD and working tree to the handoff. Read the paths for its next action and continue inside the approved scope.
-3. **Wrap up.** Record decisions, changed files, implementation commits, exact commands and results by platform, unresolved findings, restrictions, and one runnable next action. Stage only the intended files and use normal hooks for any local commit.
-4. **Independent review.** For contract review, supply the contract and named roadmap section. For implementation review, supply the reviewed SHA, base or diff range, diff, touched files, and contract. Record findings against that revision and follow the owner's review limits.
+- [Engineering sessions](SESSION_START.md) covers starting, continuing, wrapping up and handing off work. [Engineering history](ENGINEERING_HISTORY.md) holds older decisions and measurements for targeted reference.
+- [Approved roadmap](ROADMAP.md) governs phase order. [Backend backlog](BACKEND_TODO.md) indexes deferred work and older research.
+- [Latency measurements](LATENCY.md), [incident records](INCIDENTS.md), [study system](STUDY.md) and the [duplicate memory app handoff](APP_HANDOFF_DUPLICATES.md) are available when their topics come up.
 
-For example, a synthetic task to check reminder ordering would start by verifying its base and opening a handoff naming `src/server.py` and `src/tests/test_app_views.py`. A second session would check the worktree against those entries and run `./scripts/dev test -- tests/test_app_views.py`. The wrap up would record the exact outcome and the commit. If asked for a review, pass the commit, explicit base, scoped files, and applicable contract. The [development handoff](work/dev-environment.md) uses this format for the current phase.
+## Shared API contracts
+
+The backend owns [Sessions](SESSIONS_CONTRACT.md), [Tasks](TASKS_CONTRACT.md) and any other API contract shared with Nova. Obtain owner approval and update the backend contract first. Record the exact intended backend commit and Nova commit in the handoff. In separately authorized Nova work, copy the approved backend contract from that backend commit, record its SHA with the Nova copy update, and compare the two files byte for byte. For example, run `git -C <backend> show <backend-sha>:docs/SESSIONS_CONTRACT.md | diff -u - <nova>/docs/SESSIONS_CONTRACT.md` after resolving the placeholders. Verify the paired behavior with the relevant backend and client tests. A mismatch needs an explicit pairing or reconciliation before relying on the copy.
+
+The published Nova Sessions copy preserved in local `origin/main` at `d9e8c9f` (contract last updated in `c84a151`) differs from the backend at `6e72b9e` (contract last updated in `a79808a`). Nova's copy ends its migration history at 42. The backend also documents migration 44 and nightly review v2, including undated tasks going to the backlog and code authored proposals returned as ordinary assistant text. Reconcile the copy in authorized Nova work against the backend SHA selected for that work.

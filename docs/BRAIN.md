@@ -8,13 +8,9 @@
 > intent measured Aug 12 and Aug 13 2026. The streaming section was re
 > verified against source Sep 13 2026 and corrected.
 >
-> **Live config values are declared in [CLAUDE.md](../CLAUDE.md), not here.**
-> This file carries the reasoning and the measurements behind them. A number
-> quoted inside a measurement is what was recorded on the date given and is
-> left exactly as measured, so it may differ from what is live now. The config
-> table in CLAUDE.md is the one that tracks the present.
+> Verify current settings in source using the [repository map](REPOSITORY_MAP.md). Dated values here describe the evidence available at the time.
 
-Up: [CLAUDE.md](../CLAUDE.md) · [SESSION_START.md](SESSION_START.md) ·
+Up: [Repository map](REPOSITORY_MAP.md) · [Engineering sessions](SESSION_START.md) ·
 [BACKEND_TODO.md](BACKEND_TODO.md) · [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md) ·
 [LATENCY.md](LATENCY.md) · [VOICE_OUTPUT.md](VOICE_OUTPUT.md) ·
 [BRAIN.md](BRAIN.md) · [INFRASTRUCTURE.md](INFRASTRUCTURE.md) ·
@@ -282,7 +278,7 @@ he can cut in on it, which a fixed sentence handed to `_run_local` cannot do.
 transcript is "go on", "continue", "keep going" or a "please" variant, and only
 while a remainder is held (`resume.held()`, which does not consume it).
 Declining sends it to Claude, who has the conversation. The reasoning is in
-[SESSION_START.md](SESSION_START.md#go-on-is-a-local-intent-oct-30-2026-done).
+[engineering decision log](ENGINEERING_HISTORY.md#go-on-is-a-local-intent-oct-30-2026-done).
 
 **Weather is the exception to every rule in this section.** Added Aug 13 2026.
 
@@ -404,7 +400,7 @@ and an addition is the one change undo fully reverses; a move or a delete is not
 > deleting one occurrence of a repeating event, which would come back outside
 > its series, and `rename_calendar_events`, whose spelled read back is the point.
 > The paragraph above and the confirmation rules below now apply only to those.
-> See [SESSION_START.md](SESSION_START.md#moves-and-deletes-happen-at-once-with-undo-sep-16-2026-done).
+> See [engineering decision log](ENGINEERING_HISTORY.md#moves-and-deletes-happen-at-once-with-undo-sep-16-2026-done).
 
 - Confirming on the same turn as the proposal is refused, so the model cannot
   ask and answer itself. A human turn has to happen in between.
@@ -946,4 +942,4 @@ is local intent classification, which is not built. See `docs/BACKEND_TODO.md`.
 
 - Time to first token in the turn budget: [LATENCY.md](LATENCY.md)
 - What the transcript looked like before it reached here, and why a fragment is common: [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#whisper)
-- The tool use migration and its cache margin gate: [SESSION_START.md](SESSION_START.md)
+- The tool use migration and its cache margin gate: [engineering decision log](ENGINEERING_HISTORY.md#native-tool-use-migration-aug-11-2026-in-progress)
