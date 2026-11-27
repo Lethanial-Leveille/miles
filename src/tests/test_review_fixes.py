@@ -4,7 +4,7 @@ per finding, each written to fail on the code before the fix."""
 import datetime
 import os
 import sqlite3
-import subprocess
+import runpy
 import sys
 from datetime import date, datetime as dt
 
@@ -322,7 +322,7 @@ def test_events_are_read_across_every_page(db, monkeypatch):
                "start": {"dateTime": at(25, 10 + n).astimezone().isoformat()},
                "end": {"dateTime": at(25, 10 + n, 30).astimezone().isoformat()}} for n in range(5)]
     pages = _Pages(events)
-    service = fake_google._Service(pages)
+    service = fake_google.Service(pages)
     monkeypatch.setattr(calendar_tools, "_service", lambda: service)
     calendar_tools._calendar_cache.clear()
     busy, _ = calendar_tools.busy_blocks(at(25, 0), at(26, 0))
@@ -345,13 +345,12 @@ def test_a_stale_event_copy_cannot_get_past_the_guard(world):
 
 # ── 12. a bare file name for the key ──
 
-def test_a_bare_key_file_name_works(tmp_path):
+def test_a_bare_key_file_name_works(db, tmp_path, monkeypatch):
     script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)))), "scripts", "capture_key.py")
-    env = {**os.environ, "MILES_DB_PATH": str(tmp_path / "k.db")}
-    out = subprocess.run([sys.executable, script, "new", "bare", "--path", "bare.key"],
-                         capture_output=True, text=True, env=env, cwd=tmp_path)
-    assert out.returncode == 0, out.stderr
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", [script, "new", "bare", "--path", "bare.key"])
+    runpy.run_path(script, run_name="__main__")
     assert (tmp_path / "bare.key").read_text().startswith("mcap_")
 
 

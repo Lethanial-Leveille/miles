@@ -98,11 +98,6 @@ def test_the_thread_client_keeps_idle_connections_between_turns():
     """httpx drops an idle connection after 5s by default and turns are a median
     37s apart, so without this every turn reconnected anyway. It must also stay
     under Anthropic's own idle close, measured between 300 and 420s."""
-    def client_limits():
-        brain._thread_loop()
-        pool = brain._thread_state.claude._client._transport._pool
-        return pool._keepalive_expiry
-
-    expiry = _on_fresh_thread(client_limits)
+    expiry = brain._client_limits().keepalive_expiry
     assert expiry == brain._KEEPALIVE_S
     assert 30 <= brain._KEEPALIVE_S < 300

@@ -127,22 +127,21 @@ def test_the_key_is_stored_only_as_a_hash(db, key):
     assert capture.CAPTURE_TIER == "chunin"
 
 
-def test_a_new_key_goes_to_a_private_file_and_is_never_printed(tmp_path):
-    import os
+def test_a_new_key_goes_to_a_private_file_and_is_never_printed(db, tmp_path, monkeypatch, capsys):
+    import runpy
     import stat
-    import subprocess
     import sys
-    script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))), "scripts", "capture_key.py")
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "capture_key.py"
     path = tmp_path / "keys" / "mac.key"
-    env = {**os.environ, "MILES_DB_PATH": str(tmp_path / "keys.db")}
-    out = subprocess.run([sys.executable, script, "new", "mac", "--path", str(path)],
-                         capture_output=True, text=True, env=env, check=True)
+    monkeypatch.setattr(sys, "argv", [str(script), "new", "mac", "--path", str(path)])
+    runpy.run_path(str(script), run_name="__main__")
     key = path.read_text().strip()
+    out = capsys.readouterr()
     assert key.startswith(capture.KEY_PREFIX)
-    assert key not in out.stdout and key not in out.stderr
-    assert str(path) in out.stdout and "Key 1" in out.stdout
+    assert key not in out.out and key not in out.err
+    assert str(path) in out.out and "Key 1" in out.out
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    again = subprocess.run([sys.executable, script, "new", "mac", "--path", str(path)],
-                           capture_output=True, text=True, env=env)
-    assert again.returncode != 0                       # never overwrites a key file
+    with pytest.raises(FileExistsError):
+        runpy.run_path(str(script), run_name="__main__")

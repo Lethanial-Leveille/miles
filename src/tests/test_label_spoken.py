@@ -1,7 +1,9 @@
 """The listening page labels replies, and hands out nothing but replies.
 Runs a real server on a free port on 127.0.0.1, over files under tmp_path."""
 
+import errno
 import importlib.util
+import socket
 import json
 import os
 import threading
@@ -11,6 +13,7 @@ import urllib.request
 import pytest
 
 import spoken_archive
+from runtime_profile import current
 
 _PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "scripts", "label_spoken.py")
@@ -26,7 +29,14 @@ def served(tmp_path, monkeypatch):
     (tmp_path.parent / "secret.txt").write_text("not yours")
     path = spoken_archive.save_reply([("Got it.", b"\x01\x00" * 2205, 0)],
                                      directory=str(tmp_path))
-    server = ls.make_server(0)
+    with socket.socket() as probe:
+        try:
+            probe.bind(("127.0.0.1", current().port))
+        except OSError as exc:
+            if exc.errno in {errno.EPERM, errno.EACCES}:
+                pytest.skip("Runner denies designated loopback binds")
+            raise
+    server = ls.make_server(current().port)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}", os.path.basename(path)[:-4]
     server.shutdown()

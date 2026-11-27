@@ -43,6 +43,8 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from runtime_profile import headless, refuse_live
+
 import calendar_roles
 import evallo_filter
 import pending_action
@@ -457,6 +459,15 @@ def free_gaps(busy, start, end):
 # ── Google ──
 
 def _service():
+    if headless():
+        from dev_providers import calendar
+
+        return calendar()
+    return _live_service()
+
+
+def _live_service():
+    refuse_live("Google Calendar")
     if not os.path.exists(TOKEN_FILE):
         raise FileNotFoundError("no Google token; run scripts/google_auth.py")
     creds = Credentials.from_authorized_user_file(TOKEN_FILE, _SCOPES)

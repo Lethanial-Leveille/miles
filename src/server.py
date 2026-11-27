@@ -7,6 +7,10 @@ import threading
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
+from runtime_profile import current, development, headless
+
+current()
+
 from fastapi import FastAPI, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -184,6 +188,8 @@ class EventChange(BaseModel):
 def login(body: LoginRequest):
     if not verify_password(body.password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect password")
+    if headless():
+        return TokenResponse(access_token=create_token("synthetic-owner"))
     return TokenResponse(access_token=create_token("Lethanial"))
 
 
@@ -843,6 +849,8 @@ def agent_propose(body: ApprovalProposal, user: str = Depends(get_agent_user)):
 
 @app.post("/agent/approvals/claim")
 def agent_claim(kinds: Optional[str] = None, user: str = Depends(get_agent_user)):
+    if development():
+        return {"approvals": []}
     wanted = set(kinds.split(",")) if kinds else None
     return {"approvals": approvals.claim_approved(wanted)}
 
@@ -885,6 +893,8 @@ class LoginExpiredNote(BaseModel):
 @app.post("/agent/heartbeat")
 def agent_heartbeat(body: Heartbeat, user: str = Depends(get_agent_user)):
     """The Mac checking in. The answer lists missed jobs he asked to retry."""
+    if development():
+        return {"retry": []}
     return {"retry": agent_watchdog.heartbeat(body.source)}
 
 
@@ -1105,6 +1115,8 @@ _SERVICES = ("miles-voice", "miles-server", "miles-tunnel")
 def _services_active():
     """Whether each long running service is up. Kept out of get_system_state,
     whose output Nova reads aloud, so the app view cannot change what she says."""
+    if headless():
+        return dict.fromkeys(_SERVICES)
     result = subprocess.run(["systemctl", "is-active", *_SERVICES],
                             capture_output=True, text=True, timeout=5)
     states = result.stdout.split()
@@ -1157,7 +1169,8 @@ async def websocket_chat(ws: WebSocket):
             channel = data.get("channel", "voice")
             if channel not in ("voice", "text"):
                 channel = "voice"
-            response = ask_nova(message, device="app", channel=channel).text
+            result = await asyncio.to_thread(ask_nova, message, device="app", channel=channel)
+            response = result.text
             await ws.send_json({"response": response})
     except WebSocketDisconnect:
         pass

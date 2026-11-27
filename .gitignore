@@ -90,3 +90,6 @@ hf_cache/
 # visible it is an untracked file, and auto_deploy.sh skips every deploy while
 # the tree looks dirty.
 .claude/worktrees/
+
+# Worktree-local synthetic database and generated development credentials.
+.miles-dev/

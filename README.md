@@ -312,6 +312,11 @@ From the per turn `timing_log`. Every stage and its history is in [docs/LATENCY.
 
 ---
 
+## Local Development
+
+The [headless setup](docs/DEVELOPMENT.md) runs the backend on a Mac or Linux with
+synthetic data, generated credentials, and offline tests.
+
 ## Repository Structure
 
 ```

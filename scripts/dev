@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+cd "$root"
+
+if [ "${1:-}" = bootstrap ]; then
+    python=$(command -v python3.13)
+    env -i PATH="$PATH" HOME="$HOME" UV_PROJECT_ENVIRONMENT="$root/.venv" \
+        uv sync --locked --no-build --no-config --no-python-downloads \
+        --python "$python" --default-index https://pypi.org/simple
+    shift
+    set -- check "$@"
+fi
+
+exec env -i "$root/.venv/bin/python" -I -S "$root/scripts/dev_runtime.py" "$@"

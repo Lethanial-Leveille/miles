@@ -167,6 +167,7 @@ def test_play_reports_what_it_played(monkeypatch):
     """History records the spoken variant, so play returns text rather than a
     bool. Returning a bool meant the caller guessed index zero and could log
     "Goodnight, Lethanial." on a turn that actually said "Talk soon."."""
+    monkeypatch.setattr(phrasebank.tts, "SPEAKER_DEVICE", "synthetic-speaker")
     monkeypatch.setattr(phrasebank.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(phrasebank, "rendered",
                         lambda key, hour=None, thanked=False: [(2, "/nonexistent.wav")])

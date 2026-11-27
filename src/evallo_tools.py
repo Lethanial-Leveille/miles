@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pending_action
+from runtime_profile import headless
 from evallo_matching import EVALLO_TZ
 from tools import Permission, ToolNotice, tool
 
@@ -31,6 +32,9 @@ RUN_TIMEOUT_S = 150
 
 def run_script(student, start, status, real, minutes=None):
     """Run the Evallo script once and return its result dict."""
+    if headless():
+        return {"ok": False, "outcome": "disabled",
+                "message": "Evallo automation is disabled in the headless runtime."}
     cmd = [str(PYTHON), str(SCRIPT), "--student", student,
            "--start", start.strftime("%Y-%m-%d %H:%M"), "--status", status, "--json"]
     if real:

@@ -26,6 +26,8 @@ from contextlib import contextmanager
 
 from requests_oauthlib import OAuth2Session
 
+from runtime_profile import refuse_live
+
 import config  # noqa: F401  loads .env, which holds the client id and secret
 from tools import Permission, tool
 
@@ -71,6 +73,7 @@ def _save_token(token):
 
 def _get(path, **params):
     """GET one endpoint and return its data list."""
+    refuse_live("Oura")
     if not os.path.exists(TOKEN_FILE):
         raise FileNotFoundError("no Oura token; run scripts/oura_auth.py")
 

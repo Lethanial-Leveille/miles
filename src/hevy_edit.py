@@ -33,6 +33,8 @@ import time
 
 import requests
 
+from runtime_profile import refuse_live
+
 import hevy_tools
 import pending_action
 from tools import Permission, ToolNotice, tool
@@ -95,6 +97,7 @@ def _backup(routine):
 
 
 def _put(routine_id, body):
+    refuse_live("Hevy")
     response = requests.put(f"{hevy_tools._API}/routines/{routine_id}",
                             headers={"api-key": os.environ["HEVY_API_KEY"]},
                             json=body, timeout=hevy_tools._TIMEOUT_S)

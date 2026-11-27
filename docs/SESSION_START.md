@@ -21,7 +21,9 @@ before acting on either.
 
 ---
 
-## Start of session preflight
+## Production session preflight
+
+For ordinary development, start with [AGENTS.md](../AGENTS.md) and the [isolated commands](DEVELOPMENT.md). The commands below require a separately authorized production session.
 
 Run this. It takes seconds and it is cheaper than a wrong plan.
 

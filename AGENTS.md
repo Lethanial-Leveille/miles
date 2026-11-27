@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Rules for coding agents (Codex, Claude Code and their subagents) that apply to this repo only. The general workflow (plans, contracts, Codex reviews, builders, deploys) is global: `~/.claude/CLAUDE.md` for Claude and `~/.codex/AGENTS.md` for Codex. This file adds MILES rules on top and wins where they differ. Read CLAUDE.md first; it holds the full repo conventions and production warnings.
+Start with the [repository map and shared session workflow](docs/REPOSITORY_MAP.md). For development commands, use [Headless development](docs/DEVELOPMENT.md). Resume approved work from its branch handoff in [docs/work](docs/work/). [CLAUDE.md](CLAUDE.md) contains project background, operating conventions, and Claude coordination guidance. Follow the owner's narrower file scope for independent reviews.
 
 ## Production database and services
 - The Pi services, the Cloudflare tunnel and `~/miles/data/miles.db` are production. Do not modify the running services, edit `~/.cloudflared/config.yml`, or write to the production database unless Lethanial explicitly asks.

@@ -15,6 +15,8 @@ import sqlite3
 import statistics
 import subprocess
 
+from runtime_profile import headless
+
 from config import WHISPER_MODEL, db_path
 from tools import Permission, tool
 
@@ -101,13 +103,14 @@ def _db_stats():
 )
 def get_system_state():
     stats = _read(_db_stats, {}) or {}
+    hardware = lambda read: None if headless() else _read(read)
     return {
-        "uptime_hours": _read(_uptime_hours),
+        "uptime_hours": hardware(_uptime_hours),
         "turns_served": stats.get("turns"),
         "median_latency_ms": stats.get("median_latency_ms"),
         "whisper_model": os.path.basename(WHISPER_MODEL),
         "active_memories": stats.get("memories"),
-        "core_temp_f": _read(_core_temp_f),
-        "voice_service_restarts": _read(_service_restarts),
-        "git_commit": _read(_git_commit),
+        "core_temp_f": hardware(_core_temp_f),
+        "voice_service_restarts": hardware(_service_restarts),
+        "git_commit": hardware(_git_commit),
     }

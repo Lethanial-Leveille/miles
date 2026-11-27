@@ -20,6 +20,7 @@ import requests
 from jose import jwt
 
 import config
+from runtime_profile import refuse_live
 
 # Not the bundle that receives pushes by accident: WeatherKit was enabled on
 # this App ID under Identifiers, and a token naming any other is refused.
@@ -37,6 +38,7 @@ def configured():
 
 
 def _key():
+    refuse_live("Apple services")
     with open(config.APNS_KEY_PATH) as key_file:
         return key_file.read()
 

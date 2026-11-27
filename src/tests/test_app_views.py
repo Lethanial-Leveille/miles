@@ -58,8 +58,8 @@ def test_a_delivered_reminder_cannot_be_cancelled(client):
 
 def test_status_details_adds_services_to_what_nova_knows(client, monkeypatch):
     monkeypatch.setattr(server, "get_system_state", lambda: {"uptime_hours": 3.5})
-    monkeypatch.setattr(server.subprocess, "run", lambda *a, **k: type(
-        "Done", (), {"stdout": "active\nactive\nfailed\n"})())
+    monkeypatch.setattr(server, "_services_active", lambda: {
+        "miles-voice": True, "miles-server": True, "miles-tunnel": False})
     assert client.get("/status/details").json() == {
         "uptime_hours": 3.5,
         "services": {"miles-voice": True, "miles-server": True, "miles-tunnel": False},
@@ -71,7 +71,7 @@ def test_status_details_survive_systemctl_failing(client, monkeypatch):
 
     def broken(*a, **k):
         raise FileNotFoundError("systemctl")
-    monkeypatch.setattr(server.subprocess, "run", broken)
+    monkeypatch.setattr(server, "_services_active", broken)
     assert client.get("/status/details").json()["services"] == {
         "miles-voice": None, "miles-server": None, "miles-tunnel": None}
 

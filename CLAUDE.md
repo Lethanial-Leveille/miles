@@ -5,9 +5,9 @@
 > the conflict fixes this file in the same session. Every config value below was
 > read out of `src/config.py` on Sep 13 2026.
 >
-> Read `docs/SESSION_START.md` before proposing changes. It carries the preflight
-> that catches drift and the decision log that explains why things are the way
-> they are.
+> Start with [AGENTS.md](AGENTS.md) and its shared workflow. For ordinary development,
+> use the [isolated launcher](docs/DEVELOPMENT.md). The service preflight in
+> [Session start](docs/SESSION_START.md) belongs to authorized production work.
 >
 > **This file is the index, not the archive.** It holds what is true on every
 > session regardless of task: status, layout, live values, and the rules of the
@@ -68,7 +68,7 @@ warnings it cost before Sep 6 2026, is in
 
 | Doc | Read it when |
 |---|---|
-| [docs/SESSION_START.md](docs/SESSION_START.md) | **Every session, first.** Preflight commands, drift rules, and the decision log |
+| [docs/SESSION_START.md](docs/SESSION_START.md) | Production preflight, drift rules, and the decision log |
 | [docs/BACKEND_TODO.md](docs/BACKEND_TODO.md) | Picking up deferred work, or before proposing anything hardware blocked |
 | [docs/AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md) | Touching the mic, gain, wake word, VAD, Whisper, or speaker verification |
 | [docs/BRAIN.md](docs/BRAIN.md) | Touching the prompt, the model, streaming, tools, channels, or local intent |

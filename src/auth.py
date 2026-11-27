@@ -2,6 +2,10 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from runtime_profile import current, headless
+
+_runtime = current()
+
 # passlib 1.7.4 reads bcrypt.__about__.__version__ but bcrypt 4.x moved it to bcrypt.__version__
 import bcrypt as _bcrypt
 if not hasattr(_bcrypt, "__about__"):
@@ -13,24 +17,31 @@ from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+if not headless():
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 ALGORITHM       = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+def _setting(variable, field):
+    if headless():
+        if _runtime.mode == "test" and variable in os.environ:
+            return os.environ[variable]
+        return _runtime.auth[field]
+    value = os.getenv(variable)
+    if not value:
+        raise RuntimeError(f"{variable} not set. Run scripts/setup_auth.py first.")
+    return value
+
+
 def _secret() -> str:
-    secret = os.getenv("MILES_JWT_SECRET")
-    if not secret:
-        raise RuntimeError("MILES_JWT_SECRET not set. Run scripts/setup_auth.py first.")
-    return secret
+    return _setting("MILES_JWT_SECRET", "jwt_secret")
+
 
 def get_password_hash() -> str:
-    h = os.getenv("MILES_PASSWORD_HASH")
-    if not h:
-        raise RuntimeError("MILES_PASSWORD_HASH not set. Run scripts/setup_auth.py first.")
-    return h
+    return _setting("MILES_PASSWORD_HASH", "password_hash")
 
 
 def verify_password(plain: str) -> bool:

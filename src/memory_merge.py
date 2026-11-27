@@ -8,9 +8,12 @@ job: nothing is stored until he saves it in the app, and he sees every word.
 
 import anthropic
 
+from dev_providers import Claude
+from runtime_profile import headless
+
 from config import MEMORY_PASS_MODEL
 
-client = anthropic.Anthropic()
+client = Claude(summary="Synthetic merged memory.") if headless() else anthropic.Anthropic()
 
 _PROMPT = """Two stored facts about Lethanial say overlapping things. Write one standalone statement that holds everything both say.
 

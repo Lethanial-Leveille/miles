@@ -34,6 +34,8 @@ import os
 
 import requests
 
+from runtime_profile import headless
+
 import config  # noqa: F401  loads .env, which holds PROWL_URL and PROWL_TOKEN
 from tools import Permission, tool
 
@@ -88,6 +90,12 @@ class ProwlError(Exception):
 
 def _request(method, path, **params):
     """One call to Prowl's MILES surface, returning the parsed JSON."""
+    if headless():
+        raise ProwlError("Prowl is disabled in the headless runtime")
+    return _request_with(requests.request, method, path, **params)
+
+
+def _request_with(transport, method, path, **params):
     # Read at call time rather than import time, so a rotated token in .env
     # takes effect on restart without anything caching the old one.
     base = os.environ.get("PROWL_URL")
@@ -95,7 +103,7 @@ def _request(method, path, **params):
     if not base or not token:
         raise ProwlError("PROWL_URL or PROWL_TOKEN is missing from the Pi's .env")
 
-    response = requests.request(
+    response = transport(
         method,
         f"{base.rstrip('/')}/integrations/miles/{path}",
         params=params or None,

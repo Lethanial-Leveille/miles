@@ -13,7 +13,9 @@ behaviour belongs to the tools they call.
 import importlib.util
 import itertools
 import os
+import smtplib
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +28,17 @@ _spec.loader.exec_module(hc)
 
 
 _db_counter = itertools.count()
+
+
+@pytest.fixture(autouse=True)
+def synthetic_read_only_connection(monkeypatch):
+    def connect(target, *, uri):
+        assert uri and target.startswith("file:") and target.endswith("?mode=ro")
+        connection = sqlite3.connect(target.removeprefix("file:").removesuffix("?mode=ro"))
+        connection.execute("PRAGMA query_only=ON")
+        return connection
+
+    monkeypatch.setattr(hc, "sqlite3", SimpleNamespace(connect=connect, Error=sqlite3.Error))
 
 
 class _Config:
@@ -176,6 +189,11 @@ def test_a_failed_send_never_masks_the_failure_it_carries(monkeypatch, capsys):
     monkeypatch.setenv("MILES_ALERT_EMAIL", "x@example.com")
     monkeypatch.setenv("MILES_SMTP_HOST", "127.0.0.1")
     monkeypatch.setenv("MILES_SMTP_PORT", "1")
+    def unavailable(*args, **kwargs):
+        raise OSError("synthetic SMTP failure")
+
+    monkeypatch.setattr(smtplib, "SMTP_SSL", unavailable)
+    monkeypatch.setattr(smtplib, "SMTP", unavailable)
     hc.notify("the real failure", "details")
     out = capsys.readouterr().out
     assert "the real failure" in out

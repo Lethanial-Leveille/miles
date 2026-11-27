@@ -7,6 +7,7 @@ import time
 from elevenlabs.client import ElevenLabs
 
 import timing
+from runtime_profile import current, headless, refuse_live
 
 from database import get_pronunciations
 from config import (
@@ -73,7 +74,7 @@ def normalize_pronunciation(text):
                       lambda _, r=replacement: r, text, flags=re.IGNORECASE)
     return text
 
-_elevenlabs = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+_elevenlabs = None if headless() else ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 
 def _resolve_speaker_device(name_hint, fallback="plughw:0,0"):
@@ -102,10 +103,12 @@ def _resolve_speaker_device(name_hint, fallback="plughw:0,0"):
     return fallback
 
 
-SPEAKER_DEVICE = _resolve_speaker_device(SPEAKER_NAME_HINT)
+SPEAKER_DEVICE = None if current() is not None else _resolve_speaker_device(SPEAKER_NAME_HINT)
 
 
 def play_chime():
+    if headless():
+        return
     # Fire-and-forget: no speak_lock so it never blocks timer/reminder threads.
     # record_command() starts immediately while the chime plays in the background.
     subprocess.Popen(
@@ -275,6 +278,8 @@ def join_for_speech(sentences):
 def start_synthesis(text, voice_settings=None, model=None, seed=None,
                     output_format=None):
     """Begin synthesizing now. None when there is nothing to say."""
+    if _elevenlabs is None:
+        return None
     clean = _prepare(text)
     if clean is None:
         return None
@@ -300,6 +305,8 @@ def stream_audio(text, output_format=None):
     with an error rather than a truncated file. A failure partway through is
     logged and ends the stream, because by then the caller has already committed
     to sending audio."""
+    if _elevenlabs is None:
+        refuse_live("ElevenLabs")
     synthesis = start_synthesis(text, output_format=output_format or TTS_APP_OUTPUT_FORMAT)
     if synthesis is None:
         return None
@@ -329,6 +336,8 @@ def warm():
     turn starts, about 1.5s before its first sentence can exist. The key cannot
     list models and gets a 401, which is still a full round trip on the same
     connection, and costs nothing. Rate limited, and never raises."""
+    if headless():
+        return
     now = time.monotonic()
     if now - _last_warm[0] < 3.0:
         return
