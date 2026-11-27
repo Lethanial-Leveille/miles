@@ -153,3 +153,13 @@ Memory API, nightly review, Review v2 and Evallo filter suites covered 044 and 0
 idempotence, concurrent starters, integrity, history, supported due dates,
 and no-write conflicts. Keep the rollout gates, including checking that
 045 is applied before any authorized migration in production.
+
+## Voice safety contract checkpoint
+
+The [proposed voice safety amendment](tasks-voice-safety-amendment.md)
+reconciles H3, H4 and the outcome text issue in M3 from the recovered
+revision three review. It locates the current speech, first and follow up
+dispatch, speculative hosted tool and pending confirmation boundaries.
+It is awaiting owner approval. The offline resolver and migration remain
+at `41d1fb0`. The Nova early speech experiment remains separate at
+`cf6a257`. No runtime changes or comprehensive review were started.
