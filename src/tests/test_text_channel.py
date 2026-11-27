@@ -109,7 +109,7 @@ def test_the_same_reply_on_voice_is_played(turn):
 
 def test_a_silent_tool_turn_shows_done_without_saying_it(turn):
     timer = SimpleNamespace(type="tool_use", name="set_timer", id="toolu_1",
-                            input={"minutes": 5})
+                            input={"amount": 5, "unit": "minutes"})
     result, played = turn("text", _FakeStream([], [timer]))
     assert result.text == "Done."
     assert played == []
@@ -117,7 +117,7 @@ def test_a_silent_tool_turn_shows_done_without_saying_it(turn):
 
 def test_code_written_lines_all_go_through_the_channel_check():
     """A later direct speak call in the turn would bring the bug straight back."""
-    source = inspect.getsource(brain.ask_nova_async)
+    source = inspect.getsource(brain._committed_turn)
     assert "run_in_executor(None, speak" not in source
     assert "_tts_consumer(" not in source
 
@@ -140,7 +140,7 @@ def test_a_voice_turn_gets_no_note():
 
 def test_the_note_is_used_in_the_turn():
     assert "_with_text_note(recent, channel)" in inspect.getsource(brain.build_request)
-    assert "build_request(" in inspect.getsource(brain.ask_nova_async)
+    assert "build_request(" in inspect.getsource(brain._committed_turn)
 
 
 def test_the_reply_is_streamed_as_it_is_written(turn):
@@ -213,8 +213,8 @@ def test_an_addition_is_read_back_by_code_with_no_second_call(turn, monkeypatch)
     assert result.text == said
 
 
-def test_a_failed_addition_still_goes_back_to_nova(turn, monkeypatch):
-    """An error announces nothing, so Nova has to say what went wrong."""
+def test_a_failed_addition_has_a_code_written_outcome(turn, monkeypatch):
+    """A failed write gets a code outcome rather than an unverified second reply."""
     def fail(name, args):
         raise ValueError("'tomorrow' names a day but not a time; ask him what time")
 
@@ -223,8 +223,8 @@ def test_a_failed_addition_still_goes_back_to_nova(turn, monkeypatch):
                              input={"summary": "study block", "start_time": "tomorrow",
                                     "duration_minutes": 60})
     result, _ = turn("voice", _FakeStream([], [create]), _FakeStream(["What time tomorrow?"]))
-    assert len(turn.calls) == 2
-    assert result.text == "What time tomorrow?"
+    assert len(turn.calls) == 1
+    assert "could not confirm" in result.text
 
 
 def test_every_tool_says_what_it_is_doing():

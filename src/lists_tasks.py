@@ -164,7 +164,8 @@ def list_check_tool(item, list_name=None):
             raise ToolNotice(f"There is no {name} list.")
     item_id, text = _one(unchecked_items_matching(list_id, item),
                          "unchecked item", item)
-    check_list_item(item_id)
+    if not check_list_item(item_id):
+        raise ToolNotice("That item was already checked. Nothing was changed.")
     return f"Checked off {text}."
 
 
@@ -255,7 +256,8 @@ def task_add_tool(task, recurrence=None):
 def task_complete_tool(task):
     task_id, text, _ = _one(active_tasks_matching(task), "task", task)
     try:
-        complete_task(task_id)
+        if not complete_task(task_id):
+            raise ToolNotice("That task is no longer active. Nothing was changed.")
     except TaskNotStarted as exc:
         raise ToolNotice(f"{text} starts {exc.start_date}. Nothing was marked done.") from None
     return f"Marked done: {text}."
@@ -280,7 +282,8 @@ def task_complete_tool(task):
 )
 def archive_task_tool(task):
     task_id, text, _ = _one(active_tasks_matching(task), "task", task)
-    archive_task(task_id)
+    if not archive_task(task_id):
+        raise ToolNotice("That task is no longer active. Nothing was changed.")
     return f"Stopped tracking: {text}."
 
 

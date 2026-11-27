@@ -39,7 +39,7 @@ def _events(body):
 
 
 def test_the_pieces_arrive_then_the_finished_reply(client, monkeypatch):
-    def fake_turn(message, device=None, channel=None, on_text=None):
+    def fake_turn(message, device=None, channel=None, on_text=None, **safety):
         on_text("delta", "Six hours")
         on_text("delta", " and twenty minutes.")
         return TurnResult(text="Six hours and twenty minutes.")
@@ -60,7 +60,7 @@ def test_the_channel_reaches_the_turn(client, monkeypatch):
     """Without this the app would stream a reply and still hear it spoken."""
     seen = {}
 
-    def fake_turn(message, device=None, channel=None, on_text=None):
+    def fake_turn(message, device=None, channel=None, on_text=None, **safety):
         seen["channel"] = channel
         return TurnResult(text="Done.")
 
@@ -70,7 +70,7 @@ def test_the_channel_reaches_the_turn(client, monkeypatch):
 
 
 def test_a_failed_turn_ends_the_stream_with_an_error(client, monkeypatch):
-    def fake_turn(message, device=None, channel=None, on_text=None):
+    def fake_turn(message, device=None, channel=None, on_text=None, **safety):
         raise RuntimeError("Claude is unreachable")
 
     monkeypatch.setattr(server, "ask_nova", fake_turn)
@@ -82,7 +82,7 @@ def test_a_failed_turn_ends_the_stream_with_an_error(client, monkeypatch):
 
 def test_a_newline_in_the_reply_does_not_end_the_event(client, monkeypatch):
     """The blank line is what ends an SSE event, so the text has to be encoded."""
-    def fake_turn(message, device=None, channel=None, on_text=None):
+    def fake_turn(message, device=None, channel=None, on_text=None, **safety):
         on_text("delta", "One.\n\nTwo.")
         return TurnResult(text="One.\n\nTwo.")
 
@@ -90,3 +90,33 @@ def test_a_newline_in_the_reply_does_not_end_the_event(client, monkeypatch):
     response = client.post("/chat/stream", json={"message": "hi", "channel": "text"})
     assert _events(response.text) == [("delta", "One.\n\nTwo."),
                                       ("done", "One.\n\nTwo.")]
+
+
+def test_closing_stream_invalidates_undelivered_turn(monkeypatch):
+    import asyncio
+    from threading import Event
+
+    release, stopped = Event(), Event()
+    observed = {}
+
+    def fake_turn(message, *, on_text, cancelled, delivery, **kwargs):
+        observed.update(cancelled=cancelled, delivery=delivery)
+        on_text("delta", "Synthetic draft")
+        release.wait(timeout=5)
+        stopped.set()
+        return TurnResult(text="Synthetic final")
+
+    monkeypatch.setattr(server, "ask_nova", fake_turn)
+
+    async def run():
+        response = await server.chat_stream(server.ChatRequest(message="Synthetic"), user="test-user")
+        stream = response.body_iterator
+        try:
+            assert "Synthetic draft" in await anext(stream)
+            await stream.aclose()
+            assert observed["cancelled"].is_set() and not observed["delivery"].is_set()
+        finally:
+            release.set()
+        assert await asyncio.to_thread(stopped.wait, 5)
+
+    asyncio.run(run())

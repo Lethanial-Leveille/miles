@@ -154,12 +154,45 @@ idempotence, concurrent starters, integrity, history, supported due dates,
 and no-write conflicts. Keep the rollout gates, including checking that
 045 is applied before any authorized migration in production.
 
-## Voice safety contract checkpoint
+## Voice safety implementation checkpoint
 
-The [proposed voice safety amendment](tasks-voice-safety-amendment.md)
-reconciles H3, H4 and the outcome text issue in M3 from the recovered
-revision three review. It locates the current speech, first and follow up
-dispatch, speculative hosted tool and pending confirmation boundaries.
-It is awaiting owner approval. The offline resolver and migration remain
-at `41d1fb0`. The Nova early speech experiment remains separate at
-`cf6a257`. No runtime changes or comprehensive review were started.
+The [voice safety amendment](tasks-voice-safety-amendment.md) was approved
+at `c29d42a`. The guarded task and list path preflights the full mutation
+batch, applies existing clearance and checks the committed request before
+dispatch. One guarded mutation per request is a temporary limitation.
+Repeat model calls cannot execute it again. Vetted independent reads can
+overlap, and guarded Tasks state reads run after the mutation. This slice
+uses conservative checks for existing undated commands. The scheduling
+resolver from `41d1fb0` remains offline.
+
+Speculative requests expose no tools or synthesis warmup and cannot stand
+in for a tool capable committed turn. The shared brain holds tool round
+speech until the operation result is known, clears draft output when it
+replaces it, and uses code written mutation outcomes. Normal no tool
+responses still deliver their answer. If the turn can still call tools,
+release waits for the tool boundary. The ordinary draft text stream
+remains available and does not commit speech. Independent reads keep
+their existing neutral bridge where safe.
+
+Pending confirmations belong to the original conversation and clearance.
+The room requires complete playback of the question. The app stream
+records delivery at the server boundary, and a disconnect invalidates
+undelivered approval. Physical audibility and phone rendering were not
+verified locally. A newer request cancels unused authority in that
+conversation. An already running operation may finish, and an uncertain
+outcome is never retried automatically. Existing valid external
+confirmation batches keep their order and report partial outcomes.
+
+Synthetic verification passed 884 tests with six existing skips under
+Python 3.13 and a disposable home. The run covered the voice action safety,
+permission, tools, pending action, brain, speculation, chat stream, text
+channel, guest, TTS, interruption, resume, Tasks, Lists, migration,
+resolver, Calendar, Evallo, Hevy and nightly review suites. No provider,
+microphone or production connections were used.
+
+The Nova early speech experiment remains separate at `cf6a257`. Request a
+fresh independent verification of the backend diff after `c29d42a` before
+connecting the resolver to live voice. Include the authorization scope,
+proposal delivery, cancel and retry semantics, and the full timing and
+tool batch regressions. Keep production rollout and hardware checks
+separately gated.

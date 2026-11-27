@@ -13,20 +13,21 @@ Why confirm takes no event details: it runs exactly what was read back. If it
 accepted a title and a time, the model could confirm something other than what
 Lethanial agreed to.
 
-Deciding whether "yeah, do it" is a yes is judgment, and that stays with the
-model. What the code guarantees is narrower and absolute: nothing runs unless
-he was asked, the answer came on the very next turn, and it came soon.
-
-State is per process. A proposal made by voice is confirmed by voice, and one
-made in the app is confirmed in the app, which is the right boundary anyway.
+Live turns bind a presented proposal to its conversation and check explicit
+user assent before consuming it.
 """
 
+from __future__ import annotations
+
+import re
 import threading
 import time
-from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from tools import Permission, tool
+from tools import Permission, permits, tool
 
 # Long enough to answer a question, short enough that a "yes" to something
 # else minutes later cannot reach back and approve a stale proposal.
@@ -38,12 +39,113 @@ class _Pending:
     changes: list          # [(description, run)], confirmed or cancelled together
     turn: int
     created: float
+    tier: str | None = None
+    specs: list = field(default_factory=list)
+    presented: bool = False
+    source_cancelled: threading.Event | None = None
+    delivered: threading.Event | None = None
 
 
 _lock = threading.Lock()
 _turn = 0
 _pending = None
 _announcements = []   # (turn, text) said by code this turn
+
+
+@dataclass
+class _Conversation:
+    index: int = 0
+    proposal: _Pending | None = None
+    last_active: float = 0
+    active: _Turn | None = None
+
+
+@dataclass
+class _Turn:
+    conversation: _Conversation
+    index: int
+    tier: str
+    utterance: str
+    cancelled: threading.Event
+    delivery: threading.Event | None
+    announcements: list = field(default_factory=list)
+
+
+_conversations = {}
+_turn_context = ContextVar("pending_conversation_turn", default=None)
+_tool_context = ContextVar("pending_proposal_tool", default=None)
+_YES = {"yes", "yes please", "yes go ahead", "yes do it", "go ahead", "do it", "yeah", "yeah do it", "i confirm"}
+_NO = {"no", "no thanks", "no cancel", "cancel", "cancel it", "do not do it", "don't do it"}
+
+
+@contextmanager
+def committed_turn(scope, tier, utterance, cancelled, delivery=None):
+    now = time.monotonic()
+    with _lock:
+        for key, state in list(_conversations.items()):
+            if state.active is None and now - state.last_active > CONFIRM_WINDOW_S:
+                del _conversations[key]
+        state = _conversations.setdefault(scope, _Conversation())
+        if state.active is not None:
+            state.active.cancelled.set()
+        state.index += 1
+        state.last_active = now
+        context = _Turn(state, state.index, tier, utterance, cancelled, delivery)
+        state.active = context
+    token = _turn_context.set(context)
+    try:
+        yield
+    finally:
+        with _lock:
+            if state.active is context:
+                state.active = None
+        _turn_context.reset(token)
+
+
+@contextmanager
+def proposing_tool(spec):
+    token = _tool_context.set(spec)
+    try:
+        yield
+    finally:
+        _tool_context.reset(token)
+
+
+def _reply_words(text):
+    return re.sub(r"[^\w']+", " ", text.casefold()).strip()
+
+
+def _matches(context, proposal, approved, now):
+    return (not context.cancelled.is_set()
+            and context.index == context.conversation.index
+            and proposal is not None and proposal.presented
+            and (proposal.source_cancelled is None or not proposal.source_cancelled.is_set())
+            and (proposal.delivered is None or proposal.delivered.is_set())
+            and proposal.turn == context.index - 1
+            and 0 <= now - proposal.created <= CONFIRM_WINDOW_S
+            and _reply_words(context.utterance) in (_YES if approved else _NO)
+            and context.tier == proposal.tier
+            and all(permits(spec, context.tier) for spec in proposal.specs))
+
+
+def confirmation_allowed(approved):
+    context = _turn_context.get()
+    if context is None:
+        return False
+    with _lock:
+        return _matches(context, context.conversation.proposal, approved, time.monotonic())
+
+
+def mark_presented(question):
+    context = _turn_context.get()
+    if context is None:
+        return
+    with _lock:
+        proposal = context.conversation.proposal
+        if (not context.cancelled.is_set() and context.index == context.conversation.index
+                and proposal is not None and proposal.turn == context.index
+                and question == _question(proposal.changes)):
+            proposal.presented = True
 
 
 def begin_turn():
@@ -76,6 +178,23 @@ def propose(description, run, now=None):
     eleven" is asked again instead of confirming the first version."""
     global _pending
     now = time.monotonic() if now is None else now
+    context = _turn_context.get()
+    if context is not None:
+        spec = _tool_context.get()
+        with _lock:
+            state = context.conversation
+            if (context.index != state.index or context.cancelled.is_set()
+                    or spec is None or not permits(spec, context.tier)):
+                return "Nothing was proposed."
+            proposal = state.proposal
+            if proposal is None or proposal.turn != context.index:
+                proposal = state.proposal = _Pending(
+                    [], context.index, now, context.tier,
+                    source_cancelled=context.cancelled, delivered=context.delivery)
+            proposal.changes.append((description, run))
+            proposal.specs.append(spec)
+            proposal.presented = False
+            return _question(proposal.changes)
     with _lock:
         if _pending is not None and _pending.turn == _turn:
             _pending.changes.append((description, run))
@@ -90,6 +209,10 @@ def announce(text):
     For changes made at once, like an event added without a question since Sep
     14 2026. Said by code for the same reason a staged question is: what he
     hears is exactly what happened, with no model turn in between to reword it."""
+    context = _turn_context.get()
+    if context is not None:
+        context.announcements.append(text)
+        return
     with _lock:
         _announcements.append((_turn, text))
 
@@ -102,6 +225,11 @@ def current_turn():
 def words_for_turn():
     """Everything code must say this turn: announcements, then any staged
     question. None when there is nothing, which leaves the reply to the model."""
+    context = _turn_context.get()
+    if context is not None:
+        staged = staged_question()
+        words = context.announcements + ([staged] if staged else [])
+        return " ".join(words) if words else None
     with _lock:
         said = [text for turn, text in _announcements if turn == _turn]
         if _pending is not None and _pending.turn == _turn:
@@ -117,6 +245,13 @@ def staged_question():
     September 14", and his yes created the event he never heard. Only a
     proposal from this turn counts: on the next turn the question has already
     been asked, and that turn is his answer."""
+    context = _turn_context.get()
+    if context is not None:
+        with _lock:
+            proposal = context.conversation.proposal
+            if proposal is not None and proposal.turn == context.index == context.conversation.index:
+                return _question(proposal.changes)
+            return None
     with _lock:
         if _pending is None or _pending.turn != _turn:
             return None
@@ -127,6 +262,25 @@ def resolve(approved, now=None):
     global _pending
     now = time.monotonic() if now is None else now
 
+    context = _turn_context.get()
+    if context is not None:
+        with _lock:
+            proposal = context.conversation.proposal
+            if not _matches(context, proposal, approved, now):
+                return "Nothing was changed. There is no matching confirmation to apply."
+            context.conversation.proposal = None
+        if not approved:
+            return "Cancelled. Nothing was changed."
+        outcomes = []
+        for description, run in proposal.changes:
+            if context.cancelled.is_set():
+                outcomes.append("Remaining changes were cancelled before execution.")
+                break
+            try:
+                outcomes.append(str(run()))
+            except Exception:
+                outcomes.append(f"Could not confirm the result of: {description}.")
+        return " ".join(outcomes)
     with _lock:
         pending = _pending
         if pending is None:

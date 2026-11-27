@@ -260,7 +260,7 @@ def test_once_cut_the_rest_of_a_tool_turn_is_never_played():
     """A second player would start a second watcher reading the mic while the
     carrier holds his interruption, and answer what he had stopped."""
     import inspect
-    source = inspect.getsource(brain.ask_nova_async)
+    source = inspect.getsource(brain._committed_turn)
     assert "_collect_text if heard.cut else _consumer_for(channel, device)" in source
-    assert "None if heard.cut else bridge_key" in source
+    assert "None if heard.cut or mutating else bridge_key" in source
     assert 'heard.text() if heard.cut else final_text' in source

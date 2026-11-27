@@ -1,6 +1,6 @@
-# Proposed Tasks voice dispatch and speech safety amendment
+# Tasks voice dispatch and speech safety amendment
 
-**Awaiting owner approval.** This coordinates revision three findings H3
+**Approved at `c29d42a`.** This coordinates revision three findings H3
 and H4 and its related result handling finding M3. It amends section 3.8 of
 [revision three](tasks-revision-three.md) on backend `41d1fb0`. The
 [approved scheduling rules](tasks-scheduling-amendment.md) and existing
@@ -131,7 +131,8 @@ proposal adds no Nova protocol or code.
    supported normalized plan. Preserve the current limitations on voice
    deadlines and full restatement after clarification.
 
-Approval is needed for the first slice's one guarded mutation per request
-rule and the latency cost of holding speech and bypassing tool capable
-speculation where safety cannot be proven. The existing clearance floors,
+The owner approved the temporary limit of one guarded mutation per committed
+request and the latency cost of holding speech and bypassing tool capable
+speculation when safety cannot be proven. This does not set a permanent
+product limit. The existing clearance floors,
 confirmation policy and production rollout gates carry forward.

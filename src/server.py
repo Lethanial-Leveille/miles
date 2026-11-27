@@ -203,7 +203,7 @@ def refresh(user: str = Depends(get_current_user)):
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(body: ChatRequest, user: str = Depends(get_current_user)):
-    response = ask_nova(body.message, device="app", channel=body.channel).text
+    response = ask_nova(body.message, device="app", channel=body.channel, actor=user).text
     return ChatResponse(response=response)
 
 
@@ -230,14 +230,17 @@ async def chat_stream(body: ChatRequest, user: str = Depends(get_current_user)):
     speaker."""
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
+    cancelled = threading.Event()
+    delivered = threading.Event()
 
     def on_text(kind: str, text: str):
-        loop.call_soon_threadsafe(queue.put_nowait, (kind, text))
+        if not cancelled.is_set():
+            loop.call_soon_threadsafe(queue.put_nowait, (kind, text))
 
     def run_turn():
         try:
-            result = ask_nova(body.message, device="app", channel=body.channel,
-                              on_text=on_text)
+            result = ask_nova(body.message, device="app", channel=body.channel, actor=user,
+                              on_text=on_text, cancelled=cancelled, delivery=delivered)
             on_text("done", result.text)
         except Exception as exc:
             on_text("error", str(exc))
@@ -245,15 +248,22 @@ async def chat_stream(body: ChatRequest, user: str = Depends(get_current_user)):
     threading.Thread(target=run_turn, daemon=True).start()
 
     async def events():
-        while True:
-            try:
-                kind, text = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
-            except asyncio.TimeoutError:
-                yield ": keep-alive\n\n"
-                continue
-            yield _sse(kind, text)
-            if kind in ("done", "error"):
-                return
+        try:
+            while True:
+                try:
+                    kind, text = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                yield _sse(kind, text)
+                if kind == "done":
+                    delivered.set()
+                    return
+                if kind == "error":
+                    return
+        finally:
+            if not delivered.is_set():
+                cancelled.set()
 
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
