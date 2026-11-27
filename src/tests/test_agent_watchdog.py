@@ -165,7 +165,6 @@ def test_evallo_runner_routes_login_expired_through_the_daily_alert(db, pushes, 
     monkeypatch.setattr(evallo_runner, "LOCK", tmp_path / "synthetic-evallo.lock")
     monkeypatch.setattr(evallo_runner, "_run",
                         lambda *a, **k: evallo_runner.Result("login_expired", "Evallo login expired, log in again"))
-    monkeypatch.setattr(evallo_runner, "LOCK", evallo_runner.LOCK.parent / "test_evallo.lock")
     r = evallo_runner.set_session_status("Taylor", datetime(2026, 11, 24, 16, 15), "Completed")
     assert r.outcome == "login_expired"
     (title, body, _), = pushes
