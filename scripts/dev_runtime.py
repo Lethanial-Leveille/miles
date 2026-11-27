@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from dev_guards import BoundaryError, State, directory, install_transports
+from dev_guards import BoundaryError, SQLITE_SUFFIXES, State, directory, install_transports
 
 
 def fts_check():
@@ -92,15 +92,16 @@ def activate(state, source=SRC):
     os.umask(0o077)
     time.tzset()
     sys.path.insert(0, str(source))
-    import runtime_profile
-
-    runtime_profile.configure(state)
     state.protect_files(ROOT)
     state.install_sqlite()
     install_transports(state)
     os.chdir(source)
     if state.mode == "compat":
         return
+
+    import runtime_profile
+
+    runtime_profile.configure(state)
     os.environ["MILES_MODE"] = state.mode
     os.environ["MILES_DB_PATH"] = str(state.db_path)
     os.environ["MILES_CALENDAR_ROLES_FILE"] = str(state.root / "missing-calendar-roles.json")
@@ -172,34 +173,53 @@ def test(state, args):
 
 def verify_direct(state):
     """Invoke unsupported pytest with an early plugin and a synthetic sentinel."""
-    sentinel = state.root / "miles.db"
+    sentinel = state.root / "miles" / "data" / "miles.db"
+    sentinel.parent.mkdir(parents=True)
     with closing(sqlite3.connect(sentinel)) as conn, conn:
         conn.execute("CREATE TABLE sentinel (value TEXT)")
         conn.execute("INSERT INTO sentinel VALUES ('synthetic')")
     fingerprint = hashlib.sha256(sentinel.read_bytes()).digest()
 
+    state.protect_files(ROOT)
     install_transports(state)
     os.environ.update(HOME=str(state.root), MILES_DB_PATH=str(sentinel),
                       PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
     sys.path.insert(0, str(SRC))
     os.chdir(SRC)
-    import pytest
+    sentinel_paths = {str(sentinel) + suffix for suffix in SQLITE_SUFFIXES}
+    watching = True
 
-    output = io.StringIO()
-    with redirect_stdout(output), redirect_stderr(output):
-        try:
-            result = pytest.main(["-p", "dev_early_plugin", "--collect-only", "-q"])
-        except (ImportError, RuntimeError) as exc:
-            if "Use the isolated MILES launcher" not in str(exc):
-                raise BoundaryError("Unexpected early pytest import failure") from None
-        else:
-            if result == 0 or "Use the isolated MILES launcher" not in output.getvalue():
-                raise BoundaryError("Direct pytest did not fail at the runtime boundary")
-    if hashlib.sha256(sentinel.read_bytes()).digest() != fingerprint:
-        raise BoundaryError("Direct pytest altered the synthetic sentinel")
+    def audit(event, args):
+        if not watching:
+            return
+        if event == "sqlite3.connect" and args[0] != ":memory:":
+            state.deny("direct pytest SQLite access")
+        if event == "open":
+            target = args[0]
+            if isinstance(target, (str, bytes)) and os.path.realpath(os.fsdecode(target)) in sentinel_paths:
+                state.deny("direct pytest sentinel access")
+
+    sys.addaudithook(audit)
+    try:
+        import pytest
+
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(output):
+            try:
+                result = pytest.main(["-p", "dev_early_plugin", "--collect-only", "-q"])
+            except (ImportError, RuntimeError) as exc:
+                refused = "Use the isolated MILES launcher" in str(exc)
+            else:
+                refused = result != 0 and "Use the isolated MILES launcher" in output.getvalue()
+    finally:
+        watching = False
     if state.violations:
         raise BoundaryError("Direct pytest attempted a forbidden operation")
-    print("Direct pytest refused its early app import, and the sentinel is intact")
+    if not refused:
+        raise BoundaryError("Direct pytest did not fail at the runtime boundary")
+    if hashlib.sha256(sentinel.read_bytes()).digest() != fingerprint:
+        raise BoundaryError("Direct pytest altered the synthetic sentinel")
+    print("Direct pytest refused its early app import without opening the sentinel")
 
 
 class LoopbackUnavailable(RuntimeError):
@@ -212,6 +232,7 @@ def serve_loopback(config):
     import uvicorn
 
     with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             listener.bind(("127.0.0.1", config.port))
         except OSError as exc:
@@ -255,6 +276,8 @@ def verify_production(state):
     state.db_path = state.root / "miles" / "data" / "miles.db"
     state.db_path.parent.mkdir(parents=True, mode=0o700)
     activate(state, source)
+    # Python 3.13 with -S skips the prefix assignment normally made by site.
+    sys.prefix = sys.exec_prefix = str(ROOT / ".venv")
     local_auth = credentials(state)
     with (state.root / ".env").open("x") as env:
         env.write(f'MILES_PASSWORD_HASH={local_auth["password_hash"]}\n')
@@ -262,9 +285,11 @@ def verify_production(state):
         env.write("ANTHROPIC_API_KEY=synthetic-placeholder\n")
     import auth
     import database
+    import runtime_profile
     import uvicorn
 
-    if "MILES_MODE" in os.environ or database.DB_PATH != str(state.db_path):
+    if (runtime_profile.current() is not None or runtime_profile.headless()
+            or "MILES_MODE" in os.environ or database.DB_PATH != str(state.db_path)):
         raise BoundaryError("Synthetic production startup selected an unexpected configuration")
     if not auth.verify_password(local_auth["password"]):
         raise BoundaryError("Synthetic production dotenv authentication failed")
@@ -306,9 +331,40 @@ def verify_production(state):
         if (conn.execute("SELECT active FROM evallo_verification").fetchall() != [(0,)]
                 or conn.execute("SELECT count(*) FROM evallo_verified_sessions").fetchone() != (1,)):
             raise BoundaryError("Synthetic production startup did not clear the Evallo active flag")
+    verify_production_websocket(local_auth)
     if state.violations:
         raise BoundaryError("Synthetic production startup attempted a forbidden operation")
-    print("Synthetic production target passed dotenv auth, migration, restart, and Evallo reset")
+    print("Synthetic production target passed dotenv auth, migration, restart, Evallo reset, and WebSocket dispatch")
+
+
+def verify_production_websocket(local_auth):
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    from fastapi.testclient import TestClient
+
+    import server
+
+    def reply(*args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            raise BoundaryError("Production WebSocket dispatched chat off the event loop") from None
+        return SimpleNamespace(text="Synthetic production reply")
+
+    dispatch = Mock(side_effect=reply)
+    with patch.object(server, "ask_nova", dispatch), TestClient(server.app) as client:
+        login = client.post("/auth/login", json={"password": local_auth["password"]})
+        if login.status_code != 200:
+            raise BoundaryError("Synthetic production WebSocket login failed")
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json({"token": login.json()["access_token"]})
+            if ws.receive_json() != {"status": "authenticated"}:
+                raise BoundaryError("Synthetic production WebSocket authentication failed")
+            ws.send_json({"message": "Synthetic request", "channel": "text"})
+            if ws.receive_json() != {"response": "Synthetic production reply"}:
+                raise BoundaryError("Unexpected synthetic production WebSocket response")
+    dispatch.assert_called_once_with("Synthetic request", device="app", channel="text")
 
 
 

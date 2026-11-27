@@ -93,6 +93,7 @@ class State:
     def file(self, name, flags):
         if name not in {"runtime.lock", "credentials.json", "credentials.pending"}:
             raise BoundaryError("Unknown protected state file")
+        inspect_file(self.fd, name)
         fd = os.open(name, flags | FILE_FLAGS, mode=0o600, dir_fd=self.fd)
         try:
             check_file(os.fstat(fd), secret=True)
@@ -172,15 +173,7 @@ class State:
         private_checkout = checkout / "data"
         temporary_parent = Path("/private/tmp" if sys.platform == "darwin" else "/tmp")
 
-        def check(value, directory_fd=None):
-            if not isinstance(value, (str, bytes)):
-                return
-            path = Path(os.fsdecode(value))
-            if not path.is_absolute() and directory_fd not in {None, -1}:
-                # State's relative descriptor operations already validate the
-                # anchor and each file without following links.
-                return
-            path = Path(os.path.abspath(path))
+        def check_namespace(path):
             for candidate in (path, *path.parents):
                 if (candidate.name == ".miles-dev"
                         or candidate.parent == temporary_parent
@@ -192,6 +185,44 @@ class State:
                     path.parent == checkout and path.name.startswith(".env")):
                 self.deny("checkout private data")
 
+        def check(value, directory_fd=None, *, opening=False):
+            if not isinstance(value, (str, bytes)):
+                return
+            raw = os.fsdecode(value)
+            path = Path(raw)
+            if not path.is_absolute() and directory_fd not in {None, -1}:
+                # State validates its own relative descriptor operations.
+                return
+            absolute = Path(os.path.abspath(raw))
+            check_namespace(absolute)
+            if not opening:
+                return
+
+            resolved = Path(os.path.realpath(raw))
+            check_namespace(resolved)
+            if not (absolute.is_relative_to(self.root) or resolved.is_relative_to(self.root)):
+                return
+            if absolute != resolved or ".." in path.parts:
+                self.deny("runtime state alias")
+
+            for component in (absolute, *absolute.parents):
+                if not component.is_relative_to(self.root):
+                    break
+                try:
+                    info = component.lstat()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    self.deny("unsafe runtime state")
+                if stat.S_ISDIR(info.st_mode):
+                    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+                        self.deny("unsafe runtime state")
+                else:
+                    try:
+                        check_file(info)
+                    except BoundaryError:
+                        self.deny("unsafe runtime state")
+
         def audit(event, args):
             if event == "open":
                 path, _mode, flags = args
@@ -199,7 +230,7 @@ class State:
                 # walk opens the root by basename with O_DIRECTORY|O_NOFOLLOW.
                 if path == self.root.name and flags & DIR_FLAGS == DIR_FLAGS:
                     return
-                check(path)
+                check(path, opening=True)
             elif event in {"os.listdir", "os.scandir", "os.chdir"}:
                 check(args[0])
             elif event in {"os.remove", "os.rmdir"}:

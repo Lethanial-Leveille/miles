@@ -1149,9 +1149,11 @@ async def websocket_chat(ws: WebSocket):
     try:
         auth_msg = await ws.receive_json()
         token = auth_msg.get("token", "")
-        payload = decode_token(token)
-        _ = payload["sub"]
-    except (JWTError, KeyError, Exception):
+        if headless():
+            get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
+        else:
+            _ = decode_token(token)["sub"]
+    except Exception:
         await ws.send_json({"error": "Unauthorized"})
         await ws.close(code=1008)
         return
@@ -1169,8 +1171,10 @@ async def websocket_chat(ws: WebSocket):
             channel = data.get("channel", "voice")
             if channel not in ("voice", "text"):
                 channel = "voice"
-            result = await asyncio.to_thread(ask_nova, message, device="app", channel=channel)
-            response = result.text
-            await ws.send_json({"response": response})
+            if headless():
+                result = await asyncio.to_thread(ask_nova, message, device="app", channel=channel)
+            else:
+                result = ask_nova(message, device="app", channel=channel)
+            await ws.send_json({"response": result.text})
     except WebSocketDisconnect:
         pass

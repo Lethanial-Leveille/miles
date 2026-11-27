@@ -9,6 +9,17 @@ that did not exist when this was written.
 
 ---
 
+## Production WebSocket chat repair
+
+The production `/ws` route calls the synchronous chat entry point on the
+ASGI event loop. That entry point calls `run_until_complete` on its thread's
+chat loop, which raises while the ASGI loop is already running in that thread. The headless development
+profile can dispatch its synthetic chat on a worker thread. Production needs
+a separate change to decide how chat shares application state and lifecycle
+with the other production routes, and to cover full login authorization,
+dispatch, disconnects, and concurrent turns. The development phase preserves
+the existing production dispatch and tests that boundary.
+
 ## State of the investigation
 
 ### The original problem

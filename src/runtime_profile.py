@@ -10,18 +10,14 @@ def configure(runtime):
     global _runtime
     if _runtime is not None:
         raise RuntimeError("MILES runtime already configured")
-    if runtime.mode not in {"dev", "test", "compat"} or not runtime.locked:
+    if runtime.mode not in {"dev", "test"} or not runtime.locked:
         raise RuntimeError("MILES runtime requires a supported mode and locked state")
     _runtime = runtime
 
 
 def current():
-    if _runtime is None:
-        if ("MILES_MODE" in os.environ or "pytest" in sys.modules
-                or sys.prefix.endswith("/.venv") and any(
-                    os.path.isfile(os.path.join(sys.prefix, "..", item))
-                    for item in ("scripts/dev", "uv.lock"))):
-            raise RuntimeError("Use the isolated MILES launcher: ./scripts/dev")
+    if _runtime is None and ("MILES_MODE" in os.environ or "pytest" in sys.modules):
+        raise RuntimeError("Use the isolated MILES launcher: ./scripts/dev")
     return _runtime
 
 

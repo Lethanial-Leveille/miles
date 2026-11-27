@@ -6,15 +6,18 @@ import socket
 import sqlite3
 import subprocess
 import sys
+from unittest.mock import Mock
 
 import httpx
 import pytest
 import uvicorn
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 import apple_keys
+import approvals
+from auth import AGENT_SCOPE, DEVICE_SCOPE, create_token
 import calendar_tools
-import database
 import deepgram_stt
 import evallo_tools
 import hevy_tools
@@ -26,6 +29,12 @@ import server
 from dev_guards import BoundaryError, State, directory
 from dev_providers import CHAT, SESSION
 from dev_runtime import LoopbackUnavailable, seed, serve_loopback
+
+
+@pytest.fixture(autouse=True)
+def no_real_google():
+    # This module exercises the runtime selector with the network guards active.
+    calendar_tools._calendar_cache.clear()
 
 
 @contextmanager
@@ -89,6 +98,7 @@ def test_other_state_survives_refused_open_and_reset(tmp_path, suffix, link):
             with pytest.raises(BoundaryError):
                 state.reset_database()
     assert points_to_peer.exists()
+    points_to_peer.unlink()
     assert sentinel.read_bytes() == b"unrelated synthetic state"
 
 
@@ -144,6 +154,7 @@ def test_protected_state_rejects_links(tmp_path, filename):
         with pytest.raises(BoundaryError):
             with state.file(filename, os.O_RDONLY):
                 pytest.fail("unsafe credential or lock file opened")
+    (root / filename).unlink()
     assert sentinel.read_bytes() == b"synthetic state"
 
 
@@ -153,6 +164,46 @@ def test_foreign_worktree_state_is_refused_before_python_file_access(tmp_path):
         foreign.read_bytes()
     with rejected("foreign runtime state"):
         foreign.write_bytes(b"synthetic")
+
+
+@pytest.mark.parametrize("alias", ["file-symlink", "directory-symlink", "hard-link"])
+def test_runtime_file_opens_refuse_existing_aliases(tmp_path, alias):
+    original = tmp_path / "original"
+    original.mkdir()
+    sentinel = original / "sentinel.txt"
+    sentinel.write_text("synthetic sentinel")
+    alias_path = tmp_path / "alias"
+    if alias == "directory-symlink":
+        alias_path.symlink_to(original, target_is_directory=True)
+        target = alias_path / sentinel.name
+    elif alias == "file-symlink":
+        alias_path.symlink_to(sentinel)
+        target = alias_path
+    else:
+        os.link(sentinel, alias_path)
+        target = alias_path
+
+    kind = "unsafe runtime state" if alias == "hard-link" else "runtime state alias"
+    with rejected(kind):
+        target.read_text()
+    with rejected(kind):
+        target.write_text("changed")
+    alias_path.unlink()
+    assert sentinel.read_text() == "synthetic sentinel"
+
+
+def test_disabled_zoom_configuration_never_opens_a_file(monkeypatch):
+    sentinel = runtime_profile.current().root / "missing-zoom.json"
+    sentinel.write_text('{"link": "https://example.zoom.us/j/1234567890"}')
+    opener = Mock()
+    monkeypatch.setattr(approvals, "open", opener, raising=False)
+    try:
+        assert approvals.zoom_link() is None
+        with pytest.raises(ValueError, match="No links are allowed"):
+            approvals.check_text("Join https://example.zoom.us/j/1234567890")
+        opener.assert_not_called()
+    finally:
+        sentinel.unlink()
 
 
 def test_network_and_process_guards_catch_refusals_before_the_operation():
@@ -190,12 +241,9 @@ def login(client):
     return {"Authorization": "Bearer " + refreshed.json()["access_token"]}
 
 
-def test_generated_auth_seeded_routes_and_fakes_work_together(db, monkeypatch):
-    from dev_providers import calendar
-
+def test_generated_auth_seeded_routes_and_fakes_work_together(db):
     state = runtime_profile.current()
     seed(state.auth)
-    monkeypatch.setattr(calendar_tools, "_service", calendar)
     with TestClient(server.app) as client:
         headers = login(client)
         assert client.get("/status", headers={"Authorization": "Bearer synthetic-invalid"}).status_code == 401
@@ -230,6 +278,22 @@ def test_generated_auth_seeded_routes_and_fakes_work_together(db, monkeypatch):
         assert events.status_code == 200
         assert "Sample appointment" in events.text
         assert client.post("/speak", headers=headers, json={"text": "Sample"}).status_code == 502
+
+
+@pytest.mark.parametrize("scope", [DEVICE_SCOPE, AGENT_SCOPE])
+def test_headless_websocket_rejects_scoped_credentials_before_dispatch(db, monkeypatch, scope):
+    dispatch = Mock()
+    monkeypatch.setattr(server, "ask_nova", dispatch)
+    token = create_token("Alex", scope=scope)
+
+    with TestClient(server.app) as client, client.websocket_connect("/ws") as ws:
+        ws.send_json({"token": token})
+        ws.send_json({"message": "Synthetic request", "channel": "text"})
+        assert ws.receive_json() == {"error": "Unauthorized"}
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        assert closed.value.code == 1008
+    dispatch.assert_not_called()
 
 
 def test_real_loopback_api_lifecycle(db):
