@@ -3,7 +3,7 @@ import math
 import re
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from config import DAY_STARTS_AT_HOUR, RECALL_MIN_DF, RRF_K, db_path
 
 # Taken from config.db_path() at import; the db test fixture repoints it (and
@@ -1189,6 +1189,16 @@ def _migration_045_evallo_filter(conn):
     """)
 
 
+def _migration_046_task_start_date(conn):
+    for _, name, kind, required, default, primary_key in conn.execute("PRAGMA table_info(tasks)"):
+        if name.casefold() == "start_date":
+            if (kind.upper() != "TEXT" or required or primary_key
+                    or (default is not None and default.strip().upper() != "NULL")):
+                raise sqlite3.OperationalError("Incompatible tasks.start_date column")
+            return
+    conn.execute("ALTER TABLE tasks ADD COLUMN start_date TEXT")
+
+
 MIGRATIONS = [
     (1, _migration_001_memories_v2),
     (2, _migration_002_verification_log_v2),
@@ -1235,6 +1245,7 @@ MIGRATIONS = [
     (43, _migration_043_capture),
     (44, _migration_044_review_v2),
     (45, _migration_045_evallo_filter),
+    (46, _migration_046_task_start_date),
 ]
 
 # Migrations from this one on run inside one transaction with their version update.
@@ -2576,7 +2587,7 @@ def task_day(now=None):
 
 
 def add_task(text, recurrence=None, now=None, scheduled_for=None, due_date=None, minutes=None,
-             short_title=None):
+             short_title=None, *, start_date=None):
     """Save a task and return its id. recurrence is None for a one time task or
     'daily'; the table's CHECK refuses anything else.
 
@@ -2584,37 +2595,49 @@ def add_task(text, recurrence=None, now=None, scheduled_for=None, due_date=None,
     list). Voice adds pass today's day, so "add call the bank" still lands on
     today; capture passes nothing, so a capture waits in the backlog."""
     now = now or datetime.now()
+    if start_date is not None:
+        if recurrence != "daily":
+            raise ValueError("start_date is only for daily tasks")
+        try:
+            first = date.fromisoformat(start_date)
+        except (TypeError, ValueError):
+            raise ValueError("start_date must be a real YYYY-MM-DD date") from None
+        if first.isoformat() != start_date:
+            raise ValueError("start_date must be a real YYYY-MM-DD date")
+        today = task_day(now)
+        offset = (first - date.fromisoformat(today)).days
+        if offset < 0:
+            raise ValueError(f"start_date cannot be before today, {today}")
+        if offset > 365:
+            raise ValueError("start_date is more than a year away")
+        if offset == 0:
+            start_date = None
     conn = sqlite3.connect(DB_PATH)
     try:
         cursor = conn.execute(
             "INSERT INTO tasks (text, recurrence, created_at, scheduled_for, due_date, minutes, "
-            "short_title) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (text, recurrence, now.isoformat(), scheduled_for, due_date, minutes, short_title))
+            "short_title, start_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (text, recurrence, now.isoformat(), scheduled_for, due_date, minutes, short_title, start_date))
         conn.commit()
         return cursor.lastrowid
     finally:
         conn.close()
 
 
-def complete_task(task_id, now=None):
-    """Mark an active task done for the day now counts toward. False when there
-    is no active task with that id, so an archived one cannot gain new days.
+class TaskNotStarted(ValueError):
+    def __init__(self, start_date):
+        super().__init__("The daily task has not started")
+        self.start_date = start_date
 
-    INSERT OR IGNORE because the key is (task_id, date): a second "done" on
-    the same day meets the existing row and is skipped instead of raising. It
-    still counts as success, since the task is done either way."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        active = conn.execute(
-            "SELECT 1 FROM tasks WHERE id = ? AND archived_at IS NULL",
-            (task_id,)).fetchone()
-        if active is None:
-            return False
-        _record_task_completion(conn, task_id, task_day(now), now or datetime.now())
-        conn.commit()
-        return True
-    finally:
-        conn.close()
+
+def complete_task(task_id, now=None):
+    """Mark an eligible task done. An inactive task returns False."""
+    captured = now or datetime.now()
+    result, task = apply_task_completion(
+        task_id, complete=True, now=captured, today=task_day(captured), expected_day=None)
+    if result == "not_started":
+        raise TaskNotStarted(task["start_date"])
+    return result == "ok"
 
 
 def _record_task_completion(conn, task_id, day, now):
@@ -2649,15 +2672,15 @@ def tasks_today(now=None):
         return conn.execute("""
             SELECT t.id, t.text, t.recurrence FROM tasks t
             WHERE t.archived_at IS NULL
-              AND (t.recurrence IS NOT NULL
-                   OR (t.status = 'pending'
+              AND ((t.recurrence IS NOT NULL AND (t.start_date IS NULL OR t.start_date <= ?))
+                   OR (t.recurrence IS NULL AND t.status = 'pending'
                        AND t.scheduled_for IS NOT NULL AND t.scheduled_for <= ?))
               AND NOT EXISTS (
                   SELECT 1 FROM task_completions c
                   WHERE c.task_id = t.id
                     AND (t.recurrence IS NULL OR c.date = ?))
             ORDER BY t.id
-        """, (today, today)).fetchall()
+        """, (today, today, today)).fetchall()
     finally:
         conn.close()
 
@@ -3064,7 +3087,7 @@ def latest_phone_presence():
 
 _TASK_COLUMNS = ("id, text, recurrence, status, scheduled_for, must_do, notes, source, "
                  "assignment_id, topic_id, calendar_event_id, created_at, updated_at, due_date, "
-                 "minutes, short_title")
+                 "minutes, short_title, start_date")
 
 
 def _task_dict(row, done_on=None):
@@ -3104,6 +3127,8 @@ def apply_task_completion(task_id, *, complete, now, today, expected_day):
                 return "inactive", None
             if expected_day is not None and expected_day != today:
                 return "day_changed", None
+            if task["recurrence"] is not None and task["start_date"] and task["start_date"] > today:
+                return ("not_started" if complete else "not_done"), task
             if complete:
                 _record_task_completion(conn, task_id, today, now)
             elif task["recurrence"] is not None:
@@ -3140,6 +3165,7 @@ def tasks_for_day(day, today=None):
                            WHERE c.task_id = tasks.id AND c.date = :day) AS done_on
             FROM tasks
             WHERE archived_at IS NULL
+              AND (recurrence IS NULL OR start_date IS NULL OR start_date <= :day)
               AND (recurrence IS NOT NULL
                    OR scheduled_for = :day
                    OR (:day = :today AND status = 'pending'
@@ -3161,6 +3187,17 @@ def tasks_for_day(day, today=None):
         done_on = task.pop("done_on")
         tasks.append(_task_dict(task, done_on))
     return tasks
+
+
+def upcoming_daily_tasks(today):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(f"""
+            SELECT {_TASK_COLUMNS} FROM tasks
+            WHERE archived_at IS NULL AND recurrence = 'daily' AND start_date > ?
+            ORDER BY start_date, id
+        """, (today,))
+        return [_task_dict(row) for row in rows]
 
 
 def tasks_between(first_day, last_day):

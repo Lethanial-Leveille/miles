@@ -26,7 +26,7 @@ from test_review_v2 import (world, fixed_night, _session, _in_turn,   # noqa: F4
                             TOMORROW, NOW as REVIEW_NOW)
 
 TASK_KEYS = {"id", "title", "short_title", "notes", "daily", "status", "must_do",
-             "scheduled_for", "due_date", "overdue", "has_block", "source"}
+             "scheduled_for", "due_date", "start_date", "overdue", "has_block", "source"}
 NOW = datetime(2026, 11, 25, 12, 0)              # Wednesday noon, the 4am day is the 25th
 
 
@@ -58,7 +58,8 @@ def test_overview_shape_and_labels(client, db):
     later = _add(db, "Lab report", scheduled_for="2026-11-26", due_date="2026-11-27")
     backlog = _add(db, "Project 3", due_date="2026-11-30")
     body = client.get("/tasks/overview").json()
-    assert set(body) == {"today", "days", "backlog"}
+    assert set(body) == {"today", "days", "backlog", "upcoming_daily"}
+    assert body["upcoming_daily"] == []
     assert body["today"] == "2026-11-25"
     assert [(d["date"], d["label"]) for d in body["days"]] == [
         ("2026-11-25", "Today"), ("2026-11-26", "Thursday Nov 26"),
@@ -71,7 +72,7 @@ def test_overview_shape_and_labels(client, db):
     assert body["backlog"][0] == {
         "id": backlog, "title": "Project 3", "short_title": None, "notes": None,
         "daily": False, "status": "pending", "must_do": False, "scheduled_for": None,
-        "due_date": "2026-11-30", "overdue": False, "has_block": False, "source": "manual"}
+        "due_date": "2026-11-30", "start_date": None, "overdue": False, "has_block": False, "source": "manual"}
 
 
 def test_days_parameter(client, db):
@@ -593,3 +594,117 @@ def test_impossible_due_date_leaves_task_tables_unchanged(client, db):
     before = _task_state(db)
     response = client.post("/tasks", json={"title": "Synthetic", "where": "today", "due_date": "2026-02-30"})
     assert response.status_code == 422 and _task_state(db) == before
+
+
+def test_daily_start_eligibility_changes_at_four_without_erasing_history(client, db, clock):
+    task = db.add_task("Reading", "daily", now=NOW, start_date="2026-11-26")
+    legacy = _add(db, "Legacy daily", recurrence="daily")
+    with closing(sqlite3.connect(db.DB_PATH)) as conn, conn:
+        conn.execute("INSERT INTO task_completions VALUES (?, '2026-11-25')", (task,))
+    clock["now"] = datetime(2026, 11, 26, 3, 59, 59)
+    overview = client.get("/tasks/overview").json()
+    assert overview["today"] == "2026-11-25"
+    assert _ids(overview["days"][0]["tasks"]) == [legacy]
+    assert task not in _ids(overview["days"][1]["tasks"])
+    assert [(r["id"], r["start_date"], r["status"]) for r in overview["upcoming_daily"]] == [
+        (task, "2026-11-26", "pending")]
+    assert _ids(client.get("/tasks/today").json()["tasks"]) == [legacy]
+    assert task in _ids(db.tasks_for_day("2026-11-26", today=overview["today"]))
+    before = _task_state(db)
+    complete = client.post(f"/tasks/{task}/complete", json={"day": "2026-11-25"})
+    reopen = client.post(f"/tasks/{task}/reopen", json={"day": "2026-11-25"})
+    assert complete.status_code == 409 and complete.json() == {
+        "detail": "Reading starts Thu Nov 26.", "code": "not_started", "start_date": "2026-11-26"}
+    assert reopen.status_code == 409 and reopen.json()["code"] == "not_done"
+    with pytest.raises(db.TaskNotStarted):
+        db.complete_task(task, clock["now"])
+    assert _task_state(db) == before
+    clock["now"] = datetime(2026, 11, 26, 4)
+    stale = client.post(f"/tasks/{task}/complete", json={"day": "2026-11-25"})
+    assert stale.status_code == 409 and stale.json()["code"] == "day_changed"
+    assert _task_state(db) == before
+    assert _ids(client.get("/tasks/today").json()["tasks"]) == [task, legacy]
+    overview = client.get("/tasks/overview").json()
+    assert overview["today"] == "2026-11-26" and overview["upcoming_daily"] == []
+    assert _ids(overview["days"][0]["tasks"]) == [task, legacy]
+    assert client.post(f"/tasks/{task}/complete", json={"day": "2026-11-26"}).status_code == 200
+    assert client.post(f"/tasks/{task}/reopen", json={"day": "2026-11-26"}).status_code == 200
+    assert db.task_completed_on(task, "2026-11-25")
+    assert not db.task_completed_on(task, "2026-11-26")
+
+
+@pytest.mark.parametrize("fields", [
+    {"where": "daily", "due_date": "2026-11-28", "start_date": "2026-11-29"},
+    {"where": "daily", "due_date": "2026-11-28"},
+    {"where": "today", "start_date": "2026-11-25"},
+    {"where": "backlog", "start_date": "2026-11-26"},
+    {"where": "daily", "start_date": "2026-11-24"},
+    {"where": "daily", "start_date": "2027-11-26"},
+    {"where": "daily", "start_date": "2026-02-30"},
+    {"where": "daily", "start_date": "20261125"},
+    {"where": "daily", "start_date": "2026-11-25T00:00:00"},
+    {"where": "today", "due_date": "2026-02-30"},
+    {"where": "backlog", "unexpected": "synthetic"},
+])
+def test_invalid_structured_scheduling_never_writes(client, db, fields):
+    before = _task_state(db)
+    assert client.post("/tasks", json={"title": "Synthetic", **fields}).status_code == 422
+    assert _task_state(db) == before
+
+
+@pytest.mark.parametrize(("where", "fields", "stored"), [
+    ("today", {"start_date": None, "due_date": "2026-11-20"}, (False, "2026-11-25", "2026-11-20", None)),
+    ("backlog", {"start_date": None}, (False, None, None, None)),
+    ("daily", {}, (True, None, None, None)),
+    ("daily", {"start_date": None, "due_date": None}, (True, None, None, None)),
+    ("daily", {"start_date": "2026-11-25"}, (True, None, None, None)),
+    ("daily", {"start_date": "2027-11-25"}, (True, None, None, "2027-11-25")),
+])
+def test_structured_create_keeps_dates_distinct_and_normalizes_only_today(client, where, fields, stored):
+    response = client.post("/tasks", json={"title": "  " + "x" * 200 + "  ", "where": where, **fields})
+    assert response.status_code == 201
+    task = response.json()["task"]
+    assert task["title"] == "x" * 200 and not task["must_do"]
+    assert tuple(task[key] for key in ("daily", "scheduled_for", "due_date", "start_date")) == stored
+
+
+def test_create_and_today_each_use_one_captured_task_day(client, monkeypatch):
+    before = datetime(2026, 11, 26, 3, 59, 59)
+    after = datetime(2026, 11, 26, 4)
+    calls = []
+    def now():
+        calls.append(None)
+        return before if len(calls) == 1 else after
+
+    monkeypatch.setattr(tasks_view, "now", now)
+    response = client.post("/tasks", json={"title": "Daily", "where": "daily", "start_date": "2026-11-26"})
+    assert response.status_code == 201 and response.json()["task"]["start_date"] == "2026-11-26"
+    assert len(calls) == 1
+    calls.clear()
+    assert client.get("/tasks/today").json() == {"day": "2026-11-25", "tasks": []}
+    assert len(calls) == 1
+
+
+def test_upcoming_daily_order_and_archival(client, db):
+    late = db.add_task("Late", "daily", now=NOW, start_date="2026-12-05")
+    first = db.add_task("First", "daily", now=NOW, start_date="2026-11-26")
+    next_ = db.add_task("Next", "daily", now=NOW, start_date="2026-11-26")
+    archived = db.add_task("Archived", "daily", now=NOW, start_date="2026-11-27")
+    db.archive_task(archived, NOW)
+    overview = client.get("/tasks/overview").json()
+    assert _ids(overview["upcoming_daily"]) == [first, next_, late]
+    assert all(task["status"] == "pending" for task in overview["upcoming_daily"])
+
+
+def test_existing_voice_and_review_completion_cannot_confirm_a_prestart_write(db, monkeypatch):
+    import lists_tasks
+    from tools import ToolNotice
+
+    task = db.add_task("Reading", "daily", now=NOW, start_date="2026-11-26")
+    monkeypatch.setattr(lists_tasks, "complete_task", lambda task_id: db.complete_task(task_id, NOW))
+    before = _task_state(db)
+    with pytest.raises(ToolNotice, match="Nothing was marked done"):
+        lists_tasks.task_complete_tool("Reading")
+    with pytest.raises(ToolNotice, match="Nothing was marked done"):
+        nr.update_task_status(task, "done", now=NOW)
+    assert _task_state(db) == before

@@ -20,7 +20,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from jose import JWTError
 
 from auth import (verify_password, create_token, decode_token, DEVICE_SCOPE,
@@ -539,9 +539,10 @@ def get_tasks_today(user: str = Depends(get_current_user)):
     """day is the 4am day the list is for. At 1am it is still yesterday's
     date, and the app should say so rather than leave him wondering why
     today's vitamins show as done."""
-    return {"day": task_day(),
+    captured = tasks_view.now()
+    return {"day": task_day(captured),
             "tasks": [{"id": t[0], "text": t[1], "recurrence": t[2]}
-                      for t in tasks_today()]}
+                      for t in tasks_today(captured)]}
 
 
 # ── Quick capture ──
@@ -564,9 +565,17 @@ def quick_capture(body: CaptureRequest, key_id: int = Depends(get_capture_key)):
 
 
 class TaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(min_length=1, max_length=200)
-    where: Literal["today", "backlog"]
+    where: Literal["today", "backlog", "daily"]
     due_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    start_date: Optional[str] = Field(default=None, pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def trim_title(cls, title):
+        return title.strip() if isinstance(title, str) else title
 
 
 def _task_http(exc: tasks_view.TaskError):
@@ -581,15 +590,15 @@ def tasks_overview(days: int = Query(3, ge=1, le=7), user: str = Depends(get_cur
 
 @app.post("/tasks", status_code=201)
 def create_task(body: TaskCreate, user: str = Depends(get_current_user)):
-    title = body.title.strip()
-    if not title:
-        raise HTTPException(status_code=422, detail="The title cannot be blank")
     if body.due_date:
         try:
             date.fromisoformat(body.due_date)
         except ValueError:
             raise HTTPException(status_code=422, detail="due_date is not a real date")
-    return {"task": tasks_view.create(title, body.where, body.due_date)}
+    try:
+        return {"task": tasks_view.create(body.title, body.where, body.due_date, body.start_date)}
+    except tasks_view.TaskError as exc:
+        raise _task_http(exc)
 
 
 def _unique_task_body(pairs):
@@ -631,6 +640,8 @@ def _apply_task_action(task_id, day, *, complete):
             error["code"] = exc.code
         if exc.today is not None:
             error["today"] = exc.today
+        if exc.start_date is not None:
+            error["start_date"] = exc.start_date
         return JSONResponse(status_code=exc.status, content=error)
     if complete:
         return {"completed": True, "day": today, "task": task}

@@ -1,6 +1,6 @@
-# Proposed Tasks scheduling amendment
+# Tasks scheduling amendment
 
-**Awaiting owner approval.** This replaces the scheduling preconditions and
+**Approved at `2203bbc`.** This replaces the scheduling preconditions and
 the conflicting timing examples in section 3.8 of
 [revision three](tasks-revision-three.md). It retains the start date storage
 rules in sections 3.1 through 3.3 and pairs with backend `a9d2fda` and Nova
@@ -100,8 +100,8 @@ enablement still depends on the earlier review gates for pre dispatch
 mutation safety and for suppressing provisional speech. Nova's existing
 day guard stays paired and unchanged by this proposal.
 
-**Approval decisions.** This amendment proposes rejecting every voice
-deadline and any mixed start and deadline rather than partially saving it.
-It also requires a complete restatement after clarification. These are the
-scope choices for owner approval. Supporting voice deadlines or carrying
-partial intent across turns would need a separate contract decision.
+**Current limitations.** Voice creation rejects deadlines even when a valid
+start is supplied. Clarification requires the full scheduling request to be
+restated. Both limitations can be revisited. The resolver remains offline
+until the existing voice confirmation and concurrent execution safeguards
+are resolved.

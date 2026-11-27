@@ -128,8 +128,28 @@ gates and stop before migration 046 and voice work.
 The [proposed scheduling amendment](tasks-scheduling-amendment.md) reconciles
 revision three H1 and H2 and the related title and clarification cases. It
 records the migration 046 boundary and synthetic cases for ambiguous timing,
-unsupported recurrence and mixed start and deadline requests. The paired
-implementation remains backend `a9d2fda` and Nova `43dde91`. Await owner
-approval on the amendment before migration, structured API or resolver
-implementation. The voice dispatch and provisional speech findings remain
-separately gated. No code, shared approved contract or Nova files changed.
+unsupported recurrence and mixed start and deadline requests. The owner
+approved the amendment at `2203bbc`. The day guard remains paired with Nova
+`43dde91` and backend `a9d2fda`. Sync the evolved shared contract when the daily
+Tasks UI is separately authorized.
+
+Migration 046 adds a nullable start date after Evallo 045 with no backfill.
+Existing recurrence, due dates, archived state, Evallo data and completion
+history are preserved. The structured API distinguishes one time due dates
+from daily starts. Reads use the requested task day and writes enforce the
+captured task day, including across 04:00. The existing completion tools
+now surface an eligibility refusal for prestart tasks.
+
+The scheduling resolver is offline and outside the tool registry. Voice
+deadlines, including a deadline paired with a valid start, are currently
+unsupported. Clarifications currently require full restatement. These
+limitations may be revisited. Existing voice creation still uses the
+legacy path. Wire the resolver into voice only after provisional speech
+and concurrent tool mutation safeguards are approved and verified.
+
+Local synthetic verification used Python 3.13 and a disposable home. All
+495 tests passed. The migration, scheduling, Tasks, Lists, Sessions API,
+Memory API, nightly review, Review v2 and Evallo filter suites covered 044 and 045 upgrades,
+idempotence, concurrent starters, integrity, history, supported due dates,
+and no-write conflicts. Keep the rollout gates, including checking that
+045 is applied before any authorized migration in production.

@@ -1,0 +1,181 @@
+"""Offline interpretation of task scheduling. No tool registration, clock reads or writes."""
+
+import re
+from dataclasses import dataclass
+from datetime import date, timedelta
+from typing import Literal
+
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+MONTHS = ("january", "february", "march", "april", "may", "june",
+          "july", "august", "september", "october", "november", "december")
+
+_WEEKDAY = r"mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?"
+_MONTH = "|".join(f"{month}|{month[:3]}" for month in MONTHS)
+_DAY = rf"(?:{_WEEKDAY}|today|tomorrow)"
+_DATE_MARKER = rf"\b(?:{_DAY}|{_MONTH}|tonight|yesterday|week|weekend|month|year)\b|\d"
+_START = re.compile(rf"\b(?:(?:starting|starts|beginning)(?: on)?|from(?= (?:(?:next|this|after|before) )?(?:{_DATE_MARKER})))\b", re.I)
+_DAILY = re.compile(r"\b(?:as a daily task|every day|each day|daily)\b", re.I)
+_OTHER_REPEAT = re.compile(
+    rf"\b(?:(?:every|each) (?!day\b)\w+|alternate days|weekdays|weekends|weekly|fortnightly|"
+    rf"biweekly|monthly|quarterly|annually|yearly|(?:{_WEEKDAY})s|"
+    r"daily\s+(?:except|only)|(?:once|twice|three times) (?:a|per) (?:day|week|month)|"
+    r"per (?:day|week|month))\b", re.I)
+_WEEKDAY_LIST = re.compile(rf"\bon (?:{_WEEKDAY})\s*(?:,|and|or)\s*(?:{_WEEKDAY})\b", re.I)
+_DEADLINE = re.compile(
+    rf"\b(?:due(?! (?:to|diligence|process)\b)|deadline|no later than|by\s+(?:(?:{_DAY})\b|(?:this|next|"
+    rf"the|end|tomorrow|tonight|then|noon|midnight|dawn|dusk|{_MONTH})\b|\d)|until|through)\b", re.I)
+_CLOCK_TIME = re.compile(
+    r"\b(?:\d{1,2}:\d{2}|\d{1,2}\s*[ap]\.?m\.?|noon|midnight|"
+    r"at\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+    r"(?:\s+o'clock)?)\b", re.I)
+_TIMING_HINT = re.compile(
+    rf"\b(?:{_DAY}|(?:next|this)\s+(?:week|month|year)|soon|later|tonight|yesterday|"
+    rf"morning|afternoon|evening|weekend|by|before|after|from\s+now|"
+    rf"(?:when|once|as soon as) (?:i|you|we|they)\b|"
+    rf"(?:in|within)\s+(?:\d+|one|two|three|a|an|few|a few|several)\s+(?:days?|weeks?|months?|years?|hours?)|"
+    rf"(?:{_MONTH})\s+\d{{1,2}}|\d{{1,2}}(?:st|nd|rd|th)?\s+(?:{_MONTH}))\b|"
+    r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}\b", re.I)
+_ADD = re.compile(r"^(?:please )?(?:add|create)\b\s+(?:(?:a |the )?task(?: to| for)?\s+)?", re.I)
+_DAILY_INTRO = re.compile(r"^(?:a |the )?daily task (?:to |for )", re.I)
+_EDIT = re.compile(r"^(?:please )?(?:make|change|edit|move|reschedule|update)\b", re.I)
+_QUOTE = re.compile(r'"([^"]+)"|“([^”]+)”')
+# A title such as Watch Friday Night Lights is ordinary task text, even unquoted.
+_MEDIA = re.compile(
+    rf"\b(?i:watch|read|listen to) +((?i:{_WEEKDAY}) "
+    r"(?!(?i:due|starting|starts|by|from|after|before|at)\b)[A-Z][a-z]+ "
+    r"(?!(?i:due|starting|starts|by|from|after|before|at)\b)[A-Z][a-z]+)\b")
+_YEARLESS = re.compile(
+    rf"(?:(?P<month>{_MONTH}) (?P<day>\d{{1,2}})(?:st|nd|rd|th)?|"
+    rf"(?P<reverse_day>\d{{1,2}})(?:st|nd|rd|th)? (?P<reverse_month>{_MONTH})|"
+    r"(?P<month_number>\d{1,2})/(?P<day_number>\d{1,2}))")
+
+
+@dataclass(frozen=True)
+class SchedulingResult:
+    outcome: Literal["supported", "clarify", "reject"]
+    reason: str = ""
+    recurrence: str | None = None
+    start_date: str | None = None
+
+
+def _normalize(text):
+    return " ".join(text.split()).strip(" ,.;!?").casefold()
+
+
+def _month_day(match, today):
+    if match["month_number"]:
+        month, day = int(match["month_number"]), int(match["day_number"])
+    else:
+        name = match["month"] or match["reverse_month"]
+        month = next(i for i, item in enumerate(MONTHS, 1) if name in (item, item[:3]))
+        day = int(match["day"] or match["reverse_day"])
+    # Leap years are included in both directions, without coercing invalid dates.
+    occurrences = []
+    for year in range(max(1, today.year - 8), min(9999, today.year + 8) + 1):
+        try:
+            occurrences.append(date(year, month, day))
+        except ValueError:
+            continue
+    if today in occurrences:
+        return today
+    if any(0 < (today - value).days <= 14 for value in occurrences):
+        return SchedulingResult("clarify", "That month and day recently passed. Give the complete request with the intended date.")
+    return next((value for value in occurrences if value > today), None)
+
+
+def _resolve_first_day(phrase, today):
+    if phrase == "today":
+        return today
+    if phrase == "tomorrow":
+        return today + timedelta(days=1)
+    weekday = re.fullmatch(rf"(?:(this|next) )?({_WEEKDAY})", phrase)
+    if weekday:
+        index = WEEKDAYS.index(next(item for item in WEEKDAYS if item.startswith(weekday[2])))
+        advance = (index - today.weekday()) % 7
+        qualifier = weekday[1]
+        if (advance == 0 and qualifier != "next"
+                or qualifier == "next" and 0 < advance < 7 - today.weekday()):
+            return SchedulingResult("clarify", "That weekday is ambiguous. Give the full request with the exact first day.")
+        return today + timedelta(days=advance or 7)
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", phrase):
+        try:
+            return date.fromisoformat(phrase)
+        except ValueError:
+            return None
+    match = _YEARLESS.fullmatch(phrase)
+    return _month_day(match, today) if match else None
+
+
+def resolve_task_schedule(utterance, *, title, today, recurrence=None, starts=None):
+    """Return a supported plan or an explicit no-write result from one utterance."""
+    original = " ".join((utterance or "").split()).strip(" ,.;!?")
+    if _EDIT.match(original):
+        return SchedulingResult("reject", "Changing an existing start day or recurrence is unsupported.")
+    command = _ADD.match(original)
+    if not command or not title or not title.strip():
+        return SchedulingResult("clarify", "Restate the full task request, including any timing.")
+
+    # Mask quoted names and recognized media titles before examining clauses.
+    body = original[command.end():]
+    intro = _DAILY_INTRO.match(body)
+    if intro:
+        body = body[intro.end():]
+    quoted = _QUOTE.sub(lambda m: " " * len(m[0]), body)
+    if any(mark in quoted for mark in ('"', "“", "”")):
+        return SchedulingResult("clarify", "Restate the complete task and its timing.")
+    masked = _MEDIA.sub(
+        lambda m: m[0][:-len(m[1])] + " " * len(m[1]), quoted)
+    if _DEADLINE.search(masked):
+        return SchedulingResult("reject", "Voice task creation does not currently support deadlines.")
+    markers = list(_START.finditer(masked))
+    before_start = masked[:markers[0].start()] if markers else masked
+    if (_OTHER_REPEAT.search(masked) or _WEEKDAY_LIST.search(before_start)
+            or recurrence not in (None, "daily")):
+        return SchedulingResult("reject", "Only daily repetition is supported.")
+    if _CLOCK_TIME.search(masked):
+        return SchedulingResult("reject", "A start clock time is unsupported. Give only a first day.")
+
+    daily = list(_DAILY.finditer(masked))
+    if len(daily) + bool(intro) > 1 or len(markers) > 1:
+        return SchedulingResult("clarify", "Restate the complete request with one recurrence and first day.")
+    recurrence_span = daily[0] if daily else None
+    first_span = markers[0] if markers else None
+    is_daily = bool(intro or recurrence_span)
+    title_end = min((span.start() for span in (recurrence_span, first_span) if span), default=len(body))
+    first = None
+    if first_span:
+        if not is_daily:
+            return SchedulingResult("reject", "A voice start date needs daily recurrence.")
+        first_end = (recurrence_span.start()
+                     if recurrence_span and recurrence_span.start() > first_span.start() else len(body))
+        phrase = _normalize(body[first_span.end():first_end]).removesuffix(" please")
+        if re.search(r"\b(?:or|and|after|before)\b", phrase):
+            return SchedulingResult("clarify", "Give the complete request with one exact first day.")
+        try:
+            first = _resolve_first_day(phrase, today)
+        except OverflowError:
+            first = None
+        if isinstance(first, SchedulingResult):
+            return first
+        if first is None or not 0 <= (first - today).days <= 365:
+            return SchedulingResult("reject", "Use a real first day from today through the next 365 days.")
+        supplied = _normalize(starts or "")
+        full_clause = _normalize(body[first_span.start():first_end]).removesuffix(" please")
+        if supplied not in {phrase, full_clause} and (supplied or phrase != "today"):
+            return SchedulingResult("clarify", "Restate the full request with the first day you mean.")
+    elif starts or recurrence and not is_daily:
+        return SchedulingResult("clarify", "Restate the full scheduling request so I can verify it.")
+    # Unknown tokens between scheduling clauses cannot be dropped into a default.
+    if recurrence_span:
+        end = (first_span.start() if first_span and first_span.start() > recurrence_span.start() else len(body))
+        if _normalize(body[recurrence_span.end():end]) not in ("", "please"):
+            return SchedulingResult("clarify", "Restate the full request and its timing.")
+    if _TIMING_HINT.search(masked[:title_end]):
+        return SchedulingResult("clarify", "Restate the request with the date's intended role.")
+    original_title = _normalize(body[:title_end]).removesuffix(" please")
+    if original_title.startswith(('"', "“")) and original_title.endswith(('"', "”")):
+        original_title = _normalize(original_title[1:-1])
+    if original_title != _normalize(title):
+        return SchedulingResult("clarify", "Restate the complete task title and timing.")
+    return SchedulingResult("supported", recurrence="daily" if is_daily else None,
+                            start_date=first.isoformat() if first and first != today else None)

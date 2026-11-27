@@ -14,6 +14,7 @@ it rather than "Done.", and is logged as a notice rather than an error.
 """
 
 from database import (
+    TaskNotStarted,
     active_tasks_matching,
     add_list_item,
     add_task,
@@ -253,7 +254,10 @@ def task_add_tool(task, recurrence=None):
 )
 def task_complete_tool(task):
     task_id, text, _ = _one(active_tasks_matching(task), "task", task)
-    complete_task(task_id)
+    try:
+        complete_task(task_id)
+    except TaskNotStarted as exc:
+        raise ToolNotice(f"{text} starts {exc.start_date}. Nothing was marked done.") from None
     return f"Marked done: {text}."
 
 
