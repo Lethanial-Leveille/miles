@@ -37,6 +37,16 @@ macOS arm64 with CPython 3.13.1 and SQLite 3.45.3. Tests used synthetic inputs a
 | `sh scripts/tests/test_dev_venv.sh && ./scripts/dev check` | Exit 0. Stub sync and interpreter markers confirmed rejection of the directory symlink before either could run. A real directory containing a symlinked interpreter passed the launcher check. FTS5 was available in the installed environment. |
 | `git diff --check` | Passed. |
 
+## Owner verification on macOS
+
+The owner ran the approved development environment and label server tests from the normal macOS Terminal. The run reported **34 passed, zero failed, zero skipped, and three dependency deprecation warnings in 4.74 seconds**. The real loopback API lifecycle passed. This closes the macOS listener evidence gap in the checks for implementation `f986239`. The owner reported the test targets and results. The supported command to reproduce those targets is
+
+```sh
+./scripts/dev test -- tests/test_dev_environment.py tests/test_label_spoken.py
+```
+
+The [dependency deprecation warnings](../BACKEND_TODO.md#headless-development-dependency-warnings) are deferred maintenance.
+
 ## Verification before independent review
 
 macOS arm64 with CPython 3.13.1 and SQLite 3.45.3. The implementation revision under test was `59f7627fefcbbeb89d46655b983856f9cfd8d3d2`. The production unit and dependency manifests remain in their existing locations. The validation used only synthetic configuration and databases.
@@ -53,20 +63,20 @@ macOS arm64 with CPython 3.13.1 and SQLite 3.45.3. The implementation revision u
 | Two source trees exported from `9c6246a` | Both installed independently from the offline cache with `uv sync --locked --offline --no-build --no-config --no-python-downloads --python "$(command -v python3.13)" --default-index https://pypi.org/simple`. Both passed `./scripts/dev bootstrap`, `./scripts/dev init`, and `./scripts/dev seed`. The credentials differed and had mode 0600. Reset refused a hard linked peer WAL and an active operation lock. Reset after release left the peer database unchanged. |
 | Repository navigation | Verified the 67 local map links and the linked orientation and development paths against the canonical checkout. The map demonstrates start, resume, wrap up and independent review with a synthetic reminder task. |
 
-## Open acceptance items
+## Acceptance status
 
-- **Owner acceptance pending for the SQLite same user race.** The owner private root, descriptor rooted validation, and lifetime lock protect the supported workflow. A separate process running as the same user can replace a file or sidecar between validation and the native SQLite open. Acceptance of this documented C2 limitation remains with the owner.
-- **Live loopback verification pending.** The runner denied the assigned loopback bind. Real HTTP and listener shutdown still need a runner that permits the bind. In process HTTP, event streams, WebSockets, and the staged production lifecycle passed.
-- **Linux verification pending.** Clean setup, the suite, and startup still need a supported Linux runner.
+- **macOS arm64 development acceptance complete.** The Terminal result supplies the real loopback evidence for synthetic login and refresh, invalid credential refusal, status, streaming, and listener shutdown. The earlier macOS results cover setup, isolation, database lifecycle, offline regressions, staged production compatibility, and repository navigation.
+- **SQLite residual risk accepted.** The owner accepted the possibility that an independent process running as the same user can replace a database file or sidecar between validation and the native SQLite open. The [contract](../DEV_ENVIRONMENT_CONTRACT.md#c2-startup-and-production-compatibility) records the limit under the accidental failure threat model.
+- **Cross platform acceptance open.** Clean setup, startup and shutdown on a real loopback listener, and the supported suite still need verification on Linux.
 
 ## Restrictions and exact next action
 
 Use synthetic state and checked in source. Keep canonical main, the scratch work, and the Pi untouched. Retain normal Git guards. Do not push or deploy. Nova, CI, cloud orchestration, hardware diagnostics, and roadmap features have separate scopes.
 
-Run the following from the infrastructure worktree on a supported host that permits IPv4 loopback binds.
+Run the following from the infrastructure worktree on a supported Linux host that permits IPv4 loopback binds.
 
 ```sh
 ./scripts/dev bootstrap && ./scripts/dev verify-production && ./scripts/dev test -- --tb=short -rs
 ```
 
-Record real loopback HTTP and listener shutdown, and record Linux results separately. Acceptance remains on hold pending that evidence and the owner's decision on the SQLite limitation. The independent review of `59f7627` and `13cb8ac` is complete.
+Record the Linux architecture, tested revision, outcomes, skips, and real loopback startup and shutdown evidence before closing cross platform acceptance. The independent review of `59f7627` and `13cb8ac` is complete.

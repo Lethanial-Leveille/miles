@@ -20,6 +20,14 @@ with the other production routes, and to cover full login authorization,
 dispatch, disconnects, and concurrent turns. The development phase preserves
 the existing production dispatch and tests that boundary.
 
+## Headless development dependency warnings
+
+The owner's macOS Terminal run of the development environment and label server
+tests passed all 34 tests and reported three dependency deprecation warnings.
+During dependency maintenance, capture the exact warning messages, identify the
+affected packages, and verify compatible upgrades with the focused tests.
+The warnings are deferred from development environment acceptance.
+
 ## State of the investigation
 
 ### The original problem
