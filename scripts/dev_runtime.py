@@ -327,13 +327,17 @@ def run(args):
                 mode = "compat" if args.command == "verify-production" else "test"
                 state = State(root, fd, mode, args.port)
                 with state.exclusive():
-                    if args.command == "verify-production":
-                        verify_production(state)
-                    elif args.command == "verify-direct":
-                        verify_direct(state)
-                    else:
-                        activate(state)
-                        return test(state, args.pytest_args)
+                    try:
+                        if args.command == "verify-production":
+                            verify_production(state)
+                        elif args.command == "verify-direct":
+                            verify_direct(state)
+                        else:
+                            activate(state)
+                            return test(state, args.pytest_args)
+                    finally:
+                        # The staged source may itself be inside the directory being removed.
+                        os.chdir(parent)
         return 0
 
     root = ROOT / ".miles-dev"

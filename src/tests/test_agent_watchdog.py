@@ -160,8 +160,9 @@ def test_evallo_login_expired_says_how_to_fix_it(db, pushes):
     assert "Failed job: the nightly Evallo canary." in body
 
 
-def test_evallo_runner_routes_login_expired_through_the_daily_alert(db, pushes, monkeypatch):
+def test_evallo_runner_routes_login_expired_through_the_daily_alert(db, pushes, monkeypatch, tmp_path):
     import evallo_runner
+    monkeypatch.setattr(evallo_runner, "LOCK", tmp_path / "synthetic-evallo.lock")
     monkeypatch.setattr(evallo_runner, "_run",
                         lambda *a, **k: evallo_runner.Result("login_expired", "Evallo login expired, log in again"))
     monkeypatch.setattr(evallo_runner, "LOCK", evallo_runner.LOCK.parent / "test_evallo.lock")
