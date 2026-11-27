@@ -417,12 +417,11 @@ truth 'Can you set a reminder ...'       whisper 'Can you send a reminder ...'
 
 **Live since Sep 25 2026**, in `deepgram_stt.py`.
 
-**It rides along with the speculation rather than replacing it.** `_Speculation`
-already starts whisper and the voice embedding on the same frames; the Deepgram
-request is a third thing started on those frames, and `transcribe` prefers its
-transcript when one came back. Whisper is running anyway, so the fallback costs
-nothing, and a socket read does not contend with it for a core. The earlier claim
-that running both doubles the CPU per turn was wrong.
+**It rides along with speculation.** The first integration started Whisper and
+Deepgram together. The current `_Speculation` starts the voice embedding and
+Deepgram together, then starts Whisper if Deepgram is unavailable, fails or is
+still waiting after `WHISPER_FALLBACK_AFTER_MS`. `transcribe` prefers a valid
+Deepgram result. This saves local CPU on successful remote requests.
 
 **An empty string is an answer and None is a failure, and the two must not
 collapse.** Deepgram reporting no words on a false wake is correct, better than

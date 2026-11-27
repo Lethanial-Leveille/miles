@@ -15,6 +15,8 @@ Up: [Repository map](REPOSITORY_MAP.md) · [Engineering sessions](SESSION_START.
 [BRAIN.md](BRAIN.md) · [INFRASTRUCTURE.md](INFRASTRUCTURE.md) ·
 [INCIDENTS.md](INCIDENTS.md)
 
+For the architecture assessment and proposed benchmarks, see [Conversational latency research](CONVERSATIONAL_LATENCY_RESEARCH.md).
+
 ---
 
 **Do not quote a latency figure that was not read out of `timing_log`.** That

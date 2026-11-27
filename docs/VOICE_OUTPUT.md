@@ -334,7 +334,7 @@ ElevenLabs specific:
   out, and counts what was heard as wall time since the first write
   (`synthesis.heard_s`, Oct 2 2026), since what is queued was never heard
 - v3 stability above 0.7 makes it ignore audio tags
-- v3 has no WebSocket support. It accepts `use_speaker_boost` and any stability; whether it honors them is unmeasured (checked Sep 13 2026)
+- MILES uses v3 over HTTP. ElevenLabs documents v3 on its Text to Dialogue WebSocket, which is separate from the standard TTS WebSocket. The HTTP API accepts `use_speaker_boost` and any stability. Whether it honors them was unmeasured as of Sep 13 2026. [ElevenLabs WebSocket guides](https://elevenlabs.io/docs/eleven-api/guides/how-to/websockets/tts-vs-ttd-websockets)
 - v3 ignores `speed`: 1.0 and 1.1 rendered to identical lengths
 - `optimize_streaming_latency` is deprecated in 2026, do not use
 
