@@ -92,3 +92,5 @@ Labels compare this branch with production (`main` at 51676b9), measured by runn
 - **Note** `files/docs/KNOWN_LIMITS.md:88` The doc says that with a task of that name the sentence 'is handled correctly', but the tests only check what goes into the prompt with a stubbed model, so the claim rests on a scenario run, not on a test. (found by the review loop at f51e726)
 
 - **Note** `files/src/tests/test_intent_task_context.py:81` The tests cover only how the prompt is built. Nothing covers the target-copy refusal in F1, the bare-stop archive in F2, or what happens past the cap in F3. (found by the review loop at f51e726)
+
+- **Decision** `src/task_intent.py` BARE STOP (owner's rule, kept Nov 28 2026). A bare "stop reading" on a daily task archives it, because "stop" is one of the clear stop words in the approved contract (a bare "cancel" asks). Now that the intent step is told his task titles, more everyday sentences that start with stop or cancel reach a task. The loop's reviewer asked whether a bare stop should ask "Skip today or stop it for good?" like a bare cancel. That would change the approved rule, so it stays as is until he says otherwise.
