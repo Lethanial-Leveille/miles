@@ -1260,6 +1260,19 @@ async def _answer_in_code(text, user_text, device, channel, tier, on_text, held,
     return TurnResult(text=final_text)
 
 
+NOTHING_CHANGED = "Nothing was changed."
+
+
+def _unperformed_claim(safety, text):
+    """On a turn the model called no_change that ran no change, a reply that
+    claims one ("Done, I archived reading") is replaced. Nothing ran, so the
+    claim would be false. A turn whose own tool ran keeps its words."""
+    gate = safety.gate
+    if gate is None or not gate.others or safety.used:
+        return text
+    return NOTHING_CHANGED if task_intent.claims_a_change(text) else text
+
+
 def _track(safety, coroutine):
     task = asyncio.create_task(coroutine)
     safety.workers.append(task)
@@ -1627,7 +1640,9 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
                 kwargs = {"tools": schemas} if schemas else {}
 
                 round_text = ""
-                hold_round = bool(kwargs.get("tools"))
+                tools_offered = bool(kwargs.get("tools"))
+                # Held until it is whole when it must be checked for a claim of a change.
+                hold_round = tools_offered or bool(safety.gate is not None and safety.gate.others)
                 async with _claude().messages.stream(
                     model=model,
                     max_tokens=1000,
@@ -1662,12 +1677,17 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
 
                 more_tools = [b for b in followup_message.content if b.type == "tool_use"]
                 # A tool-free final round cannot authorize an unexpected tool block.
-                if not hold_round and more_tools:
+                if not tools_offered and more_tools:
                     await router2.finalize()
                     await tts_task2
                     raise RuntimeError("Unexpected tool after tool dispatch closed")
                 if not more_tools and not safety.cancelled.is_set():
                     if hold_round:
+                        checked = _unperformed_claim(safety, round_text)
+                        if checked != round_text:
+                            _emit(on_text, "reset", "")
+                            _emit(on_text, "delta", checked)
+                            round_text = checked
                         await router2.feed(round_text)
                     final_text = f"{final_text} {round_text}".strip()
                 if not more_tools or safety.cancelled.is_set():
@@ -1769,6 +1789,12 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
             _emit(on_text, "reset", "")
             accumulated = NO_ACTION
             _emit(on_text, "delta", accumulated)
+        else:
+            checked = _unperformed_claim(safety, accumulated)
+            if checked != accumulated and not safety.cancelled.is_set():
+                _emit(on_text, "reset", "")
+                accumulated = checked
+                _emit(on_text, "delta", accumulated)
         if hold_speech and not safety.cancelled.is_set():
             await router.feed(accumulated)
         await router.finalize()

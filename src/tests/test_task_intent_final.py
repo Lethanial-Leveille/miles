@@ -202,3 +202,60 @@ def test_tomorrow_the_intent_did_not_copy_still_means_tomorrow():
     assert verdict.gate.permits("set_reminder", {"content": "call the bank",
                                                  "due": (at_five + timedelta(days=1)).isoformat()})
     assert not verdict.gate.permits("set_reminder", {"content": "call the bank", "due": at_five.isoformat()})
+
+
+# ── N1 and V1: a no_change turn cannot claim a change ──
+
+@pytest.mark.parametrize("reply", [
+    "Done, I archived reading.", "I added eggs to your list.", "I set a timer for ten minutes.",
+    "I've marked it done.", "Done, I saved it.", "Sure. I've just archived it.", "I also removed it.",
+    "Added eggs to your grocery list.", "Done.", "I checked off milk."])
+def test_a_first_person_claim_of_a_change_is_recognized(reply):
+    assert task_intent.claims_a_change(reply)
+
+
+@pytest.mark.parametrize("reply", [
+    "You finished reading yesterday.", "Reading is done.", "You have two tasks left today.",
+    "I checked your list and milk is on it.", "I can add that if you like.", "Your timer is not set.",
+    "You added eggs on Monday.", "I don't see a task called reading."])
+def test_a_read_or_a_statement_about_his_past_is_not_a_claim(reply):
+    assert not task_intent.claims_a_change(reply)
+
+
+@pytest.mark.parametrize("device, channel", [("pi", "voice"), ("app", "text")])
+def test_a_claim_on_a_no_change_turn_is_replaced_by_nothing_was_changed(turn, db, device, channel):
+    task = db.add_task("Reading", "daily")
+    result = asyncio.run(turn.run("take reading off my task list", [], draft="Done, I archived reading.",
+                                  intent=Intent("no_change"), device=device, channel=channel))
+    assert result.text == "Nothing was changed."
+    assert db.get_task(task)["archived_at"] is None
+    assert "Done, I archived reading." not in " ".join(turn.audio)
+    shown = [e for e in turn.events if e[0] == "done" or e[0] == "delta"]
+    assert all("archived" not in str(e) for e in shown)
+
+
+def test_an_honest_reply_on_a_no_change_turn_is_left_alone(turn, db):
+    db.add_task("Reading", "daily")
+    result = asyncio.run(turn.run("take reading off my task list", [],
+                                  draft="I can't tell which task you mean. Which one?", intent=Intent("no_change")))
+    assert result.text == "I can't tell which task you mean. Which one?"
+
+
+def test_a_read_followed_by_a_claim_is_replaced_in_the_second_round(turn, db):
+    db.add_task("Reading", "daily")
+    result = asyncio.run(turn.run("show my tasks and take reading off", [block("tasks_today")],
+                                  intent=Intent("no_change"), more=[Stream([], "Done, I archived reading.")]))
+    assert result.text == "Nothing was changed."
+
+
+def test_a_remember_that_really_ran_keeps_its_words(turn, db, monkeypatch):
+    monkeypatch.setattr(brain.registry, "call", lambda name, args: "ok")
+    result = asyncio.run(turn.run("remember that my cat is named Sam", [block("remember", {"content": "cat is Sam"})],
+                                  draft="I saved that.", intent=Intent("no_change"),
+                                  more=[Stream([], "I saved that.")]))
+    assert "saved" in result.text
+
+
+def test_an_ordinary_unflagged_chat_reply_is_never_replaced(turn):
+    result = asyncio.run(turn.run("good morning", [], draft="Good morning. I set the mood with some music."))
+    assert result.text == "Good morning. I set the mood with some music."
