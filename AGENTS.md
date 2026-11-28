@@ -4,7 +4,7 @@ This file is the shared engineering authority for Claude and Codex. [CLAUDE.md](
 
 ## Start with the assignment
 
-Check the task's scope, authorization, environment, branch, HEAD and working tree before editing. Use the [repo map](docs/REPO_MAP.md) to open only the relevant contract, implementation and tests. Use [isolated development commands](docs/DEVELOPMENT.md) and the [session workflow](docs/SESSION_START.md) as needed. Source and tests describe current behavior. An approved contract governs intended behavior. Surface any relevant conflict before acting and correct stale descriptive docs within scope.
+Check the task's scope, authorization, environment, branch, HEAD and working tree before editing. Use the [repo map](docs/REPO_MAP.md) to open only the relevant contract, implementation and tests. The area in a branch name (`infra/`, `feature/tasks-...`, and so on) tells you which section of [docs/REPO_MAP.md](docs/REPO_MAP.md) to read first, and you read it before touching code. Use [isolated development commands](docs/DEVELOPMENT.md) and the [session workflow](docs/SESSION_START.md) as needed. Source and tests describe current behavior. An approved contract governs intended behavior. Surface any relevant conflict before acting and correct stale descriptive docs within scope.
 
 ## Tiers
 
