@@ -274,6 +274,35 @@ def _cancel_scope(utterance, recurrence, title=""):
     return "ask" if recurrence else "archive"
 
 
+_QUANTITY = (r"(?:a|an|the|about|around|another|half|couple|few|several|dozen|of|and|\d+|hundred|"
+             r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+             r"\w+teen|\w+ty)")
+_UNCAPTURED_TIMING = re.compile(
+    rf"\b(?:(?:in|within|after|for the next)\s+(?:{_QUANTITY}\s+){{0,4}}"
+    r"(?:second|minute|hour|day|night|week|fortnight|month|year)s?"
+    r"|(?:at|by|around|before|until|till)\s+(?:dawn|dusk|noon|midnight|sunrise|sunset|sundown|daybreak|"
+    r"nightfall|lunchtime|dinnertime|bedtime|breakfast|\d)"
+    r"|\d{1,2}(?::\d{2})?\s*(?:am|pm)"
+    r"|(?:next|this)\s+(?:week|weekend|month|year))\b")
+
+
+def _uncaptured_timing(intent, utterance):
+    """Timing words he said that the intent step did not capture as timing, or None.
+
+    A relative day or a clock word left in the title would otherwise save the
+    task for today, as if he had not said when. The quantity is matched by shape,
+    not from a list of number words, so any count before a time unit is caught."""
+    heard = _words(utterance)
+    captured = _words(intent.timing)
+    if captured:
+        heard = heard.replace(captured, " ")
+    quoted = re.findall(r"[\"“]([^\"”]+)[\"”]", utterance)
+    for text in quoted:
+        heard = heard.replace(_words(text), " ")
+    found = _UNCAPTURED_TIMING.search(heard)
+    return found[0] if found else None
+
+
 def _task_add(intent, utterance, today):
     from voice_action_safety import _ADD_REQUEST, _OTHER_ADD, _normalized
     text = " ".join(utterance.split()).strip(" .!?,")
@@ -288,6 +317,12 @@ def _task_add(intent, utterance, today):
         return _refuse("What should the task be?")
     if intent.timing and _words(intent.timing) not in _words(utterance):
         return _refuse("I could not match the timing to what you said. Please say the task again.")
+    stray = _uncaptured_timing(intent, utterance)
+    if stray:
+        return Verdict("refuse",
+                       f"Nothing was changed. I heard timing I can't schedule by voice: '{stray}'. "
+                       f"What timing do you want? Say it again with 'every day', or say 'add' and just "
+                       f"the task to have it for today with no timing.")
     intro = "a daily task to " if match[1] else ""
     # "to my tasks" says where, not what, so it is not part of the title or timing.
     rest = re.sub(r" (?:to|on) (?:my|the) (?:tasks|to do list)$", "", match[2], flags=re.I)

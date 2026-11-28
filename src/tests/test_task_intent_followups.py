@@ -502,3 +502,45 @@ def test_a_plain_cancel_today_still_skips(turn, db):
     asyncio.run(turn.run("cancel reading today", [block("task_skip_today", {"task": "reading"})],
                          intent=Intent("task_archive", "reading")))
     assert db.task_skipped_on(task, db.task_day())
+
+
+# ── F13: timing the intent did not capture writes nothing and asks ──
+
+@pytest.mark.parametrize("intent", [
+    Intent("task_add", "water plants"),
+    Intent("task_add", "Water plants in four days"),
+    Intent("task_add", "water plants in four days", "")])
+def test_add_water_plants_in_four_days_writes_nothing_and_asks(turn, db, intent):
+    result = asyncio.run(turn.run("add water plants in four days",
+                                  [block("task_add", {"task": intent.target})], intent=intent))
+    assert not db.active_tasks_matching("water plants")
+    assert "Nothing was changed" in result.text and "What timing" in result.text and "four days" in result.text
+
+
+@pytest.mark.parametrize("said", [
+    "add water plants in half a dozen days", "add water plants in a couple of weeks",
+    "add call the bank at dawn", "add call the bank at 5pm", "add pay rent in thirteen days",
+    "add water plants in about ten minutes", "add stretch at midnight", "add review next week"])
+def test_other_uncaptured_timing_writes_nothing_and_asks(turn, db, said):
+    result = asyncio.run(turn.run(said, [block("task_add", {"task": "x"})],
+                                  intent=Intent("task_add", said.removeprefix("add "))))
+    assert "Nothing was changed" in result.text and "What timing" in result.text
+    assert not db.active_tasks_matching("x")
+
+
+def test_supported_timing_and_untimed_adds_still_work(turn, db):
+    asyncio.run(turn.run("add water plants", [block("task_add", {"task": "water plants"})],
+                         intent=Intent("task_add", "water plants")))
+    [row] = db.active_tasks_matching("water plants")
+    task = db.get_task(row[0])
+    assert task["scheduled_for"] == db.task_day() and task["due_date"] is None and task["recurrence"] is None
+    asyncio.run(turn.run("add reading every day", [block("task_add", {"task": "reading", "recurrence": "daily"})],
+                         intent=Intent("task_add", "reading", "every day")))
+    [row] = db.active_tasks_matching("reading")
+    assert db.get_task(row[0])["recurrence"] == "daily"
+
+
+def test_a_quoted_title_may_hold_a_time_word(turn, db):
+    asyncio.run(turn.run('add "call at 5 pm club"', [block("task_add", {"task": "call at 5 pm club"})],
+                         intent=Intent("task_add", "call at 5 pm club")))
+    assert db.active_tasks_matching("call at 5 pm club")
