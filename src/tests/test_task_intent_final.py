@@ -143,3 +143,25 @@ def test_not_for_good_is_still_a_skip():
                                     "follow up in three calendar weeks"])
 def test_a_business_day_count_is_uncaptured_timing(phrase):
     assert task_intent._uncaptured_timing(Intent("task_add", phrase), f"add {phrase}")
+
+
+# ── E10: compound timer lengths ──
+
+@pytest.mark.parametrize("words, seconds", [
+    ("an hour and a half", 5400), ("one hour thirty minutes", 5400), ("two and a half hours", 9000),
+    ("1 hour 15 minutes", 4500), ("ten minutes", 600), ("half an hour", 1800), ("ninety seconds", 90),
+    ("twenty five minutes", 1500), ("for 5 minutes", 300)])
+def test_compound_timer_lengths_are_read(words, seconds):
+    assert task_intent.spoken_seconds(words) == seconds
+
+
+@pytest.mark.parametrize("words", ["", "soon", "ten", "ten minutes later", "a half", "banana minutes"])
+def test_other_words_are_not_a_timer_length(words):
+    assert task_intent.spoken_seconds(words) is None
+
+
+def test_a_compound_timer_request_goes_through(turn, db):
+    said = "set a timer for an hour and a half"
+    result = asyncio.run(turn.run(said, [block("set_timer", {"amount": 90, "unit": "minutes"})],
+                                  intent=Intent("timer", "timer", "an hour and a half")))
+    assert "Nothing was changed" not in result.text

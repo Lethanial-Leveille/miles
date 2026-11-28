@@ -393,17 +393,33 @@ def _number(words):
 
 
 def spoken_seconds(timing):
-    """The length in seconds of "ten minutes", "an hour", "half an hour" or
-    "ninety seconds". None when the words are anything else."""
+    """The length in seconds of "ten minutes", "an hour", "half an hour",
+    "an hour and a half", "one hour thirty minutes" or "ninety seconds". None
+    when the words are anything else."""
     text = _words(timing)
     text = re.sub(r"^(?:for|in|after)\s+", "", text)
     if text in ("half an hour", "half hour", "a half hour"):
         return 1800
-    match = re.fullmatch(r"(.+?)\s+(seconds?|secs?|minutes?|mins?|hours?|hrs?)", text)
-    if not match:
+    total, count, half, parts = 0, [], 0, 0
+    for word in text.replace("-", " ").split():
+        if word == "and":
+            continue
+        if word not in _UNITS:
+            count.append(word)
+            continue
+        # "one and a half hours": the half belongs to the count in front of the unit.
+        extra = count[-2:] == ["a", "half"]
+        number = _number(" ".join(count[:-2] if extra else count))
+        if not number:
+            return None
+        total += number * _UNITS[word] + (_UNITS[word] // 2 if extra else 0)
+        half, count, parts = _UNITS[word], [], parts + 1
+    if count == ["a", "half"] and half >= 60:
+        # "an hour and a half": the half follows the unit.
+        total += half // 2
+    elif count:
         return None
-    count = _number(match[1])
-    return count * _UNITS[match[2]] if count else None
+    return total if parts else None
 
 
 def _timer_args(seconds):
@@ -415,7 +431,7 @@ def _timer_args(seconds):
 
 
 _CLOCK = re.compile(
-    r"^(?:(tomorrow|today|tonight)\s+)?(?:(?:at|by)\s+)?([a-z0-9-]+)(?::(\d{2}))?\s*(?:([ap])\.?m\.?)?$")
+    r"^(?:(tomorrow|today|tonight)\s+)?(?:(?:at|by)\s+)?(\d{1,2}|[a-z-]+)(?::(\d{2}))?\s*(?:([ap])\.?m\.?)?$")
 
 
 def _due_matches(due, timing, now):
