@@ -168,11 +168,6 @@ def _words(text):
 _STOP_FOR_GOOD = re.compile(r"\b(?:archive|delete|for good|forever|permanently|anymore|no longer|get rid|"
                             r"stop (?:tracking|doing|it)|remove)\b", re.I)
 _TODAY = re.compile(r"\b(?:today|tonight|this (?:morning|afternoon|evening)|skip)\b", re.I)
-_REMOVAL = re.compile(r"\b(?:cancel|cancell?ed|stop|archive|delete|remove|skip|drop|scrap|quit|forget|"
-                      r"get rid|no longer|anymore|don't need|do not need|for good)\b", re.I)
-_FINISHED = re.compile(r"\b(?:finish\w*|done|complet\w*|mark\w*|check\w*|cross\w*|tick\w*|took|did|"
-                       r"called|paid|got|bought|had|wrapped|handled|sent|submitted)\b", re.I)
-
 
 @dataclass
 class Verdict:
@@ -473,6 +468,57 @@ def _affirmative(utterance):
     return not _HYPOTHETICAL.search(text)
 
 
+# ── The verb must be the intent's action, said about the task ──
+# A completion or removal word found anywhere in the sentence is not enough:
+# "I almost finished reading" holds the word finished and still is not a report
+# that reading is done. The words before the task must be exactly a command or
+# a first person report of the intent's action, and the words after it only
+# filler that cannot change what happened.
+
+_OPENER = r"(?:please )?(?:(?:can|could|would|will) you (?:please )?)?"
+_ARTICLE = r"(?: (?:the|my|that|this))?"
+_COMPLETE_BEFORE = re.compile(
+    rf"{_OPENER}(?:(?:mark|complete|finish|check|cross|tick)(?: off)?|"
+    r"(?:i|i've|ive|i have)(?: (?:just|already|now))? "
+    r"(?:finished|completed|did|took|called|paid|got|bought|wrapped up|handled|sent|submitted|checked off|"
+    r"crossed off|ticked off)|"
+    r"(?:i'm|im|i am) (?:now )?done with|(?:i )?just (?:finished|completed|did))"
+    rf"{_ARTICLE}")
+_COMPLETE_AFTER_WORDS = {"today", "tonight", "now", "already", "just", "this", "morning", "afternoon",
+                         "evening", "for", "please", "too", "off", "as", "done", "complete", "completed",
+                         "finished", "is", "are", "task", "routine", "habit", "it"}
+_REMOVE_BEFORE = re.compile(
+    rf"{_OPENER}(?:cancel|stop(?: tracking| doing)?|archive|delete|remove|skip|drop|scrap|quit|"
+    r"forget(?: about)?|get rid of|i (?:no longer|don't|dont|do not) (?:need|want)(?: to)?(?: do)?)"
+    rf"{_ARTICLE}")
+_REMOVE_AFTER_WORDS = {"today", "tonight", "this", "morning", "afternoon", "evening", "for", "good",
+                       "forever", "permanently", "anymore", "any", "more", "no", "longer", "from", "now",
+                       "on", "not", "but", "please", "task", "routine", "habit", "just", "only", "it"}
+
+
+def _around_target(utterance, target):
+    """(words before, words after) the target in what was said, or None."""
+    heard, wanted = _words(utterance), _words(target)
+    found = re.search(rf"(?<![a-z0-9']){re.escape(wanted)}(?![a-z0-9'])", heard) if wanted else None
+    return (heard[:found.start()].strip(), heard[found.end():].strip()) if found else None
+
+
+def _says_action(action, utterance, target):
+    """Whether the words are a plain command or report of `action` on the target."""
+    around = _around_target(utterance, target)
+    if around is None:
+        return False
+    before, after = around
+    after_words = after.split()
+    if action == "task_complete":
+        if before:
+            return bool(_COMPLETE_BEFORE.fullmatch(before)) and set(after_words) <= _COMPLETE_AFTER_WORDS
+        # "reading is done": no verb in front, so the words after must say it.
+        return bool(re.fullmatch(r"(?:is |are |was )?(?:now |already |just )?(?:done|complete|completed|finished)"
+                                 r"(?: (?:today|now|already))?", after))
+    return bool(_REMOVE_BEFORE.fullmatch(before)) and set(after_words) <= _REMOVE_AFTER_WORDS
+
+
 _TODAY_ONLY = re.compile(
     r"^(?:today|tonight|right now|now|this (?:morning|afternoon|evening)|for good|forever|permanently|"
     r"from now on|anymore|any more|for today|for tonight)$", re.I)
@@ -577,12 +623,14 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
         if not _affirmative(utterance):
             return _refuse(f"I was not sure you finished {title}. Say it as a plain statement, "
                            f"like 'I finished {title}'.")
-        if not _FINISHED.search(utterance):
-            return _refuse(f"I was not sure you finished {title}. Please say it again.")
+        if not _says_action("task_complete", utterance, intent.target):
+            return _refuse(f"I was not sure you finished {title}. Say it like 'I finished {title}' "
+                           f"or 'mark {title} done'.")
         return Verdict("act", gate=IntentGate("task_complete", "task_complete", check,
                                               target_id=task_id, plan=plan))
-    if not answering and not _REMOVAL.search(utterance):
-        return _refuse(f"I was not sure you wanted to stop or skip {title}. Please say it again.")
+    if not answering and not _says_action(intent.action, utterance, intent.target):
+        return _refuse(f"I was not sure you wanted to stop or skip {title}. Say it like "
+                       f"'skip {title} today' or 'stop {title} for good'.")
     scope = _cancel_scope(utterance, recurrence, title)
     if scope == "ask":
         return Verdict("ask", f"Nothing was changed. {title} is a daily task. Skip today or stop it for good?",

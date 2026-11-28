@@ -457,3 +457,48 @@ def test_a_declared_change_that_ran_nothing_says_so_with_the_reason(turn, db):
                                   intent=Intent("task_skip_today", "reading")))
     assert result.text.startswith("Nothing was changed.") and "could not carry out" in result.text
     assert not db.task_skipped_on(task, db.task_day())
+
+
+# ── F6: the verb must be the intent's action about the task, not a word anywhere ──
+
+@pytest.mark.parametrize("said", [
+    "I almost finished reading", "I nearly finished reading", "I barely finished reading",
+    "I finished reading the book", "finishing reading is hard", "my friend finished reading",
+    "I want to finish reading", "mark reading done and stop"])
+def test_a_completion_verb_elsewhere_in_the_sentence_does_not_complete(turn, db, said):
+    task = db.add_task("reading", "daily")
+    result = asyncio.run(turn.run(said, [block("task_complete", {"task": "reading"})],
+                                  intent=Intent("task_complete", "reading")))
+    assert not db.task_completed_on(task, db.task_day()) and "Nothing was changed" in result.text
+
+
+@pytest.mark.parametrize("said", [
+    "I finished reading", "I just finished reading", "I've finished reading", "mark reading done",
+    "mark reading as done", "mark my reading done", "complete reading", "please complete reading",
+    "can you mark reading done", "I'm done with reading", "check reading off", "reading is done",
+    "I finished reading today"])
+def test_a_plain_completion_still_completes(turn, db, said):
+    task = db.add_task("reading", "daily")
+    asyncio.run(turn.run(said, [block("task_complete", {"task": "reading"})],
+                         intent=Intent("task_complete", "reading")))
+    assert db.task_completed_on(task, db.task_day())
+
+
+@pytest.mark.parametrize("said, action", [
+    ("I might skip reading today", "task_skip_today"), ("don't cancel reading today", "task_skip_today"),
+    ("I almost stopped reading for good", "task_archive"), ("never skip reading today", "task_skip_today"),
+    ("my sister can skip reading today", "task_skip_today")])
+def test_a_removal_verb_elsewhere_in_the_sentence_changes_nothing(turn, db, said, action):
+    task = db.add_task("reading", "daily")
+    tool = "task_skip_today" if action == "task_skip_today" else "archive_task"
+    result = asyncio.run(turn.run(said, [block(tool, {"task": "reading"})],
+                                  intent=Intent(action, "reading")))
+    assert not db.task_skipped_on(task, db.task_day()) and db.get_task(task)["archived_at"] is None
+    assert "Nothing was changed" in result.text
+
+
+def test_a_plain_cancel_today_still_skips(turn, db):
+    task = db.add_task("reading", "daily")
+    asyncio.run(turn.run("cancel reading today", [block("task_skip_today", {"task": "reading"})],
+                         intent=Intent("task_archive", "reading")))
+    assert db.task_skipped_on(task, db.task_day())
