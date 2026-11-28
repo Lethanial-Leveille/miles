@@ -3,7 +3,9 @@
 Approved Nov 25 2026. The backend and the Nova app build against this file and nothing else.
 Neither side changes it; a change is proposed, approved, then written here first.
 The action day guard was approved at `9e1fd59`. The scheduling amendment was
-approved at `2203bbc`.
+approved at `2203bbc`. The request intent contract
+([tasks-intent-contract.md](work/tasks-intent-contract.md)) adds skipped days
+(migration 048, below).
 
 ## Task object
 
@@ -51,6 +53,10 @@ All need the normal full login JWT. Errors include `detail` and may have additio
   none qualify. They stay out of today and all later day sections of the
   overview. A historical read for a specific day uses that day's eligibility.
 - Moved, skipped and archived tasks never appear.
+- A daily task skipped for a day (a row in `task_skips`, migration 048) is not
+  shown on that day and is not due. Only that day is affected: the task stays
+  active and is back on the next day. Skipping is done by voice (see below);
+  there is no route for it yet, and `Task` has no field for it.
 
 ### `POST /tasks`
 
@@ -102,6 +108,10 @@ completion for that day. An active daily task before its first day returns
 409 with `code: "not_started"`, a detail message and `start_date`. A mismatched
 guarded request day is still rejected as `day_changed` first.
 
+A daily task skipped on the captured day cannot be completed: the route
+returns 409 with `code: "skipped"` and the detail `That task was skipped today`,
+and changes nothing. Reopen on a skipped day returns `not_done`.
+
 ### `POST /tasks/{id}/reopen`
 
 Answers 200 `{"task":Task}`. A one time task returns to pending and all its
@@ -141,10 +151,28 @@ guarded, MILES only delete path (an Evallo or non MILES event is never touched).
 ## Offline scheduling resolver
 
 The resolver in `src/task_scheduling.py` handles a verified scheduling
-utterance independently of model defaults. See the
+utterance independently of model defaults. Voice uses it only as a timing
+validator behind the request intent step (see the intent contract): a supported
+daily recurrence is saved, a first day is refused because voice cannot store
+one yet, and any other timing writes nothing and asks. See the
 [approved interpretation rules](work/tasks-scheduling-amendment.md).
 Current limitations are rejection of voice deadlines, including deadlines
 paired with a start, and a complete restatement after clarification. These
 limits can be revisited. The resolver is outside the runtime tool registry.
 Voice scheduling writes remain gated on confirmation and concurrent
 execution safeguards.
+
+## Skipped days (migration 048)
+
+`task_skips (task_id, date)` records one skipped 04:00 task day for one daily
+task. It is additive: no existing table or row changes. Overview, today's list
+and completion treat a skipped day as not shown and not due. Cancelling a daily
+task "today" or "tonight" writes one row. A bare cancel on a daily task asks
+"Skip today or stop it for good?" and writes nothing until answered.
+
+## Chat request receipts (migration 047)
+
+Reply text is erased 24 hours after the request, an unfinished row is marked
+failed after 24 hours, and the row is deleted after seven days. A retry after
+seven days is a new request. The cleanup runs once a task day inside the
+sessions tick.

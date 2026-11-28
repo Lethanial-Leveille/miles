@@ -136,3 +136,13 @@ request and the latency cost of holding speech and bypassing tool capable
 speculation when safety cannot be proven. This does not set a permanent
 product limit. The existing clearance floors,
 confirmation policy and production rollout gates carry forward.
+
+## Note from the request intent contract
+
+"This proposal adds no Nova protocol or code" is amended for this pass by
+[the intent contract](tasks-intent-contract.md): Nova discards an unfinished
+reply when its stream drops. The backend side is that a turn that could change
+something sends no model text until its actions finish, on the blocking route,
+the streaming route and the voice path. The one change per request limit
+stays, and "skip today" counts as that one change. Whole batch preflight now
+also checks every mutating call against the validated intent, in every round.

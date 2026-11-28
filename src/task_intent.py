@@ -302,7 +302,8 @@ def validate(intent, utterance, today=None, choice=None):
     # need not appear in the words, and it must be exactly the pending task.
     answering = (choice is not None and intent.action in ("task_archive", "task_skip_today")
                  and _words(intent.target) == _words(choice[1]))
-    if intent.target and not answering and _words(intent.target) not in heard:
+    if (intent.action not in ("timer", "reminder", "other") and intent.target and not answering
+            and _words(intent.target) not in heard):
         return _refuse("I could not match that to what you said. Please say it again.")
 
     if intent.action in ("timer", "reminder"):

@@ -1533,6 +1533,9 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
         elif authoritative:
             _emit(on_text, "reset", "")
             final_text = _code_reply(results, staged)
+            if safety.expects_action and not safety.used and not staged:
+                # Only reads ran, so the change that was asked for did not happen.
+                final_text = f"{final_text} {NO_ACTION}".strip()
             await _deliver_tool_reply(final_text, channel, device, on_text, safety, heard, leaks_seen)
         elif needs_second_call:
             if mutating and accumulated and not heard.cut:

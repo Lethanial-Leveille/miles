@@ -105,3 +105,15 @@ start is supplied. Clarification requires the full scheduling request to be
 restated. Both limitations can be revisited. The resolver remains offline
 until the existing voice confirmation and concurrent execution safeguards
 are resolved.
+
+## Note from the request intent contract
+
+The sentence "Code classifies scheduling clauses ... before considering model
+arguments" is amended by [the intent contract](tasks-intent-contract.md). The
+model now records an intent first (action, target, timing words) and code
+validates it. The resolver here stays offline as a writer: it is used only to
+validate timing, which must also appear in the committed words. Supported
+timing is the untimed one time add (today's task day, no due date) and daily
+recurrence. A first day such as "starting Monday" passes the resolver but voice
+cannot store it, so it writes nothing and says so. Anything else writes nothing
+and asks, and never defaults to today.
