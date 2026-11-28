@@ -30,6 +30,11 @@ from database import TIERS
 AUTHORIZED_TASK: ContextVar = ContextVar("authorized_task", default=None)
 
 
+# The one unchecked list item the intent step validated for a list_check call,
+# so the write checks that row and never searches the words again.
+AUTHORIZED_ITEM: ContextVar = ContextVar("authorized_item", default=None)
+
+
 # The task day the intent step validated, so a write cannot land on a different day.
 AUTHORIZED_DAY: ContextVar = ContextVar("authorized_day", default=None)
 

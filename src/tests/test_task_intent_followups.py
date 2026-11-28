@@ -124,10 +124,15 @@ def test_a_reminder_must_carry_his_content_and_time(turn, monkeypatch):
     assert [name for name, _ in ran] == ["set_reminder"]
 
 
-# ── F10: a list change is bound to the item and the list ──
+# ── F10: a list change is bound to the item, the list and the row ──
 
-def test_a_list_check_cannot_name_another_item_or_list(turn, monkeypatch):
+def _item(db, name, text):
+    return db.add_list_item(db.get_or_create_list(name), text)[0]
+
+
+def test_a_list_check_cannot_name_another_item_or_list(turn, db, monkeypatch):
     ran = _ran(monkeypatch)
+    _item(db, "grocery", "eggs")
     said = "check off eggs off my grocery list"
     for args in ({"item": "milk", "list_name": "grocery"}, {"item": "eggs", "list_name": "hardware"}):
         asyncio.run(turn.run(said, [block("list_check", args)]))
@@ -135,6 +140,49 @@ def test_a_list_check_cannot_name_another_item_or_list(turn, monkeypatch):
     asyncio.run(turn.run(said, [block("list_check", {"item": "eggs", "list_name": "grocery"})]))
     asyncio.run(turn.run("check off eggs", [block("list_check", {"item": "eggs"})]))
     assert len(ran) == 2
+
+
+def test_a_list_check_writes_the_validated_row_not_the_words_matched_later(turn, db):
+    first = _item(db, "grocery", "eggs")
+    asyncio.run(turn.run("check off eggs off my grocery list",
+                         [block("list_check", {"item": "eggs", "list_name": "grocery"})]))
+    assert db.get_list_item(first)[2] == 1
+
+
+def test_the_row_is_the_one_validated_even_when_a_lookalike_arrives_first(db):
+    import lists_tasks
+    from tools import AUTHORIZED_ITEM
+    wanted = _item(db, "grocery", "eggs")
+    verdict = task_intent.validate(Intent("list_check", "eggs"), "check off eggs", WEDNESDAY)
+    assert verdict.gate.plan == {"item_id": wanted}
+    db.check_list_item(wanted)  # a phone checked it first
+    other = _item(db, "grocery", "free range eggs")
+    token = AUTHORIZED_ITEM.set(wanted)
+    try:
+        from tools import ToolNotice
+        with pytest.raises(ToolNotice, match="already checked"):
+            lists_tasks.list_check_tool("eggs")
+    finally:
+        AUTHORIZED_ITEM.reset(token)
+    assert db.get_list_item(other)[2] == 0
+
+
+def test_two_items_that_match_ask_which_and_check_nothing(turn, db):
+    one, two = _item(db, "grocery", "free range eggs"), _item(db, "grocery", "duck eggs")
+    result = asyncio.run(turn.run("check off eggs", [block("list_check", {"item": "eggs"})]))
+    assert "Which one" in result.text and "Nothing was changed" in result.text
+    assert db.get_list_item(one)[2] == 0 and db.get_list_item(two)[2] == 0
+
+
+def test_a_list_named_with_several_words_is_bound_whole(turn, db, monkeypatch):
+    ran = _ran(monkeypatch)
+    said = "add screws to my hardware store list"
+    for args in ({"item": "screws", "list_name": "hardware"}, {"item": "screws", "list_name": "grocery"}):
+        asyncio.run(turn.run(said, [block("list_add", args)], intent=Intent("list_add", "screws")))
+    assert ran == []
+    asyncio.run(turn.run(said, [block("list_add", {"item": "screws", "list_name": "hardware store"})],
+                         intent=Intent("list_add", "screws")))
+    assert len(ran) == 1
 
 
 def test_a_list_add_to_a_named_list_must_name_it(turn, monkeypatch):

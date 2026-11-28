@@ -24,6 +24,7 @@ from database import (
     check_list_item,
     complete_task,
     find_list,
+    get_list_item,
     get_or_create_list,
     get_task,
     skip_task_if_due,
@@ -32,7 +33,7 @@ from database import (
     tasks_today,
     unchecked_items_matching,
 )
-from tools import AUTHORIZED_DAY, AUTHORIZED_TASK, Permission, ToolNotice, tool
+from tools import AUTHORIZED_DAY, AUTHORIZED_ITEM, AUTHORIZED_TASK, Permission, ToolNotice, tool
 
 
 def stored_list_name(spoken):
@@ -180,6 +181,14 @@ def list_add_tool(item, list_name):
     returns_to_model=False,
 )
 def list_check_tool(item, list_name=None):
+    authorized = AUTHORIZED_ITEM.get()
+    if authorized is not None:
+        # The intent step settled which row is meant. Check that row, never
+        # whichever one the words match now.
+        row = get_list_item(authorized)
+        if row is None or row[2] or not check_list_item(authorized):
+            raise ToolNotice("That item was already checked. Nothing was changed.")
+        return f"Checked off {row[1]}."
     list_id = None
     if list_name:
         name = stored_list_name(list_name)

@@ -3039,6 +3039,17 @@ def unchecked_items_matching(list_id, words):
     return _exact_first(rows, words)
 
 
+def get_list_item(item_id):
+    """(id, text, checked, list name) of one list item, or None."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT i.id, i.text, i.checked, l.name FROM list_items i JOIN lists l ON l.id = i.list_id "
+            "WHERE i.id = ?", (item_id,)).fetchone()
+    finally:
+        conn.close()
+
+
 def list_item_exists(item_id):
     """Whether an item with this id exists, checked or not."""
     conn = sqlite3.connect(DB_PATH)

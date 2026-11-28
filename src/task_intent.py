@@ -448,26 +448,74 @@ def _reminder_args(intent, utterance):
     return check
 
 
-def _list_args(intent, utterance):
+_LIST_PREPOSITIONS = ("to", "on", "from", "off", "in")
+
+
+def _spoken_list(spoken):
+    """The list he named, as said ("hardware store" from "to my hardware store
+    list"), or None when he named none. The name is the words between the last
+    preposition before "list" and the word list, so a name of any length is read
+    whole instead of falling back to grocery."""
+    words = spoken.split()
+    if "list" not in words:
+        return None
+    end = len(words) - 1 - words[::-1].index("list")
+    start = end - 1
+    while start >= 0 and words[start] not in _LIST_PREPOSITIONS:
+        start -= 1
+    if start < 0:
+        return None
+    name = words[start + 1:end]
+    while name and name[0] in ("my", "the"):
+        name = name[1:]
+    return " ".join(name) or None
+
+
+def _list_args(intent, utterance, action, row_list=None):
+    """The item and the list are exactly the ones he named. For list_add a list
+    he did not name is grocery, as it always was. For list_check the row was
+    resolved when the intent was validated, so a call that names another list
+    than that row's is refused."""
     from lists_tasks import stored_list_name
-    spoken = _words(utterance)
     item = _words(re.sub(r"^(?:the|my)\s+", "", _words(intent.target)))
-    named = re.search(r"\b(?:to|on|from|off|in)\s+(?:my\s+|the\s+)?([a-z0-9']+)\s+list\b", spoken)
-    wanted = stored_list_name(named[1]) if named and named[1] not in ("my", "the") else "grocery"
+    named = _spoken_list(_words(utterance))
+    expected = stored_list_name(named) if named else ("grocery" if action == "list_add" else row_list)
 
     def check(args):
         got = _words(re.sub(r"^(?:the|my)\s+", "", _words(str(args.get("item", "")))))
         if got != item:
             return False
+        if not args.get("list_name"):
+            return action == "list_check"
         try:
-            listed = stored_list_name(args["list_name"]) if args.get("list_name") else "grocery"
+            return stored_list_name(args["list_name"]) == expected
         except ValueError:
             return False
-        return listed == wanted
     return check
 
 
-_IDENTIFYING = ("title",)
+def _list_check(intent, utterance):
+    """Settle which one unchecked item is meant before anything runs, so the write
+    checks that row and never whichever row the words match later."""
+    from lists_tasks import stored_list_name
+    named = _spoken_list(_words(utterance))
+    list_id = None
+    if named:
+        wanted = stored_list_name(named)
+        list_id = database.find_list(wanted)
+        if list_id is None:
+            return _refuse(f"There is no {wanted} list.")
+    item = re.sub(r"^(?:the|my)\s+", "", _words(intent.target))
+    matches = database.unchecked_items_matching(list_id, item)
+    if not matches:
+        return _refuse(f"No unchecked item matches '{item}'.")
+    if len(matches) > 1:
+        return _refuse(f"More than one item matches '{item}': {', '.join(m[1] for m in matches)}. "
+                       f"Which one do you mean?")
+    row = database.get_list_item(matches[0][0])
+    return Verdict("act", gate=IntentGate("list_check", "list_check",
+                                          _list_args(intent, utterance, "list_check", row[3]),
+                                          plan=dict(item_id=row[0])))
 
 
 _NEGATION = re.compile(r"\b(?:not|never|no|nothing|neither|nor|unfinished|incomplete)\b|n't\b", re.I)
@@ -631,8 +679,10 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     if intent.action in ("list_add", "list_check"):
         if not intent.target:
             return _refuse("Which item do you mean?")
-        return Verdict("act", gate=IntentGate(ACTION_TOOL[intent.action], intent.action,
-                                              _list_args(intent, utterance)))
+        if intent.action == "list_check":
+            return _list_check(intent, utterance)
+        return Verdict("act", gate=IntentGate("list_add", "list_add",
+                                              _list_args(intent, utterance, "list_add")))
     if intent.action == "task_add":
         return _task_add(intent, utterance, today)
 

@@ -22,7 +22,7 @@ from parsing import extract_memories, strip_leading_bracket_cue
 import screen_text
 from stream_router import StreamRouter
 import interrupt_speech
-from tools import AUTHORIZED_DAY, AUTHORIZED_TASK, registry, Permission, ToolNotice, permits
+from tools import AUTHORIZED_DAY, AUTHORIZED_ITEM, AUTHORIZED_TASK, registry, Permission, ToolNotice, permits
 from database import log_tool_call
 import alerts
 import memory_pass
@@ -1145,11 +1145,14 @@ async def _dispatch_tools(blocks, model, tier, safety):
         # existing task, so no write reads the clock again.
         validated_day = gate.plan.get("day") if gate is not None and block.name == gate.tool else None
         day_token = AUTHORIZED_DAY.set(validated_day)
+        item_token = AUTHORIZED_ITEM.set(
+            gate.plan.get("item_id") if gate is not None and block.name == gate.tool else None)
         try:
             [result] = await asyncio.to_thread(_run_tools, [block], model, tier, safety=safety)
         finally:
             AUTHORIZED_TASK.reset(token)
             AUTHORIZED_DAY.reset(day_token)
+            AUTHORIZED_ITEM.reset(item_token)
         results[index] = result
         if _tool_permission(block) is not Permission.READ:
             safety.finished[block.id] = result
