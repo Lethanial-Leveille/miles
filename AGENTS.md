@@ -30,6 +30,15 @@ Run it with `scripts/loop --tier small|medium|large` (see `scripts/loop --help`)
 - Either reviewer reads only the diff, the files it touches and the contract, never the whole repo. Neither deploys or touches production. The fixer is a separate Sonnet session, so the reviewer never reviews its own work.
 - Before a Codex run, check usage with `python3 ~/.codex/usage.py` (the loop does this) and tell Lethanial if it is over its threshold. The Claude reviewer has no usage check.
 
+## Workflow rules
+
+Added by Lethanial on Nov 28 2026. They apply on top of the tiers and the loop.
+
+1. **Who builds.** Large tier builds use Opus as the builder, and the contract for the hardest designs is written by Fable. Small and Medium builds use Sonnet. The fixer in `scripts/loop` stays a separate Sonnet session, and the reviewer never reviews its own work.
+2. **Probe before the contract.** Anything that touches an outside system (Evallo, Google, iMessage, Cloudflare) runs a read only probe of real data before the contract is written, and the contract records what the probe found. No guessed data shapes. A builder works from the recorded shapes, not from assumptions.
+3. **One repo per phase where possible.** Prefer phases that touch one repo. Work that spans the backend, the Mac and Nova is split into separately shippable pieces wherever it can be, each with its own contract section, tests and rollback.
+4. **Review finds design flaws, the harness proves behavior.** The reviewer's job is design flaws. The acceptance harness's job is proving behavior. After the single verification round, the remaining non Blocker findings go to [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md), and the safeguards are approvals, expiry, backups and rollback, not more review rounds.
+
 ## What counts as a Blocker
 
 A finding is a Blocker only if it can realistically happen in his real life and would do one of these:
