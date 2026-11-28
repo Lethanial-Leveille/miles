@@ -27,9 +27,11 @@ def test_migration_33_leaves_existing_rows_alone(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DB_PATH", path)
     monkeypatch.setattr(database, "MIGRATIONS", database.MIGRATIONS[:32])
     database.init_db()
-    database.save_message("user", "hey nova")
     database.save_memory("Likes pull ups", source="explicit")
     conn = sqlite3.connect(path)
+    # Written as the live database has it: this old schema has no channel column.
+    conn.execute("INSERT INTO conversation_history (role, content, created_at, source_device) "
+                 "VALUES ('user', 'hey nova', '2026-11-12T09:00:00', 'pi')")
     conn.execute("INSERT INTO reminders (content, due_at, created_at) "
                  "VALUES ('stretch', NULL, '2026-11-12T09:00:00')")
     conn.commit()
@@ -46,6 +48,8 @@ def test_migration_33_leaves_existing_rows_alone(tmp_path, monkeypatch):
     after = {t: conn.execute(f"SELECT * FROM {t}").fetchall() for t in before}
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
     conn.close()
+    # Migration 050 adds a NULL channel to the end of each history row.
+    after["conversation_history"] = [row[:-1] for row in after["conversation_history"]]
     assert after == before
     assert version == database.MIGRATIONS[-1][0]
     assert {"lists", "list_items", "tasks", "task_completions"} <= _tables(path)

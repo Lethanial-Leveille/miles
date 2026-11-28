@@ -488,7 +488,7 @@ def test_go_on_saves_both_sides_and_falls_back_when_nothing_played():
     saved = []
     said = ["Anyway, the rest."]
     scope = {"speak_what_was_left": lambda: said[0],
-             "save_message": lambda role, text: saved.append((role, text)),
+             "save_message": lambda role, text, channel=None: saved.append((role, text)),
              "resume": resume,
              "TurnResult": lambda text, dismissed: (text, dismissed),
              "print": lambda *a, **k: None}
