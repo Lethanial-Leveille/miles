@@ -86,3 +86,9 @@ Labels compare this branch with production (`main` at 51676b9), measured by runn
 - **Decision** `src/task_intent.py` UNREADABLE ANSWER (owner, Nov 28 2026). If the intent call fails on an answer to a change question, the reply is "Nothing was changed. I couldn't tell what you meant. Please say it again." It is never answered as chat.
 
 - **Known limit** `src/task_intent.py` PRE EXISTING. "Stop reading for good" when there is no task called Reading at all is ambiguous: it can mean the activity, a standing preference, or a task that is gone. The intent step files it under no change requested, and the model sometimes answers "Done." after storing a preference with `remember` (about one run in three in the Nov 28 scenario run), or asks what he means. Production offers `remember` on every turn and behaves the same way. With a task of that name the sentence is handled correctly, because the intent step is given his active task titles.
+
+- **Note** `files/src/task_intent.py:174` Task titles go into the system prompt raw, so a title containing ';', '(daily)', a period or instruction-like text can garble the list or steer the intent call. (found by the review loop at f51e726)
+
+- **Note** `files/docs/KNOWN_LIMITS.md:88` The doc says that with a task of that name the sentence 'is handled correctly', but the tests only check what goes into the prompt with a stubbed model, so the claim rests on a scenario run, not on a test. (found by the review loop at f51e726)
+
+- **Note** `files/src/tests/test_intent_task_context.py:81` The tests cover only how the prompt is built. Nothing covers the target-copy refusal in F1, the bare-stop archive in F2, or what happens past the cap in F3. (found by the review loop at f51e726)
