@@ -285,7 +285,7 @@ _QUANTITY = (r"(?:a|an|the|about|around|another|half|couple|few|several|dozen|of
              r"\w+teen|\w+ty)")
 _UNCAPTURED_TIMING = re.compile(
     rf"\b(?:(?:in|within|after|for the next)\s+(?:{_QUANTITY}\s+){{0,4}}"
-    r"(?:second|minute|hour|day|night|week|fortnight|month|year)s?"
+    r"(?:(?:business|working|calendar|full)\s+)?(?:second|minute|hour|day|night|week|fortnight|month|year)s?"
     r"|(?:at|by|around|before|until|till)\s+(?:dawn|dusk|noon|midnight|sunrise|sunset|sundown|daybreak|"
     r"nightfall|lunchtime|dinnertime|bedtime|breakfast|\d)"
     r"|\d{1,2}(?::\d{2})?\s*(?:am|pm)"

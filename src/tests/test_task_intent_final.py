@@ -135,3 +135,11 @@ def test_a_negated_anymore_is_a_stop_not_a_skip(said):
 
 def test_not_for_good_is_still_a_skip():
     assert task_intent._cancel_scope("stop reading, not for good", "daily", "Reading") == "skip"
+
+
+# ── F13: a working day count is still a relative date ──
+
+@pytest.mark.parametrize("phrase", ["follow up in four business days", "follow up in two working days",
+                                    "follow up in three calendar weeks"])
+def test_a_business_day_count_is_uncaptured_timing(phrase):
+    assert task_intent._uncaptured_timing(Intent("task_add", phrase), f"add {phrase}")
