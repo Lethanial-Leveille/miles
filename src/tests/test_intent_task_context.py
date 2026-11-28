@@ -67,3 +67,31 @@ def test_the_list_is_capped(db, monkeypatch):
     seen, client = _capture(monkeypatch)
     asyncio.run(REAL_REQUEST(client, "hello"))
     assert seen["system"].count("(daily)") == 40
+
+
+def test_the_hint_asks_for_his_words_not_the_stored_title(db, monkeypatch):
+    now = datetime.now()
+    db.add_task("Read a chapter", "daily", now=now)
+    seen, client = _capture(monkeypatch)
+    asyncio.run(REAL_REQUEST(client, "stop reading for good"))
+    assert "words he used that name the task" in seen["system"]
+    assert "copy the task name" not in seen["system"]
+
+
+def test_a_cut_list_puts_daily_first_and_says_it_is_incomplete(db, monkeypatch):
+    now = datetime.now()
+    for number in range(45):
+        db.add_task(f"One time {number}", None, now=now, scheduled_for=db.task_day(now))
+    db.add_task("Stretching", "daily", now=now)
+    seen, client = _capture(monkeypatch)
+    asyncio.run(REAL_REQUEST(client, "hello"))
+    assert "Stretching (daily)" in seen["system"]
+    assert seen["system"].count("(one time)") == 39
+    assert "list is incomplete" in seen["system"]
+
+
+def test_an_uncut_list_has_no_incomplete_note(db, monkeypatch):
+    db.add_task("Reading", "daily", now=datetime.now())
+    seen, client = _capture(monkeypatch)
+    asyncio.run(REAL_REQUEST(client, "hello"))
+    assert "incomplete" not in seen["system"]

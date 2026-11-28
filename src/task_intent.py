@@ -157,8 +157,8 @@ _FOLLOWUP_SYSTEM = (
 
 _TASKS_HINT = (" A task name can also be an everyday word, like reading, stretching or running. When the "
                "message is a command (stop, cancel, skip, remove, finish, mark) and what follows matches "
-               "one of his tasks, it is a change to that task: record the action and copy the task name "
-               "into target. The same words as a plain topic of conversation are no_change.")
+               "one of his tasks, it is a change to that task: record the action and copy the words he used "
+               "that name the task into target. The same words as a plain topic of conversation are no_change.")
 
 
 def _tasks_context(limit=40):
@@ -166,13 +166,20 @@ def _tasks_context(limit=40):
     as a change to the task Reading and not as the activity of reading. Any
     failure leaves the call as it was: the context only helps, it never decides."""
     try:
-        rows = database.active_tasks_matching("")[:limit]
+        rows = list(database.active_tasks_matching(""))
     except Exception:
         return ""
     if not rows:
         return ""
+    cut = len(rows) > limit
+    if cut:
+        # Daily tasks first, then the most recently added.
+        rows.sort(key=lambda row: (not row[2], -row[0]))
+        rows = rows[:limit]
     names = "; ".join(f"{text} ({'daily' if recurrence else 'one time'})" for _id, text, recurrence in rows)
-    return f" His active tasks: {names}.{_TASKS_HINT}"
+    note = (" This list is incomplete: he has more tasks, so a name that is not listed may still be "
+            "one of his tasks.") if cut else ""
+    return f" His active tasks: {names}.{note}{_TASKS_HINT}"
 
 
 async def request_intent(client, utterance, pending_title=None, followup=None):
