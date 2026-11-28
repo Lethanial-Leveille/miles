@@ -174,3 +174,33 @@ def test_the_daily_tick_runs_cleanup_once_per_task_day(db, monkeypatch):
     assert len(calls) == 1 and "old" not in _rows(db)
     sessions.expire_chat_receipts_daily(NOON + timedelta(days=1))
     assert len(calls) == 2
+
+
+def test_a_retry_of_an_expired_or_failed_request_is_told_so_and_never_rerun(db, monkeypatch):
+    import hashlib
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from fastapi.testclient import TestClient
+    import brain
+    import server
+
+    monkeypatch.setitem(server.app.dependency_overrides, server.get_current_user, lambda: "fake-actor")
+    monkeypatch.setattr(brain, "ask_nova", lambda *a, **k: pytest.fail("must not run again"))
+    client = TestClient(server.app)
+    body = {"message": "good morning", "channel": "text",
+            "conversation_id": str(uuid4()), "request_id": str(uuid4())}
+    request_id = server.ChatRequest(**body).request_id.hex
+    fingerprint = hashlib.sha256(server.ChatRequest(**body).model_dump_json().encode()).hexdigest()
+    assert db.reserve_chat_request("fake-actor", request_id, fingerprint, now=NOON - timedelta(days=2)) is None
+    db.finish_chat_request("fake-actor", request_id, "Morning.")
+    db.expire_chat_requests(NOON)
+    expired = client.post("/chat", json=body)
+    assert expired.status_code == 409 and "expired" in expired.json()["detail"]
+
+    other = {**body, "request_id": str(uuid4())}
+    other_id = server.ChatRequest(**other).request_id.hex
+    other_fp = hashlib.sha256(server.ChatRequest(**other).model_dump_json().encode()).hexdigest()
+    db.reserve_chat_request("fake-actor", other_id, other_fp, now=NOON - timedelta(days=2))
+    db.expire_chat_requests(NOON)
+    failed = client.post("/chat", json=other)
+    assert failed.status_code == 409 and "never finished" in failed.json()["detail"]
