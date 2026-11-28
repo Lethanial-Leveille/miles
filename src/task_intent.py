@@ -251,7 +251,7 @@ def _task_resolves_to(task_id):
 
 _NOT_FOR_GOOD = re.compile(
     r"\b(?:not|never|n't|don't|do not|just not|no)\s+(?:\w+\s+){0,2}?"
-    r"(?:for good|forever|permanently|anymore|any more|no longer)\b", re.I)
+    r"(?:for good|forever|permanently)\b", re.I)
 
 
 def _cancel_scope(utterance, recurrence, title=""):

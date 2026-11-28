@@ -123,3 +123,15 @@ def test_a_title_with_a_hypothetical_word_does_not_block_a_completion(db):
     assert verdict.kind == "act", verdict.text
     assert task_intent.validate(Intent("task_complete", "call when home"),
                                 "did I finish call when home", WEDNESDAY).kind != "act"
+
+
+# ── E9: "anymore" means stop, not skip today ──
+
+@pytest.mark.parametrize("said", ["I don't track reading anymore", "cancel reading, I don't do it anymore",
+                                  "stop reading, not anymore", "I never do reading anymore"])
+def test_a_negated_anymore_is_a_stop_not_a_skip(said):
+    assert task_intent._cancel_scope(said, "daily", "Reading") == "archive"
+
+
+def test_not_for_good_is_still_a_skip():
+    assert task_intent._cancel_scope("stop reading, not for good", "daily", "Reading") == "skip"
