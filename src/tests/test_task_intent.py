@@ -69,14 +69,16 @@ def turn(db, monkeypatch):
     monkeypatch.setattr(brain, "_consumer_for", lambda *a: consumer)
     monkeypatch.setattr(brain, "speak", audio.append)
 
-    async def run(utterance, blocks=(), *, draft="", intent=None, more=(), scope=None):
-        async def request(client, text, pending_title=None):
+    async def run(utterance, blocks=(), *, draft="", intent=None, more=(), scope=None,
+                  channel="voice", device="pi"):
+        async def request(client, text, pending_title=None, followup=None):
             intent_calls.append(text)
-            return intent if intent is not None else fake_intent(text)
+            return intent if intent is not None else fake_intent(text, followup)
         monkeypatch.setattr(task_intent, "request_intent", request)
         rounds.clear()  # a refused turn never reads its stream
         rounds.extend([Stream(list(blocks), draft), *more])
-        return await brain.ask_nova_async(utterance, tier="hokage", on_text=lambda *e: events.append(e))
+        return await brain.ask_nova_async(utterance, tier="hokage", channel=channel, device=device,
+                                          on_text=lambda *e: events.append(e))
 
     return SimpleNamespace(run=run, audio=audio, events=events, rounds=rounds, offered=offered,
                            intent_calls=intent_calls)

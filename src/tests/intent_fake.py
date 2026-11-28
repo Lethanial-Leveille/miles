@@ -29,7 +29,34 @@ def _add(text):
     return Intent("task_add", rest.strip(" \"“”"), timing)
 
 
-def fake_intent(text):
+def _fake_followup(followup):
+    """What a sensible model makes of an answer to a question about a change:
+    the action comes from the earlier request, the target from the answer or
+    from the option the answer points at in the question."""
+    answer = followup.answer.lower().strip(" .!?")
+    earlier = followup.earlier.lower()
+    if re.search(r"\bboth\b", answer):
+        return Intent("task_archive", "", "", True)
+    options = re.search(r"([\w ]+?) or ([\w ]+?)\?", followup.question.lower().replace(",", " "))
+    names = [name.split()[-1] for name in options.groups()] if options else []
+    if re.search(r"\b(?:first|1st)\b", answer) and names:
+        target = names[0]
+    elif re.search(r"\b(?:second|2nd|last)\b", answer) and names:
+        target = names[-1]
+    else:
+        target = next((name for name in names if name in answer), "")
+    if not target:
+        return Intent("no_change")
+    if re.search(r"\bskip\b", earlier):
+        return Intent("task_skip_today", target)
+    if re.search(r"\b(?:finish|complete|done)\b", earlier):
+        return Intent("task_complete", target)
+    return Intent("task_archive", target)
+
+
+def fake_intent(text, followup=None):
+    if followup is not None:
+        return _fake_followup(followup)
     lowered = text.lower().strip(" .!?")
     if lowered.startswith("remember") or "calendar" in lowered:
         # Outside the intent step: the model files these under no_change and the

@@ -104,6 +104,19 @@ _SYSTEM = (
 
 
 @dataclass(frozen=True)
+class FollowUp:
+    """An answer to a question the assistant asked about a change request: what
+    was asked first, the question, and the answer. Only built when the wide check
+    would not flag the answer on its own ("Stretching", "the second one")."""
+    earlier: str
+    question: str
+    answer: str
+
+    def joined(self):
+        return f"{self.earlier} {self.question} {self.answer}"
+
+
+@dataclass(frozen=True)
 class Intent:
     action: str
     target: str = ""
@@ -133,7 +146,16 @@ def parse_intent(message):
                   data["more_than_one_change"])
 
 
-async def request_intent(client, utterance, pending_title=None):
+_FOLLOWUP_SYSTEM = (
+    " The message is the user's answer to a question his assistant asked about an earlier request. "
+    "You are given the earlier request, the question and the answer. Resolve the answer into one complete "
+    "intent: the action from the earlier request, the target from the answer or from the question (so "
+    "'the second one' names the second option the question listed), and the timing. Use no_change when "
+    "the answer is not about that change, such as 'never mind' or an unrelated topic. If the answer picks "
+    "both options, set more_than_one_change.")
+
+
+async def request_intent(client, utterance, pending_title=None, followup=None):
     """One forced schema call with no mutating tool offered. Its time is recorded
     in the turn's timing record as intent_ms, so the cost on task turns shows up.
 
@@ -143,11 +165,17 @@ async def request_intent(client, utterance, pending_title=None):
     if pending_title:
         system += (f" The assistant just asked whether to skip {pending_title} for today or stop "
                    f"it for good. A reply like that is about {pending_title}: put it in target.")
+    content = utterance
+    if followup is not None:
+        # Small plain text in the one call, never an extra model round.
+        system += _FOLLOWUP_SYSTEM
+        content = (f"Earlier request: {followup.earlier}\nAssistant question: {followup.question}\n"
+                   f"Answer: {followup.answer}")
     started = time.monotonic()
     try:
         message = client.messages.create(
             model=MODEL_A, max_tokens=300, system=system,
-            messages=[{"role": "user", "content": utterance}],
+            messages=[{"role": "user", "content": content}],
             tools=[INTENT_TOOL], tool_choice={"type": "tool", "name": "record_intent"})
         if inspect.isawaitable(message):
             message = await message
@@ -684,7 +712,7 @@ _REMOVE_BEFORE = re.compile(
     rf"{_OPENER}(?:cancel|stop(?: tracking| doing)?|archive|delete|remove|skip|drop|scrap|quit|"
     r"forget(?: about)?|get rid of|i (?:no longer|don't|dont|do not) (?:need|want)(?: to)?(?: do)?)"
     rf"{_ARTICLE}")
-_REMOVE_AFTER_WORDS = {"today", "tonight", "this", "morning", "afternoon", "evening", "for", "good",
+_REMOVE_AFTER_WORDS = {"actually", "anyway", "then", "instead", "today", "tonight", "this", "morning", "afternoon", "evening", "for", "good",
                        "forever", "permanently", "anymore", "any", "more", "no", "longer", "from", "now",
                        "on", "not", "but", "please", "task", "routine", "habit", "just", "only", "it"}
 
@@ -745,9 +773,51 @@ def _without_start(text):
     return " ".join(f"{text[:marker.start()]} {text[end:]}".split())
 
 
-def validate(intent, utterance, today=None, choice=None, tier="hokage"):
+_PRONOUN = re.compile(r"\b(?:that one|this one|those|these|that|this|them|it|one)\b", re.I)
+
+
+def _followup_command(followup, intent):
+    """The one sentence the answer amounts to, so the ordinary verb, scope and
+    day checks read a command and not a question and an answer. For a task
+    named by the answer, the earlier request's "that" becomes the target
+    ("cancel that actually" and "stretching" give "cancel stretching actually").
+    Scope words he added ("for good", "today") are kept. Anything else is the
+    earlier request followed by the answer ("remind me to call Sam" and
+    "at five")."""
+    earlier = " ".join(followup.earlier.split()).rstrip(" .!?")
+    answer = " ".join(followup.answer.split()).strip(" .!?")
+    if intent.action not in ("task_archive", "task_skip_today", "task_complete"):
+        return f"{earlier} {answer}"
+    if _PRONOUN.search(earlier):
+        command = _PRONOUN.sub(intent.target, earlier, count=1)
+    else:
+        command = f"{earlier} {intent.target}"
+    scope = [found[0] for found in (_STOP_FOR_GOOD.search(answer), _TODAY.search(answer)) if found]
+    return " ".join([command, *scope])
+
+
+def validate(intent, utterance, today=None, choice=None, tier="hokage", followup=None):
     """Turn a recorded Intent into a Verdict. Every failure is a refusal or a
-    question with no write; only a verdict of "act" carries a gate."""
+    question with no write; only a verdict of "act" carries a gate.
+
+    With a followup, `utterance` is his answer and the checks run on an
+    effective text: the target may come from the assistant's own question, but
+    the verb, scope and day come from a command built from the earlier request,
+    so every rule is the one an ordinary request meets."""
+    if followup is not None:
+        if _asks_a_question(followup.answer):
+            return Verdict("none", question=True)
+        if intent is None:
+            return _refuse("I didn't catch what you wanted to change. Please say it again.")
+        if intent.action == "no_change":
+            return Verdict("none")
+        if intent.more or re.search(r"\bboth\b", followup.answer, re.I):
+            return _refuse("Please ask for one change at a time.")
+        # A model that dodged the target or invented one still has to pass the
+        # containment and one task checks below on the joined words.
+        heard_text, utterance = followup.joined(), _followup_command(followup, intent)
+    else:
+        heard_text = None
     # A question or a read is never a request to change something, whatever the
     # model recorded, so it is never answered with "Nothing was changed".
     if _asks_a_question(utterance):
@@ -768,7 +838,7 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     if floor in registry and not permits(registry.get(floor), tier):
         return _refuse("You don't have permission for that.")
     today = today or date.fromisoformat(database.task_day(datetime.now()))
-    heard = _words(utterance)
+    heard = _words(heard_text or utterance)
     # An answer to a pending skip or stop question names no task, so the model
     # fills the task in from the question. That is the one case where the target
     # need not appear in the words, and it must be exactly the pending task.

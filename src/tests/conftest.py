@@ -45,10 +45,20 @@ def fake_intent_model(monkeypatch):
     import task_intent
     from intent_fake import fake_intent
 
-    async def request(client, utterance, pending_title=None):
-        return fake_intent(utterance)
+    async def request(client, utterance, pending_title=None, followup=None):
+        return fake_intent(utterance, followup)
 
     monkeypatch.setattr(task_intent, "request_intent", request)
+
+
+@pytest.fixture(autouse=True)
+def forget_last_exchange():
+    """The last exchange per device is process memory; no test inherits another's."""
+    import brain
+
+    brain._last_exchange.clear()
+    yield
+    brain._last_exchange.clear()
 
 
 @pytest.fixture
