@@ -96,3 +96,21 @@ def test_a_report_that_is_not_a_completion_is_still_refused(db, said):
     db.add_task("Reading", "daily")
     assert task_intent.validate(Intent("task_complete", "reading"), said, WEDNESDAY).kind != "act"
 
+
+# ── F6: the verb must be the task's own act ──
+
+def test_buying_vitamins_does_not_complete_taking_them(db):
+    db.add_task("Take vitamins", "daily")
+    verdict = task_intent.validate(Intent("task_complete", "vitamins"), "I bought my vitamins", WEDNESDAY)
+    assert verdict.kind == "refuse"
+    for said in ("I took my vitamins", "mark vitamins done", "I finished my vitamins"):
+        assert task_intent.validate(Intent("task_complete", "vitamins"), said, WEDNESDAY).kind == "act", said
+
+
+def test_a_task_without_a_verb_name_keeps_its_old_reports(db):
+    db.add_task("Vitamins", "daily")
+    db.add_task("Pay rent", None)
+    assert task_intent.validate(Intent("task_complete", "vitamins"), "I took my vitamins", WEDNESDAY).kind == "act"
+    assert task_intent.validate(Intent("task_complete", "rent"), "I paid rent", WEDNESDAY).kind == "act"
+    assert task_intent.validate(Intent("task_complete", "rent"), "I called rent", WEDNESDAY).kind == "refuse"
+

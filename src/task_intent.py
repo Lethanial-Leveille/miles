@@ -598,6 +598,21 @@ _COMPLETE_AFTER_WORDS = {"today", "tonight", "now", "already", "just", "this", "
                          "evening", "for", "please", "too", "off", "as", "done", "complete", "completed",
                          "finished", "is", "are", "task", "routine", "habit", "it", "finally", "really"}
 
+# A verb that names one particular act must be the task's own act. "I bought my
+# vitamins" says nothing about taking them, so it cannot complete "Take vitamins".
+# Only a task whose first word is one of these verbs is held to its own forms;
+# a task named "Vitamins" still takes "I took my vitamins".
+_VERB_FORMS = {"take": {"take", "took", "taken"}, "call": {"call", "called"}, "pay": {"pay", "paid"},
+               "get": {"get", "got"}, "buy": {"buy", "bought"}, "send": {"send", "sent"},
+               "submit": {"submit", "submitted"}}
+_SPECIFIC_VERB = re.compile(r"\b(?:took|taken|called|paid|got|bought|sent|submitted)\b")
+
+
+def _verb_fits_task(before, title):
+    """False when `before` reports a particular act that is not the task's own."""
+    verb = _SPECIFIC_VERB.search(before)
+    first = (_words(title).split() or [""])[0]
+    return verb is None or first not in _VERB_FORMS or verb[0] in _VERB_FORMS[first]
 _REMOVE_BEFORE = re.compile(
     rf"{_OPENER}(?:cancel|stop(?: tracking| doing)?|archive|delete|remove|skip|drop|scrap|quit|"
     r"forget(?: about)?|get rid of|i (?:no longer|don't|dont|do not) (?:need|want)(?: to)?(?: do)?)"
@@ -614,7 +629,7 @@ def _around_target(utterance, target):
     return (heard[:found.start()].strip(), heard[found.end():].strip()) if found else None
 
 
-def _says_action(action, utterance, target):
+def _says_action(action, utterance, target, title=""):
     """Whether the words are a plain command or report of `action` on the target."""
     around = _around_target(utterance, target)
     if around is None:
@@ -623,7 +638,8 @@ def _says_action(action, utterance, target):
     after_words = after.split()
     if action == "task_complete":
         if before:
-            return bool(_COMPLETE_BEFORE.fullmatch(before)) and set(after_words) <= _COMPLETE_AFTER_WORDS
+            return (bool(_COMPLETE_BEFORE.fullmatch(before)) and set(after_words) <= _COMPLETE_AFTER_WORDS
+                    and _verb_fits_task(before, title))
         # "reading is done": no verb in front, so the words after must say it.
         return bool(re.fullmatch(r"(?:is |are |was )?(?:now |already |just )?(?:done|complete|completed|finished)"
                                  r"(?: (?:today|now|already))?", after))
@@ -738,7 +754,7 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
         if not _affirmative(utterance):
             return _refuse(f"I was not sure you finished {title}. Say it as a plain statement, "
                            f"like 'I finished {title}'.")
-        if not _says_action("task_complete", utterance, intent.target):
+        if not _says_action("task_complete", utterance, intent.target, title):
             return _refuse(f"I was not sure you finished {title}. Say it like 'I finished {title}' "
                            f"or 'mark {title} done'.")
         return Verdict("act", gate=IntentGate("task_complete", "task_complete", check,
