@@ -125,7 +125,7 @@ def test_clearance_and_invalid_sibling_preflight_precede_any_mutation(voice, db)
     task = db.add_task("reading")
     result = asyncio.run(voice.run("Archive reading", [block("archive_task", {"task": "reading"})],
                                    tier="genin"))
-    assert "clearance" in result.text and state(db, task) == (None, "pending")
+    assert "permission" in result.text and state(db, task) == (None, "pending")
     result = asyncio.run(voice.run("Archive reading", [
         block("archive_task", {"task": "reading"}), block("task_add", {"task": 45})]))
     assert "Nothing was changed" in result.text and state(db, task) == (None, "pending")
@@ -552,7 +552,7 @@ def test_app_approval_binds_exact_delivery_and_conversation(app_chat, monkeypatc
         assert second_client.post("/chat", json=reply).json()["response"] == answer
         assert changes == [1]
     else:
-        assert "no matching confirmation" in answer and not changes
+        assert "nothing waiting" in answer and not changes
 
 
 def test_legacy_chat_keeps_conversation_but_refuses_unidentifiable_mutation(app_chat, db):

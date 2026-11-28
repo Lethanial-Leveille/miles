@@ -121,7 +121,7 @@ def _month_day(match, today):
     if today in occurrences:
         return today
     if any(0 < (today - value).days <= 14 for value in occurrences):
-        return SchedulingResult("clarify", "That month and day recently passed. Give the complete request with the intended date.")
+        return SchedulingResult("clarify", "That date has just passed. Say the full date if you mean next year.")
     return next((value for value in occurrences if value > today), None)
 
 
@@ -137,7 +137,7 @@ def _resolve_first_day(phrase, today):
         qualifier = weekday[1]
         if (advance == 0 and qualifier != "next"
                 or qualifier == "next" and 0 < advance < 7 - today.weekday()):
-            return SchedulingResult("clarify", "That weekday is ambiguous. Give the full request with the exact first day.")
+            return SchedulingResult("clarify", "I can't tell which day you mean. Say the date, like 'starting November 30'.")
         return today + timedelta(days=advance or 7)
     if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", phrase):
         try:
@@ -152,10 +152,10 @@ def resolve_task_schedule(utterance, *, title, today, recurrence=None, starts=No
     """Return a supported plan or an explicit no-write result from one utterance."""
     original = " ".join((utterance or "").split()).strip(" ,.;!?")
     if _EDIT.match(original):
-        return SchedulingResult("reject", "Changing an existing start day or recurrence is unsupported.")
+        return SchedulingResult("reject", "I can't change when an existing task repeats or starts by voice.")
     command = _ADD.match(original)
     if not command or not title or not title.strip():
-        return SchedulingResult("clarify", "Restate the full task request, including any timing.")
+        return SchedulingResult("clarify", "I didn't catch the task. Say it again, like 'add call the bank'.")
 
     # Mask quoted names and recognized media titles before examining clauses.
     body = original[command.end():]
@@ -164,22 +164,22 @@ def resolve_task_schedule(utterance, *, title, today, recurrence=None, starts=No
         body = body[intro.end():]
     quoted = _QUOTE.sub(lambda m: " " * len(m[0]), body)
     if any(mark in quoted for mark in ('"', "“", "”")):
-        return SchedulingResult("clarify", "Restate the complete task and its timing.")
+        return SchedulingResult("clarify", "I couldn't read the quote marks. Say the task again without them.")
     masked = _MEDIA.sub(
         lambda m: m[0][:-len(m[1])] + " " * len(m[1]), quoted)
     if _DEADLINE.search(masked):
-        return SchedulingResult("reject", "Voice task creation does not currently support deadlines.")
+        return SchedulingResult("reject", "I can't set a due date by voice.")
     markers = list(_START.finditer(masked))
     before_start = masked[:markers[0].start()] if markers else masked
     if (_OTHER_REPEAT.search(masked) or _WEEKDAY_LIST.search(before_start)
             or recurrence not in (None, "daily")):
-        return SchedulingResult("reject", "Only daily repetition is supported.")
+        return SchedulingResult("reject", "I can only repeat a task every day.")
     if _CLOCK_TIME.search(masked):
-        return SchedulingResult("reject", "A start clock time is unsupported. Give only a first day.")
+        return SchedulingResult("reject", "I can't set a time of day for a task. I can start it on a day you name.")
 
     daily = list(_DAILY.finditer(masked))
     if len(daily) + bool(intro) > 1 or len(markers) > 1:
-        return SchedulingResult("clarify", "Restate the complete request with one recurrence and first day.")
+        return SchedulingResult("clarify", "I heard more than one repeat or start day. Say it once, like 'every day, starting Monday'.")
     recurrence_span = daily[0] if daily else None
     first_span = markers[0] if markers else None
     is_daily = bool(intro or recurrence_span)
@@ -187,12 +187,12 @@ def resolve_task_schedule(utterance, *, title, today, recurrence=None, starts=No
     first = None
     if first_span:
         if not is_daily:
-            return SchedulingResult("reject", "A voice start date needs daily recurrence.")
+            return SchedulingResult("reject", "A start day only works for a daily task. Say 'every day' too.")
         first_end = (recurrence_span.start()
                      if recurrence_span and recurrence_span.start() > first_span.start() else len(body))
         phrase = _normalize(body[first_span.end():first_end]).removesuffix(" please")
         if re.search(r"\b(?:or|and|after|before)\b", phrase):
-            return SchedulingResult("clarify", "Give the complete request with one exact first day.")
+            return SchedulingResult("clarify", "I need one exact start day, like 'starting Monday'.")
         try:
             first = _resolve_first_day(phrase, today)
         except OverflowError:
@@ -200,24 +200,24 @@ def resolve_task_schedule(utterance, *, title, today, recurrence=None, starts=No
         if isinstance(first, SchedulingResult):
             return first
         if first is None or not 0 <= (first - today).days <= 365:
-            return SchedulingResult("reject", "Use a real first day from today through the next 365 days.")
+            return SchedulingResult("reject", "Pick a start day from today up to a year from now.")
         supplied = _normalize(starts or "")
         full_clause = _normalize(body[first_span.start():first_end]).removesuffix(" please")
         if supplied not in {phrase, full_clause} and (supplied or phrase != "today"):
-            return SchedulingResult("clarify", "Restate the full request with the first day you mean.")
+            return SchedulingResult("clarify", "Which day should it start? Say it like 'starting Monday'.")
     elif starts or recurrence and not is_daily:
-        return SchedulingResult("clarify", "Restate the full scheduling request so I can verify it.")
+        return SchedulingResult("clarify", "I didn't catch the timing. Say 'every day', or leave it out to add it for today.")
     # Unknown tokens between scheduling clauses cannot be dropped into a default.
     if recurrence_span:
         end = (first_span.start() if first_span and first_span.start() > recurrence_span.start() else len(body))
         if _normalize(body[recurrence_span.end():end]) not in ("", "please"):
-            return SchedulingResult("clarify", "Restate the full request and its timing.")
+            return SchedulingResult("clarify", "I heard extra words after the timing. Say the task, then 'every day', then the start day.")
     if _TIMING_HINT.search(masked[:title_end]):
-        return SchedulingResult("clarify", "Restate the request with the date's intended role.")
+        return SchedulingResult("clarify", "I can't set that timing by voice.")
     original_title = _normalize(body[:title_end]).removesuffix(" please")
     if original_title.startswith(('"', "“")) and original_title.endswith(('"', "”")):
         original_title = _normalize(original_title[1:-1])
     if not same_title(original_title, title):
-        return SchedulingResult("clarify", "I could not tell what the task is called. Say just the task, and then the timing if you have any.")
+        return SchedulingResult("clarify", "I'm not sure of the task name. Say just the task, then any timing.")
     return SchedulingResult("supported", recurrence="daily" if is_daily else None,
                             start_date=first.isoformat() if first and first != today else None)

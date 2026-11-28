@@ -324,18 +324,17 @@ def _task_add(intent, utterance, today):
     text = re.sub(r"^(?:can|could|would|will) you (?:please )?", "", text, flags=re.I)
     match = re.fullmatch(_ADD_REQUEST.pattern, text, re.I)
     if not match or _OTHER_ADD.match(text.casefold()):
-        return _refuse("Say it like 'add call the bank to my tasks'.")
+        return _refuse("I didn't catch that as a task to add. Say it like 'add call the bank'.")
     title = intent.target
     if not title:
-        return _refuse("What should the task be?")
+        return _refuse("What should the task be called?")
     if intent.timing and _words(intent.timing) not in _words(utterance):
-        return _refuse("I could not match the timing to what you said. Please say the task again.")
+        return _refuse("I didn't hear that timing. Please say it again.")
     stray = _uncaptured_timing(intent, utterance)
     if stray:
         return Verdict("refuse",
-                       f"Nothing was changed. I heard timing I can't schedule by voice: '{stray}'. "
-                       f"What timing do you want? Say it again with 'every day', or say 'add' and just "
-                       f"the task to have it for today with no timing.")
+                       f"Nothing was changed. I can't set '{stray}' by voice. When do you want that? "
+                       f"I can add it for today, or as a daily task starting today or on a day you name.")
     intro = "a daily task to " if match[1] else ""
     # "to my tasks" says where, not what, so it is not part of the title or timing.
     rest = re.sub(r" (?:to|on) (?:my|the) (?:tasks|to do list)$", "", match[2], flags=re.I)
@@ -347,18 +346,17 @@ def _task_add(intent, utterance, today):
     plan = task_scheduling.resolve_task_schedule(f"add {intro}{rest}", title=title, today=today,
                                                  starts=starts)
     if plan.outcome != "supported":
-        said = intent.timing or "that timing"
         return Verdict("refuse",
-                       f"Nothing was changed. I can't schedule '{said}' by voice. {plan.reason} "
-                       f"Do you want it added for today with no timing? If so, say 'add {title}' on its own.")
+                       f"Nothing was changed. {plan.reason} When do you want that? I can add it for today, "
+                       f"or as a daily task starting today or on a day you name.")
     # The long standing title check: the title is exactly the words after the
     # command, with no timing word left in it, quotes and media titles aside.
     from voice_action_safety import _intent_matches
     if not _intent_matches("task_add", {"task": title, "recurrence": plan.recurrence},
                            _without_start(utterance)):
         return Verdict("refuse",
-                       f"Nothing was changed. I can't tell whether '{title}' includes a time or a date. "
-                       f"Do you want it added for today with no timing? If so, say 'add' and just the task.")
+                       f"Nothing was changed. I'm not sure '{title}' is the whole task. Say just the task, "
+                       f"like 'add {title}'. Add 'every day' if it repeats.")
 
     def args_ok(args):
         # By meaning, so "Water the cactus" is the call for "add water to the cactus".
@@ -723,7 +721,7 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     if _asks_a_question(utterance):
         return Verdict("none", question=True)
     if intent is None:
-        return _refuse("I could not tell what you wanted to change. Please say it again.")
+        return _refuse("I didn't catch what you wanted to change. Please say it again.")
     # Before the one change check: "show my list and check whether milk is on
     # it" holds two verbs but asks for no change, and the model said so.
     if intent.action == "no_change":
@@ -731,12 +729,12 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     if intent.more or _COMPOUND.search(utterance):
         return _refuse("Please ask for one change at a time.")
     if intent.action not in ACTION_TOOL:
-        return _refuse("I could not tell what you wanted to change. Please say it again.")
+        return _refuse("I didn't catch what you wanted to change. Please say it again.")
     # The permission floor comes before any lookup, so a speaker below the
     # tool's tier learns nothing about which tasks exist or what they are called.
     floor = ACTION_TOOL[intent.action]
     if floor in registry and not permits(registry.get(floor), tier):
-        return _refuse("That needs more clearance than you have.")
+        return _refuse("You don't have permission for that.")
     today = today or date.fromisoformat(database.task_day(datetime.now()))
     heard = _words(utterance)
     # An answer to a pending skip or stop question names no task, so the model
@@ -748,7 +746,7 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     # command in _task_add, because the model may tidy it ("Water the cactus").
     if (intent.action not in ("timer", "reminder", "task_add") and intent.target and not answering
             and _words(intent.target) not in heard):
-        return _refuse("I could not match that to what you said. Please say it again.")
+        return _refuse("I'm not sure which one you mean. Please say it again.")
 
     if intent.action == "timer":
         seconds = spoken_seconds(intent.timing)
@@ -759,7 +757,7 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
         if not intent.target or _words(intent.target) not in heard:
             return _refuse("What should I remind you about?")
         if intent.timing and _words(intent.timing) not in heard:
-            return _refuse("I could not match the time to what you said. Please say it again.")
+            return _refuse("I didn't hear that time. Please say it again.")
         return Verdict("act", gate=IntentGate("set_reminder", "reminder", _reminder_args(intent, utterance)))
     if intent.action in ("list_add", "list_check"):
         if not intent.target:

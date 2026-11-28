@@ -344,7 +344,7 @@ def resolve(approved, now=None):
         with _lock:
             proposal = context.conversation.proposal
             if not _matches(context, proposal, approved, now):
-                return "Nothing was changed. There is no matching confirmation to apply."
+                return "Nothing was changed. There is nothing waiting for you to confirm."
             context.conversation.proposal = None
         if not approved:
             return "Cancelled. Nothing was changed."

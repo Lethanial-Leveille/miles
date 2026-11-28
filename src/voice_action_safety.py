@@ -12,10 +12,10 @@ from tools import Permission, ToolError, permits
 GUARDED = {"task_add", "task_complete", "archive_task", "task_skip_today", "list_add", "list_check"}
 CONFIRM = "confirm_pending_action"
 PARALLEL_READS = {"get_weather", "tasks_today", "list_show"}
-REFUSED = "Nothing was changed. I could not validate that request."
+REFUSED = "Nothing was changed. I couldn't make sense of that request. Please say it again."
 ONE_CHANGE = "Nothing was changed. Please ask for one change at a time."
 NOT_ASKED = "Nothing was changed. That is not the change you asked for."
-NO_ACTION = "Nothing was changed. I could not carry out that request."
+NO_ACTION = "Nothing was changed. I couldn't do that. Please try again."
 _NO_TIME = re.compile(
     r"\b(?:start\w*|begin\w*|deadline|due|by|until|through|before|after|"
     r"tomorrow|todays?|tonight|yesterday|"
@@ -203,7 +203,7 @@ class TurnSafety:
             if repeated_id:
                 refusals[index] = REFUSED
             elif not permits(spec, tier):
-                refusals[index] = "Nothing was changed by that action. It requires more clearance."
+                refusals[index] = "Nothing was changed. You don't have permission for that."
             elif not _valid_args(spec, block.input):
                 refusals[index] = REFUSED
             elif (self.gate is not None and spec.permission in (Permission.WRITE, Permission.EXTERNAL_WRITE)
@@ -247,7 +247,7 @@ class TurnSafety:
                   and not _intent_matches(block.name, block.input, self.utterance)):
                 common = REFUSED
             elif block.name == CONFIRM and not can_confirm(block.input["approved"]):
-                common = "Nothing was changed. There is no matching confirmation to apply."
+                common = "Nothing was changed. There is nothing waiting for you to confirm."
         if mutations:
             self.used = True
         if self.cancelled.is_set():

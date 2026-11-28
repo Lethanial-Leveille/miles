@@ -308,7 +308,7 @@ def test_a_lower_tier_learns_nothing_about_tasks_or_their_titles(db):
         for action in ("task_archive", "task_complete", "task_skip_today"):
             verdict = task_intent.validate(Intent(action, "reading"), "stop reading done", WEDNESDAY, tier=tier)
             assert verdict.kind == "refuse" and "chapter" not in verdict.text
-            assert "clearance" in verdict.text and verdict.choice is None
+            assert "permission" in verdict.text and verdict.choice is None
     missing = task_intent.validate(Intent("task_archive", "zebra"), "stop zebra", WEDNESDAY, tier="genin")
     assert missing.text == task_intent.validate(
         Intent("task_archive", "reading"), "stop reading", WEDNESDAY, tier="genin").text
@@ -503,7 +503,7 @@ def test_a_declared_change_that_ran_nothing_says_so_with_the_reason(turn, db):
     task = db.add_task("reading", "daily")
     result = asyncio.run(turn.run("cancel reading today", [], draft="Done, skipped.",
                                   intent=Intent("task_skip_today", "reading")))
-    assert result.text.startswith("Nothing was changed.") and "could not carry out" in result.text
+    assert result.text.startswith("Nothing was changed.") and "couldn't do that" in result.text
     assert not db.task_skipped_on(task, db.task_day())
 
 
@@ -562,7 +562,7 @@ def test_add_water_plants_in_four_days_writes_nothing_and_asks(turn, db, intent)
     result = asyncio.run(turn.run("add water plants in four days",
                                   [block("task_add", {"task": intent.target})], intent=intent))
     assert not db.active_tasks_matching("water plants")
-    assert "Nothing was changed" in result.text and "What timing" in result.text and "four days" in result.text
+    assert "Nothing was changed" in result.text and "When do you want that?" in result.text and "four days" in result.text
 
 
 @pytest.mark.parametrize("said", [
@@ -572,7 +572,7 @@ def test_add_water_plants_in_four_days_writes_nothing_and_asks(turn, db, intent)
 def test_other_uncaptured_timing_writes_nothing_and_asks(turn, db, said):
     result = asyncio.run(turn.run(said, [block("task_add", {"task": "x"})],
                                   intent=Intent("task_add", said.removeprefix("add "))))
-    assert "Nothing was changed" in result.text and "What timing" in result.text
+    assert "Nothing was changed" in result.text and "When do you want that?" in result.text
     assert not db.active_tasks_matching("x")
 
 
