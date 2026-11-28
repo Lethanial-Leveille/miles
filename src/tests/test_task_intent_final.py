@@ -77,3 +77,22 @@ def test_a_punctuated_item_is_found_by_its_own_words(db):
     verdict = task_intent.validate(Intent("list_check", "half-and-half"), "check off half-and-half", WEDNESDAY)
     assert verdict.kind == "act"
     assert verdict.gate.permits("list_check", {"item": "half-and-half"})
+
+
+# ── V3: ordinary reports are accepted ──
+
+@pytest.mark.parametrize("said", ["I finally finished reading", "I've really finished reading",
+                                  "I just finished reading", "I finished reading", "mark reading done",
+                                  "reading is done", "I finished reading finally"])
+def test_an_ordinary_completion_report_is_accepted(db, said):
+    db.add_task("Reading", "daily")
+    verdict = task_intent.validate(Intent("task_complete", "reading"), said, WEDNESDAY)
+    assert verdict.kind == "act", verdict.text
+
+
+@pytest.mark.parametrize("said", ["I almost finished reading", "I didn't finish reading", "did I finish reading",
+                                  "I will finish reading"])
+def test_a_report_that_is_not_a_completion_is_still_refused(db, said):
+    db.add_task("Reading", "daily")
+    assert task_intent.validate(Intent("task_complete", "reading"), said, WEDNESDAY).kind != "act"
+

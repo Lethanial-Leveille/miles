@@ -589,14 +589,15 @@ _OPENER = r"(?:please )?(?:(?:can|could|would|will) you (?:please )?)?"
 _ARTICLE = r"(?: (?:the|my|that|this))?"
 _COMPLETE_BEFORE = re.compile(
     rf"{_OPENER}(?:(?:mark|complete|finish|check|cross|tick)(?: off)?|"
-    r"(?:i|i've|ive|i have)(?: (?:just|already|now))? "
+    r"(?:i|i've|ive|i have)(?: (?:just|already|now|finally|really|actually|totally|completely|also|then))* "
     r"(?:finished|completed|did|took|called|paid|got|bought|wrapped up|handled|sent|submitted|checked off|"
     r"crossed off|ticked off)|"
     r"(?:i'm|im|i am) (?:now )?done with|(?:i )?just (?:finished|completed|did))"
     rf"{_ARTICLE}")
 _COMPLETE_AFTER_WORDS = {"today", "tonight", "now", "already", "just", "this", "morning", "afternoon",
                          "evening", "for", "please", "too", "off", "as", "done", "complete", "completed",
-                         "finished", "is", "are", "task", "routine", "habit", "it"}
+                         "finished", "is", "are", "task", "routine", "habit", "it", "finally", "really"}
+
 _REMOVE_BEFORE = re.compile(
     rf"{_OPENER}(?:cancel|stop(?: tracking| doing)?|archive|delete|remove|skip|drop|scrap|quit|"
     r"forget(?: about)?|get rid of|i (?:no longer|don't|dont|do not) (?:need|want)(?: to)?(?: do)?)"
