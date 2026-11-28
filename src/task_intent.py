@@ -175,6 +175,7 @@ class Verdict:
     text: str = ""
     gate: "IntentGate | None" = None
     choice: tuple | None = None   # (task id, title) when the question waits for an answer
+    question: bool = False        # a "none" verdict for a question, not for a model's no_change
 
 
 @dataclass
@@ -191,6 +192,9 @@ class IntentGate:
     # the covered set (calendar, remember and the rest), each under its own
     # confirm first flow and guards. The covered tools stay hidden.
     others: bool = False
+    # A question about his own things never needs to store a new fact, so on a
+    # question turn `remember` stays hidden even though the other tools are offered.
+    question: bool = False
 
     @property
     def authoritative(self):
@@ -202,7 +206,8 @@ class IntentGate:
 
     def offers(self, name):
         return (name == self.tool or (self.confirm and name == "confirm_pending_action")
-                or (self.others and name not in COVERED_TOOLS and name != "confirm_pending_action"))
+                or (self.others and name not in COVERED_TOOLS and name != "confirm_pending_action"
+                    and not (self.question and name == "remember")))
 
     def permits(self, name, args):
         if not self.offers(name):
@@ -215,10 +220,11 @@ def closed_gate(confirm=False):
     return IntentGate(confirm=confirm)
 
 
-def no_change_gate():
+def no_change_gate(question=False):
     """The gate for a flagged turn the model called no_change: the covered
-    tools stay hidden, every other tool is offered as it was before this step."""
-    return IntentGate(others=True)
+    tools stay hidden, every other tool is offered as it was before this step,
+    except `remember` when the turn is a question."""
+    return IntentGate(others=True, question=question)
 
 
 def _refuse(text):
@@ -649,7 +655,7 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     # A question or a read is never a request to change something, whatever the
     # model recorded, so it is never answered with "Nothing was changed".
     if _asks_a_question(utterance):
-        return Verdict("none")
+        return Verdict("none", question=True)
     if intent is None:
         return _refuse("I could not tell what you wanted to change. Please say it again.")
     # Before the one change check: "show my list and check whether milk is on

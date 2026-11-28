@@ -27,3 +27,25 @@ def test_two_real_changes_are_still_refused_when_the_model_names_a_change():
     verdict = task_intent.validate(Intent("list_add", "eggs"), "add eggs to my grocery list and check off milk",
                                    WEDNESDAY)
     assert verdict.kind == "refuse" and "one change at a time" in verdict.text
+
+
+# ── F1: a question never offers remember ──
+
+def test_a_question_turn_does_not_offer_remember(turn, db):
+    asyncio.run(turn.run("What do you remember about my commute?",
+                         [], draft="You bike twenty minutes.", intent=Intent("no_change")))
+    names = {schema["name"] for schema in turn.offered[0]}
+    assert "remember" not in names and "tasks_today" in names
+
+
+def test_a_remember_request_that_is_not_a_question_still_offers_remember(turn, db):
+    asyncio.run(turn.run("remember that my cat is named Sam", [], draft="Okay.", intent=Intent("no_change")))
+    assert "remember" in {schema["name"] for schema in turn.offered[0]}
+
+
+def test_a_remember_call_on_a_question_turn_is_refused(turn, db, monkeypatch):
+    ran = []
+    monkeypatch.setattr(brain.registry, "call", lambda name, args: ran.append(name) or "ok")
+    result = asyncio.run(turn.run("What do you remember about my commute?",
+                                  [block("remember", {"content": "Commute is long"})], intent=Intent("no_change")))
+    assert ran == [] and "Nothing was changed" in result.text
