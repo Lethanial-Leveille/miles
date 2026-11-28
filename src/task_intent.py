@@ -16,7 +16,7 @@ import inspect
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import database
 import task_scheduling
@@ -409,7 +409,7 @@ def _timer_args(seconds):
 
 
 _CLOCK = re.compile(
-    r"^(?:(?:tomorrow|today|tonight)\s+)?(?:(?:at|by)\s+)?([a-z0-9-]+)(?::(\d{2}))?\s*(?:([ap])\.?m\.?)?$")
+    r"^(?:(tomorrow|today|tonight)\s+)?(?:(?:at|by)\s+)?([a-z0-9-]+)(?::(\d{2}))?\s*(?:([ap])\.?m\.?)?$")
 
 
 def _due_matches(due, timing, now):
@@ -423,10 +423,17 @@ def _due_matches(due, timing, now):
     if seconds is not None:
         return abs((when - now).total_seconds() - seconds) <= 120
     clock = _CLOCK.match(" ".join(timing.lower().split()).replace("o'clock", "").strip())
-    hour = _number(clock[1]) if clock else None
+    hour = _number(clock[2]) if clock else None
     if hour is None or hour > 24:
         return False
-    minute, meridiem = int(clock[2] or 0), clock[3]
+    # The day he said counts too. "tomorrow at 5 pm" is tomorrow's date, never a
+    # later one at the same hour, and a clock time with no day is today or tomorrow.
+    today = now.date()
+    allowed = {today + timedelta(days=1)} if clock[1] == "tomorrow" else (
+        {today} if clock[1] else {today, today + timedelta(days=1)})
+    if when.date() not in allowed:
+        return False
+    minute, meridiem = int(clock[3] or 0), clock[4]
     if meridiem:
         hour = hour % 12 + (12 if meridiem == "p" else 0)
         return (when.hour, when.minute) == (hour, minute)
@@ -434,12 +441,14 @@ def _due_matches(due, timing, now):
 
 
 def _reminder_args(intent, utterance):
-    spoken = _words(utterance)
+    """The content is exactly the words the intent named, not any piece of the
+    request, and the due time is the one the timing words say."""
+    wanted = _words(re.sub(r"^to\s+", "", _words(intent.target)))
     timing = intent.timing
 
     def check(args):
         content = _words(re.sub(r"^to\s+", "", _words(str(args.get("content", "")))))
-        if not content or content not in spoken:
+        if not content or content != wanted:
             return False
         due = args.get("due")
         if due is None:

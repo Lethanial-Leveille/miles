@@ -2,13 +2,7 @@
 
 Open findings that are not Blockers. Each was reviewed and deliberately left. Remove an entry when it is fixed.
 
-- **Should fix** `src/task_intent.py:314` List intents discard the validated item and never bind the destination list. (found by the review loop at 13424b1)
-
-- **Should fix** `src/task_intent.py:310` Timer and reminder gates discard the requested timing and content. (found by the review loop at 13424b1)
-
 - **Should fix** `src/task_intent.py:240` Permanent-stop keywords take priority even when explicitly negated. (found by the review loop at 13424b1)
-
-- **Should fix** `src/task_scheduling.py:34` Unsupported relative dates can still pass both validators as part of an untimed task title. (found by the review loop at 13424b1)
 
 - **Should fix** `src/task_intent.py:266` The voice path refuses supported daily first days and the changed tests encode that narrower behavior. (found by the review loop at 13424b1)
 

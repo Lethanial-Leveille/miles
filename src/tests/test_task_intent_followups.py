@@ -592,3 +592,53 @@ def test_a_quoted_title_may_hold_a_time_word(turn, db):
     asyncio.run(turn.run('add "call at 5 pm club"', [block("task_add", {"task": "call at 5 pm club"})],
                          intent=Intent("task_add", "call at 5 pm club")))
     assert db.active_tasks_matching("call at 5 pm club")
+
+
+# ── F11: the reminder content and its date are bound exactly ──
+
+def test_a_reminder_content_must_equal_the_named_words_not_a_piece_of_them(turn, monkeypatch):
+    ran = _ran(monkeypatch)
+    five = datetime.now().replace(hour=17, minute=0, second=0, microsecond=0)
+    if five < datetime.now():
+        five += timedelta(days=1)
+    said = "remind me to call the bank at 5 pm"
+    for content in ("the bank", "call", "call the bank and the dentist"):
+        asyncio.run(turn.run(said, [block("set_reminder", {"content": content, "due": five.isoformat()})]))
+    assert ran == []
+    asyncio.run(turn.run(said, [block("set_reminder", {"content": "to call the bank", "due": five.isoformat()})]))
+    assert len(ran) == 1
+
+
+def test_tomorrow_at_five_is_tomorrows_date_never_a_later_one(turn, monkeypatch):
+    ran = _ran(monkeypatch)
+    base = datetime.now().replace(hour=17, minute=0, second=0, microsecond=0)
+    said = "remind me to call the bank tomorrow at 5 pm"
+    for due in (base + timedelta(days=21), base, base + timedelta(days=2)):
+        asyncio.run(turn.run(said, [block("set_reminder", {"content": "call the bank", "due": due.isoformat()})]))
+    assert ran == []
+    asyncio.run(turn.run(said, [block("set_reminder",
+                                      {"content": "call the bank", "due": (base + timedelta(days=1)).isoformat()})]))
+    assert len(ran) == 1
+
+
+def test_a_reminder_without_a_time_cannot_carry_one(turn, monkeypatch):
+    ran = _ran(monkeypatch)
+    soon = (datetime.now() + timedelta(hours=1)).isoformat()
+    asyncio.run(turn.run("remind me to call the bank", [block("set_reminder", {"content": "call the bank", "due": soon})]))
+    assert ran == []
+    asyncio.run(turn.run("remind me to call the bank", [block("set_reminder", {"content": "call the bank"})]))
+    assert len(ran) == 1
+
+
+# ── The phrases that must keep working through the intent step ──
+
+def test_the_everyday_phrases_still_work(turn, db, monkeypatch):
+    ran = _ran(monkeypatch, "ok")
+    asyncio.run(turn.run("set a timer for 10 minutes", [block("set_timer", {"amount": 10, "unit": "minutes"})]))
+    asyncio.run(turn.run("add eggs to my grocery list",
+                         [block("list_add", {"item": "eggs", "list_name": "grocery"})]))
+    asyncio.run(turn.run("add reading", [block("task_add", {"task": "reading"})]))
+    assert [name for name, _ in ran] == ["set_timer", "list_add", "task_add"]
+    task = db.add_task("walking", "daily")
+    asyncio.run(turn.run("cancel walking today", [block("task_skip_today", {"task": "walking"})]))
+    assert ("task_skip_today", {"task": "walking"}) in [(n, a) for n, a in ran]

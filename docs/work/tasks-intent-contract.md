@@ -46,3 +46,11 @@ Evallo, calendar writes, texting, existing tables, and production. Migration 048
 4. **Skip today** has no storage in `TASKS_CONTRACT.md` (a daily task is only done or not). Migration 048 adds `task_skips`, which amends that contract's overview and complete rules.
 5. **One change per request** stays as the voice safety amendment set it. “Skip today” counts as that one change.
 6. **Resolver offline.** The scheduling resolver is wired in only as the timing validator, not as a writer.
+
+## Amendments after the review loop (owner approved)
+
+1. **Exact binding.** The validated intent carries the exact task id, task day and list item row, and the gate requires an exact match on the list, item, timer length and reminder content and date. The writer acts on the validated id and day and never reads the clock or resolves the words again. Completion, skip and stop verbs must be the intent's action said about the task, not a word found anywhere in the sentence.
+2. **No "other change" action.** Calendar writes, remember and every other mutating tool outside task, list, timer and reminder keep their confirm first flow and are offered on a flagged turn the model calls no_change. They are not an action the intent step can authorize. An unflagged turn offers none of them (see KNOWN_LIMITS for remember).
+3. **no_change.** The model picks no_change for questions, reads and chat; the ordinary reply is used. A declared change that ran nothing says "Nothing was changed." with the reason. A read question never gets that line.
+4. **Uncaptured timing.** Timing words the intent did not capture (in four days, in half a dozen days, at dawn) write nothing and ask what timing he wants.
+
