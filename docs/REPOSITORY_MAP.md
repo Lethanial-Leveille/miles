@@ -1,5 +1,7 @@
 # Repository navigation
 
+For a one page map across the backend, the Mac agent and Nova, with each feature's code, tests, contract and handoff, start at [REPO_MAP.md](REPO_MAP.md).
+
 Start at [AGENTS.md](../AGENTS.md). Use the [development commands](DEVELOPMENT.md) for ordinary coding and [Infrastructure](INFRASTRUCTURE.md) for production operator context. Open only the rows relevant to the task. See [config.py](../src/config.py) for current defaults and follow the subsystem entry point for settings owned outside that file.
 
 | Area | Contract or design | Entry points | Tests and dependencies |

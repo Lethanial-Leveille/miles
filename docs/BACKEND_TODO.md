@@ -2,7 +2,7 @@
 
 ## Approved roadmap
 
-Use the [roadmap and its amendments](ROADMAP.md#amendments-agreed-nov-24-and-25-2026) for active phase order, approvals and dependencies. This document records deferred engineering work and investigation evidence.
+Use the [roadmap and its amendments](ROADMAP.md#order) for active phase order, approvals and dependencies. This document records deferred engineering work and investigation evidence.
 
 ## Archive
 

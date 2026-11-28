@@ -47,7 +47,7 @@ when it had only been installed on the MacBook. Now real on the Pi: tailscale
 `192.0.2.10` on the tailnet.
 
 Full reasoning is in the decision log in
-[engineering decision log](ENGINEERING_HISTORY.md#decision-log). Kept here only as a pointer, because the
+[engineering decision log](../ENGINEERING_HISTORY.md#decision-log). Kept here only as a pointer, because the
 same item was listed as deferred and a future session searching this file for
 Tailscale should not find a stale "not done".
 
@@ -56,12 +56,12 @@ Tailscale should not find a stale "not done".
 ### Deepgram as the online path (BUILT Sep 25 2026)
 
 Live in `src/deepgram_stt.py`; the mechanism is in
-[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#deepgram-nova-3-measured-sep-25-2026) and
+[AUDIO_PIPELINE.md](../AUDIO_PIPELINE.md#deepgram-nova-3-measured-sep-25-2026) and
 the privacy decision is in the decision log. What stays here is the reasoning.
 
 Measured Sep 25 2026 and it wins on accuracy, on latency and on staying quiet in
 an empty room. The numbers are in
-[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#deepgram-nova-3-measured-sep-25-2026).
+[AUDIO_PIPELINE.md](../AUDIO_PIPELINE.md#deepgram-nova-3-measured-sep-25-2026).
 Cost is not a factor: $200 of credit, then $0.0043/min prerecorded, against a
 median clip of 2.9 seconds and a few minutes of audio a day.
 
@@ -98,7 +98,7 @@ and say so explicitly here.
 
 Shipped in `src/wake_gate.py`; the live mechanism and its three safety
 properties are in
-[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#level-separates-where-the-score-does-not-and-far-field-set-the-line).
+[AUDIO_PIPELINE.md](../AUDIO_PIPELINE.md#level-separates-where-the-score-does-not-and-far-field-set-the-line).
 What stays here is why the floor is where it is, and what the hardware change
 does to it.
 
@@ -106,7 +106,7 @@ does to it.
 Reject a wake whose 2.5 second window never peaks above a floor, before the
 chime, before recording, before Whisper, before Claude. The full measurement,
 including why peak beats RMS and why the line is not -40, is in
-[AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#level-separates-where-the-score-does-not-and-far-field-set-the-line).
+[AUDIO_PIPELINE.md](../AUDIO_PIPELINE.md#level-separates-where-the-score-does-not-and-far-field-set-the-line).
 
 The trade, on 38 real wakes and 22 false, Sep 25 2026:
 
@@ -132,7 +132,7 @@ Three things to hold onto before building it:
   false wakes are quiet and the array addresses their cause; the other 9 arrive
   loud and in the room, and nothing acoustic separates those. Do not let this
   gate stand in for the work in
-  [INCIDENTS.md](INCIDENTS.md#the-near-misses-are-the-neighbours-sep-13-2026).
+  [INCIDENTS.md](../INCIDENTS.md#the-near-misses-are-the-neighbours-sep-13-2026).
 - **Mic dependent in the number, not the mechanism.** A new capsule and gain
   invalidate -42, and recalibrating is one afternoon of labelled clips rather
   than a retrain. That is what makes it reasonable to build before the hardware

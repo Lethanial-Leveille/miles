@@ -18,6 +18,8 @@ Labels compare this branch with production (`main` at 51676b9), measured by runn
 
 ## Other open items
 
+- **Known limit** Mac repo (`~/PersonalProjects/miles-evallo-mac`) `src/tests/test_evallo_tools.py` fails to collect on that repo's main because it imports a Pi module (`pending_action`, via `src/evallo_tools.py`), so the whole Mac suite stops unless it is run with `--ignore=src/tests/test_evallo_tools.py`. Not caused by any recent change. It goes into the docs cleanup item in [ROADMAP.md](ROADMAP.md#docs-cleanup): decide whether the Mac keeps a copy of `evallo_tools.py` at all, and either remove the copy and its test or make the import work. (found Nov 28 2026)
+
 - **Should fix** `src/task_intent.py` PRE EXISTING. Permanent-stop keywords take priority even when explicitly negated ("don't stop reading for good, just skip it today" is refused as unclear). Production archives the task for good on that sentence, so the branch is safer. (found by the review loop at 13424b1)
 
 - **Should fix** `src/task_intent.py` PRE EXISTING. A first day on a daily task is accepted by voice only when the intent copies the "starting ..." words and the call carries the matching `start_date`. Production's task tool has no first day at all and silently starts the task today. (found by the review loop at 13424b1)

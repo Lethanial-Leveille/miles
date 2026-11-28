@@ -1,13 +1,13 @@
 # Sessions
 
-Built Nov 24 2026 on `feature/sessions`, Phase 1. The shapes the app depends on
+Built Nov 24 2026 on `feature/sessions` (the Sessions and nightly review item). The shapes the app depends on
 (schema, endpoints, stream events, push payload, time rules) are in
 [SESSIONS_CONTRACT.md](SESSIONS_CONTRACT.md) and are changed only there, with
 his approval first. This doc is the design and the reasons.
 
 ## What a session is
 
-A chat with one job, kept apart from Nova's main conversation. Phase 1 has one
+A chat with one job, kept apart from Nova's main conversation. The first version has one
 type, the nightly review: close out today, plan tomorrow. A plain chat thread
 and learn sessions come later as new types, with no change to the engine or
 the schema.
@@ -150,7 +150,7 @@ longer holds a must do slot.
 
 **Untrusted titles.** Calendar titles reach the transcript inside messages code
 posts (the week view, the plan). They are untrusted text from other people's
-calendars; that is accepted for now and goes to the Phase S security audit.
+calendars; that is accepted for now and goes to the full security audit.
 
 **Placement.** `review_plan.place_blocks(busy, day, items, earliest, latest)`
 puts each item in order in the first free gap, fixed starts first, never

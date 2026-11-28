@@ -179,7 +179,7 @@ That project reads Google Drive as its memory, so these are a contract:
 
 Do not rename or move those folders, and do not change the grabber's folder name or title format. Prep depends on both.
 
-Tutoring automation order: Phase 4 (did the session happen?), Phase 5 (Stage E replies) and Phase 6 (Evallo commands from Nova) go ahead as planned. Phase 4 starts only after a Thursday 7 PM reminder run works end to end. Phase 7 (multiple Nova chats) is lower priority, since tutoring chats live in the Claude project.
+Tutoring automation order, with the names used in the [roadmap](docs/ROADMAP.md): Tutoring session follow ups (did the session happen?, built), Tutoring reply handling (Stage E replies) and Evallo commands from Nova go ahead as planned. Multiple Nova chats is lower priority, since tutoring chats live in the Claude project.
 
 ---
 
