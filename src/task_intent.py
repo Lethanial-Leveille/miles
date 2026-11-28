@@ -466,19 +466,29 @@ def _reminder_args(intent, utterance):
 _LIST_PREPOSITIONS = ("to", "on", "from", "off", "in")
 
 
-def _spoken_list(spoken):
+def _spoken_list(spoken, item=""):
     """The list he named, as said ("hardware store" from "to my hardware store
-    list"), or None when he named none. The name is the words between the last
-    preposition before "list" and the word list, so a name of any length is read
-    whole instead of falling back to grocery."""
+    list"), or None when he named none. The name is the words between the
+    preposition after the item and the word list, so a name of any length is read
+    whole and a name with a preposition inside it ("back to school") is not cut
+    at that word. When the item is not found in the words, the last preposition
+    before "list" is used."""
     words = spoken.split()
     if "list" not in words:
         return None
     end = len(words) - 1 - words[::-1].index("list")
     start = end - 1
-    while start >= 0 and words[start] not in _LIST_PREPOSITIONS:
-        start -= 1
-    if start < 0:
+    item_words = item.split()
+    for at in range(len(words) - len(item_words) + 1):
+        if item_words and words[at:at + len(item_words)] == item_words and at + len(item_words) <= end:
+            start = at + len(item_words)
+            while start < end and words[start] not in _LIST_PREPOSITIONS:
+                start += 1
+            break
+    else:
+        while start >= 0 and words[start] not in _LIST_PREPOSITIONS:
+            start -= 1
+    if start < 0 or start >= end:
         return None
     name = words[start + 1:end]
     while name and name[0] in ("my", "the"):
@@ -493,7 +503,7 @@ def _list_args(intent, utterance, action, row_list=None):
     than that row's is refused."""
     from lists_tasks import stored_list_name
     item = _words(re.sub(r"^(?:the|my)\s+", "", _words(intent.target)))
-    named = _spoken_list(_words(utterance))
+    named = _spoken_list(_words(utterance), item)
     expected = stored_list_name(named) if named else ("grocery" if action == "list_add" else row_list)
 
     def check(args):
@@ -513,7 +523,7 @@ def _list_check(intent, utterance):
     """Settle which one unchecked item is meant before anything runs, so the write
     checks that row and never whichever row the words match later."""
     from lists_tasks import stored_list_name
-    named = _spoken_list(_words(utterance))
+    named = _spoken_list(_words(utterance), _words(intent.target))
     list_id = None
     if named:
         wanted = stored_list_name(named)

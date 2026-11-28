@@ -49,3 +49,23 @@ def test_a_remember_call_on_a_question_turn_is_refused(turn, db, monkeypatch):
     result = asyncio.run(turn.run("What do you remember about my commute?",
                                   [block("remember", {"content": "Commute is long"})], intent=Intent("no_change")))
     assert ran == [] and "Nothing was changed" in result.text
+
+
+# ── F10: a list name that holds a preposition is read whole ──
+
+def test_a_list_name_with_a_preposition_inside_it_is_read_whole():
+    verdict = task_intent.validate(Intent("list_add", "tape"), "add tape to my back to school list", WEDNESDAY)
+    assert verdict.kind == "act"
+    assert verdict.gate.permits("list_add", {"item": "tape", "list_name": "back to school"})
+    assert not verdict.gate.permits("list_add", {"item": "tape", "list_name": "school"})
+    assert not verdict.gate.permits("list_add", {"item": "tape", "list_name": "grocery"})
+
+
+@pytest.mark.parametrize("said, item, name", [
+    ("put eggs on the grocery list", "eggs", "grocery"),
+    ("add milk to my hardware store list", "milk", "hardware store"),
+    ("add things to remember to my errands list", "things to remember", "errands"),
+])
+def test_the_list_name_comes_after_the_item(said, item, name):
+    assert task_intent._spoken_list(task_intent._words(said), item) == name
+
