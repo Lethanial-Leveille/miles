@@ -16,6 +16,82 @@ REFUSED = "Nothing was changed. I couldn't make sense of that request. Please sa
 ONE_CHANGE = "Nothing was changed. Please ask for one change at a time."
 NOT_ASKED = "Nothing was changed. That is not the change you asked for."
 NO_ACTION = "Nothing was changed. I couldn't do that. Please try again."
+NOTHING_CHANGED = "Nothing was changed."
+# Replies that open by saying a change was made. On a turn where no mutating
+# tool ran such an opening is false, whatever the model believes. "Done" counts
+# only as a whole sentence or clause, and "Set" only before an article or a
+# pronoun ("Set a timer", not "Set reminders are listed below").
+_CLAIM_WORDS = frozenset({"stopped", "added", "archived", "skipped", "saved", "removed", "marked"})
+_SET_THEN = frozenset({"a", "an", "the", "your", "my", "it", "that", "this", "up"})
+_OPENING_QUOTES = " \t\r\n\"'\u201c\u201d\u2018\u2019"
+_CUE = re.compile(r"\[[^\]]*\]\s*")
+
+
+def claim_state(text, final=False):
+    """"claim", "clear" or "wait" for the start of a reply. "wait" means the
+    first word (or, for "Set", the second) is not complete yet. A word of ten
+    characters or more cannot be a claim word, so the wait is short."""
+    body = text.lstrip(_OPENING_QUOTES)
+    cue = _CUE.match(body)
+    if cue:
+        body = body[cue.end():].lstrip(_OPENING_QUOTES)
+    elif body.startswith("["):
+        return "clear" if final else "wait"
+    first = re.match(r"[A-Za-z]+", body)
+    if not first:
+        return "wait" if not body and not final else "clear"
+    word, rest = first[0].lower(), body[first.end():]
+    if not rest and not final:
+        return "clear" if len(body) >= 10 else "wait"
+    if word in _CLAIM_WORDS:
+        return "claim"
+    if word == "done":
+        return "claim" if not rest or rest[0] in ".," else "clear"
+    if word == "set":
+        following = re.match(r"\s+([A-Za-z]+)", rest)
+        if not following:
+            return "wait" if not rest.strip() and not final else "clear"
+        if following.end() == len(rest) and not final:
+            return "wait"
+        return "claim" if following[1].lower() in _SET_THEN else "clear"
+    return "clear"
+
+
+def opens_with_claim(text):
+    return claim_state(text or "", final=True) == "claim"
+
+
+class ClaimGate:
+    """Holds the start of a reply only until its first word shows whether it is
+    an action claim. An ordinary reply is released the moment that word is
+    complete, so nothing waits for a sentence. A claim is dropped whole, because
+    the turn replaces it. Inactive, it passes everything through."""
+
+    def __init__(self, active=True):
+        self.state = "wait" if active else "clear"
+        self.held = ""
+
+    def push(self, text):
+        if self.state == "clear":
+            return text
+        if self.state == "claim":
+            return ""
+        self.held += text
+        self.state = claim_state(self.held)
+        if self.state == "clear":
+            released, self.held = self.held, ""
+            return released
+        return ""
+
+    def finish(self):
+        """What is still held when the reply ends."""
+        if self.state != "wait":
+            return ""
+        self.state = claim_state(self.held, final=True)
+        released, self.held = (self.held if self.state == "clear" else ""), ""
+        return released
+
+
 _NO_TIME = re.compile(
     r"\b(?:start\w*|begin\w*|deadline|due|by|until|through|before|after|"
     r"tomorrow|todays?|tonight|yesterday|"

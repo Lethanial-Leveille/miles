@@ -31,7 +31,8 @@ import phrasebank
 import resume
 import spoken_archive
 import task_intent
-from voice_action_safety import CONFIRM, NO_ACTION, PARALLEL_READS, TurnSafety
+from voice_action_safety import (CONFIRM, NO_ACTION, NOTHING_CHANGED, PARALLEL_READS, ClaimGate, TurnSafety,
+                                 opens_with_claim)
 
 # Imported for its side effect: registering the tools. Without it the registry
 # is empty, the capability block is blank, and Nova silently has no
@@ -616,6 +617,15 @@ def _block_gap(event, so_far):
     if not so_far or so_far[-1].isspace():
         return ""
     return " "
+
+
+async def _release(piece, on_text, router, speak):
+    """Send a piece of the reply the claim gate let through to the screen and,
+    when the turn speaks as it writes, to the sentence router."""
+    if piece:
+        _emit(on_text, "delta", piece)
+        if speak:
+            await router.feed(piece)
 
 
 def _emit(on_text, kind, text):
@@ -1528,6 +1538,9 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
             if forced:
                 first_kwargs["tool_choice"] = forced
     stream_source = replay if replay is not None else _claude().messages.stream(**first_kwargs)
+    # A reply that opens by claiming a change is held back only until its first
+    # word is complete; see voice_action_safety.ClaimGate.
+    gate = ClaimGate()
     async with stream_source as stream:
         # Iterating raw events rather than stream.text_stream. text_stream
         # yields only text, which is safe, but it also hides block boundaries,
@@ -1553,9 +1566,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
             gap = _block_gap(event, accumulated)
             if gap:
                 accumulated += gap
-                _emit(on_text, "delta", gap)
-                if not hold_speech:
-                    await router.feed(gap)
+                await _release(gate.push(gap), on_text, router, not hold_speech)
             if event.type != "content_block_delta":
                 continue
             if event.delta.type != "text_delta":
@@ -1567,9 +1578,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
                 timing.mark('claude_ttft_ms',
                             (first_token - claude_start) * 1000.0)
             accumulated += text
-            _emit(on_text, "delta", text)
-            if not hold_speech:
-                await router.feed(text)
+            await _release(gate.push(text), on_text, router, not hold_speech)
 
             # The wait between the first token and the first speakable
             # sentence. Nothing reaches TTS until a sentence boundary lands,
@@ -1580,6 +1589,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
                 timing.mark('first_sentence_ms',
                             (time.monotonic() - first_token) * 1000.0)
 
+        await _release(gate.finish(), on_text, router, not hold_speech)
         final_message = await stream.get_final_message()
 
     # A turn that called a tool without saying anything first produces no text
@@ -1748,6 +1758,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
 
                 round_text = ""
                 hold_round = bool(kwargs.get("tools"))
+                gate2 = ClaimGate(active=not safety.used)
                 async with _claude().messages.stream(
                     model=model,
                     max_tokens=1000,
@@ -1762,9 +1773,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
                         gap = _block_gap(event, round_text)
                         if gap:
                             round_text += gap
-                            _emit(on_text, "delta", gap)
-                            if not hold_round:
-                                await router2.feed(gap)
+                            await _release(gate2.push(gap), on_text, router2, not hold_round)
                         if event.type != "content_block_delta":
                             continue
                         if event.delta.type != "text_delta":
@@ -1774,10 +1783,9 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
                             timing.note_second_ttft(
                                 (second_first - second_start) * 1000.0)
                         round_text += event.delta.text
-                        _emit(on_text, "delta", event.delta.text)
-                        if not hold_round:
-                            await router2.feed(event.delta.text)
+                        await _release(gate2.push(event.delta.text), on_text, router2, not hold_round)
 
+                    await _release(gate2.finish(), on_text, router2, not hold_round)
                     followup_message = await stream2.get_final_message()
 
                 more_tools = [b for b in followup_message.content if b.type == "tool_use"]
@@ -1787,7 +1795,14 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
                     await tts_task2
                     raise RuntimeError("Unexpected tool after tool dispatch closed")
                 if not more_tools and not safety.cancelled.is_set():
-                    if hold_round:
+                    if not safety.used and opens_with_claim(round_text):
+                        # Only reads ran, so "Stopped it" is false. The gate kept
+                        # the claim off the speaker; the screen is told to drop it.
+                        round_text = NOTHING_CHANGED
+                        _emit(on_text, "reset", "")
+                        _emit(on_text, "delta", round_text)
+                        await router2.feed(round_text)
+                    elif hold_round:
                         await router2.feed(round_text)
                     final_text = f"{final_text} {round_text}".strip()
                 if not more_tools or safety.cancelled.is_set():
@@ -1885,11 +1900,19 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     else:
         dismissed = False
         ignored   = False
+        claim_replaced = False
         if safety.expects_action and not safety.cancelled.is_set():
             _emit(on_text, "reset", "")
             accumulated = NO_ACTION
             _emit(on_text, "delta", accumulated)
-        if hold_speech and not safety.cancelled.is_set():
+        elif not safety.cancelled.is_set() and opens_with_claim(accumulated):
+            # No tool ran at all, so a reply that opens with "Stopped" or "Added"
+            # is false. The gate kept it off the speaker; the screen drops it.
+            _emit(on_text, "reset", "")
+            accumulated = NOTHING_CHANGED
+            _emit(on_text, "delta", accumulated)
+            claim_replaced = True
+        if (hold_speech or claim_replaced) and not safety.cancelled.is_set():
             await router.feed(accumulated)
         await router.finalize()
         if hold_speech and router.sentences_emitted and first_token is not None:
