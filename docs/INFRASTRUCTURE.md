@@ -26,6 +26,16 @@ piece of scheduled work the system owns.
 - `miles-server.service` runs uvicorn server:app on port 8000 (FastAPI),
   bound to `localhost` rather than to an address
 - `miles-tunnel.service` runs cloudflared tunnel (Cloudflare Tunnel)
+- `miles-sessions.timer` (every 5 minutes, `scripts/sessions_tick.py`) opens, pushes,
+  reminds and settles scheduled sessions such as the nightly review
+- `miles-agent-watchdog.timer` (2 minutes after boot, then every 5 minutes,
+  `scripts/agent_watchdog.py`) pushes when the Mac missed a scheduled job
+- `miles-evallo-canary.timer` (2 AM) checks that the Evallo session script still
+  works, changing nothing; `miles-evallo-logincheck.timer` (8 AM) checks that the
+  saved Evallo login still works, read only. Both run `scripts/evallo_canary.py`
+  and are the Pi's temporary readers of `evallo_state.json` (see the login
+  failsafe item in the [roadmap](ROADMAP.md))
+- `miles-health.timer` and `miles-hevy.timer` run the Oura and Hevy pulls
 
 `--host localhost` rather than `--host 127.0.0.1`, and the difference is not
 cosmetic. asyncio resolves a hostname and binds a socket per result, so

@@ -632,7 +632,7 @@ this is not the one to leave skipped on an ordinary run.
 quiet and the array addresses their cause; 9 arrive loud and nearby because they
 are his own voice not addressed to Nova, and no acoustic measure separates
 those. What a new capsule does to the number is in
-[BACKEND_TODO.md](BACKEND_TODO.md#a-level-gate-on-the-wake-window-built-sep-25-2026-at--42).
+[the BACKEND_TODO archive](archive/BACKEND_TODO_ARCHIVE_2026-11-28.md#a-level-gate-on-the-wake-window-built-sep-25-2026-at--42).
 
 ### The false negative rate is not measured, and cannot be
 
