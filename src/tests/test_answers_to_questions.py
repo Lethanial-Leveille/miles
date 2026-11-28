@@ -155,3 +155,11 @@ def test_ordinary_requests_after_a_question_still_run(turn, db, said, intent, bl
     _ask_which(turn)
     result = asyncio.run(turn.run(said, blocks, intent=intent))
     assert not result.text.startswith("Nothing was changed")
+
+
+def test_a_backslash_in_a_model_written_target_does_not_crash_the_turn():
+    """The target is model text. It must be placed in the rebuilt command as is,
+    never read as a regular expression template."""
+    follow = task_intent.FollowUp("Can you cancel that actually", "Which one?", "stretching")
+    command = task_intent._followup_command(follow, Intent("task_archive", r"stretch\1 \g<0>"))
+    assert command == r"Can you cancel stretch\1 \g<0> actually"

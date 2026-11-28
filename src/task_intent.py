@@ -789,7 +789,9 @@ def _followup_command(followup, intent):
     if intent.action not in ("task_archive", "task_skip_today", "task_complete"):
         return f"{earlier} {answer}"
     if _PRONOUN.search(earlier):
-        command = _PRONOUN.sub(intent.target, earlier, count=1)
+        # A function, not the target text itself: sub() would read a backslash in a
+        # model written target as a template escape and crash the turn.
+        command = _PRONOUN.sub(lambda _found: intent.target, earlier, count=1)
     else:
         command = f"{earlier} {intent.target}"
     scope = [found[0] for found in (_STOP_FOR_GOOD.search(answer), _TODAY.search(answer)) if found]
