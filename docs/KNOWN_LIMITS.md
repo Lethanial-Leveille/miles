@@ -57,3 +57,9 @@ Labels compare this branch with production (`main` at 51676b9), measured by runn
 - **Known limit** `src/task_intent.py` REGRESSION. W4: a `no_change` result skips the "multiple changes" finding, so the gate can offer a non covered write tool on that turn. Those tools keep their own guards and confirm first flows.
 
 - **Known limit** `src/task_intent.py` REGRESSION, tiny. W5: the reminder time check drops the UTC offset before subtracting, so on the one day a year daylight saving ends a reminder can be an hour late.
+
+- **Note** `files/src/brain.py:1074` If the batch holds a correct task_add plus any other mutation, nothing is substituted and preflight refuses the whole batch with ONE_CHANGE. That contradicts the comment that a validated add never depends on the model's choice. (found by the review loop at 3e8ada4)
+
+- **Note** `files/src/task_scheduling.py:69` same_title drops 'to', 'for' and possessives, and the light stemmer merges some distinct words ('planned'/'plane' both become 'plan'), so a model title with a slightly different meaning passes and is what gets stored. (found by the review loop at 3e8ada4)
+
+- **Note** `files/src/brain.py:1274` The new 'App turn:' journal line logs intent.target, intent.timing and up to 200 characters of refusal text for every flagged app turn. Those often hold task titles with people's names, and the target can be nearly the whole message despite the docstring. (found by the review loop at 3e8ada4)
