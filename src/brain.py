@@ -1341,6 +1341,10 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
                                          on_text, held, safety, asked_choice=bool(verdict.choice))
         if verdict.kind == "act":
             safety.gate = verdict.gate
+        else:
+            # The model called it no_change. The covered tools stay hidden and
+            # the calendar, remember and the other tools keep their own flow.
+            safety.gate = task_intent.no_change_gate()
     # Taken here, not inside build_request: consuming the alerts is a side
     # effect, and a speculative turn has to be able to build the same request
     # without one.

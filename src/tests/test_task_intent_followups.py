@@ -25,32 +25,60 @@ def _ran(monkeypatch, output="ok"):
     return ran
 
 
-# ── F1 and F2: an external change is bound to what he named, one at a time ──
+# ── F1 and F2: the intent step has no "other change" action ──
 
-DELETE = Intent("other", "dentist", "", tool="delete_calendar_event")
+def test_an_other_change_action_is_not_part_of_the_schema_or_the_parser():
+    assert "other" not in task_intent.ACTIONS
+    assert "other" not in task_intent.INTENT_TOOL["input_schema"]["properties"]["action"]["enum"]
+    assert "tool" not in task_intent.INTENT_TOOL["input_schema"]["properties"]
+    assert task_intent.parse_intent(_message({"action": "other", "target": "dentist", "timing": "",
+                                              "more_than_one_change": False})) is None
 
 
-def test_a_delete_for_a_different_event_than_he_named_is_refused(turn, monkeypatch):
-    ran = _ran(monkeypatch)
+@pytest.mark.parametrize("name", ["delete_calendar_event", "create_calendar_event", "remember"])
+def test_an_other_action_authorizes_no_tool_through_the_intent_step(name):
+    verdict = task_intent.validate(Intent("other", "dentist"), "delete the dentist appointment on monday",
+                                   WEDNESDAY)
+    assert verdict.kind == "refuse" and verdict.gate is None
+    assert name not in task_intent.COVERED_TOOLS
+
+
+def test_a_calendar_delete_on_a_flagged_turn_keeps_its_own_confirm_first_flow(turn, monkeypatch):
+    # The model called the turn no_change, so the intent step offers no covered tool, but the
+    # calendar tool is still there and still only proposes; his yes is what would run it.
+    proposals = []
+    actual = brain.registry.call
+
+    def call(name, args):
+        if name == "delete_calendar_event":
+            return pa.propose("Delete the dentist appointment", lambda: proposals.append(1) or "Deleted.")
+        return actual(name, args)
+
+    monkeypatch.setattr(brain.registry, "call", call)
     said = "delete the dentist appointment on monday"
-    for args in ({"title": "dentist follow up", "day": "monday"},
-                 {"title": "dentist", "day": "friday"},
-                 {"title": "orthodontist", "day": "monday"}):
-        result = asyncio.run(turn.run(said, [block("delete_calendar_event", args)], intent=DELETE))
-        assert ran == [] and "Nothing was changed" in result.text, args
-    asyncio.run(turn.run(said, [block("delete_calendar_event", {"title": "dentist", "day": "monday"})],
-                         intent=DELETE))
-    assert [name for name, _ in ran] == ["delete_calendar_event"]
+    result = asyncio.run(turn.run(said, [block("delete_calendar_event", {"title": "dentist", "day": "monday"})],
+                                  intent=Intent("no_change")))
+    offered = {schema["name"] for schema in turn.offered[0]}
+    assert "delete_calendar_event" in offered and "remember" in offered
+    assert not offered & {"task_add", "task_complete", "archive_task", "task_skip_today", "list_add",
+                          "list_check", "set_timer", "set_reminder"}
+    assert proposals == [] and "Delete the dentist appointment" in result.text
 
 
-def test_two_distinct_calls_to_the_authorized_external_tool_are_refused_together(turn, monkeypatch):
+def test_a_covered_tool_is_refused_on_a_no_change_turn(turn, monkeypatch):
+    ran = _ran(monkeypatch)
+    result = asyncio.run(turn.run("what is on my list", [block("set_timer", {"amount": 5, "unit": "minutes"})],
+                                  intent=Intent("no_change")))
+    assert ran == [] and "Nothing was changed" in result.text
+
+
+def test_two_distinct_calls_to_one_covered_tool_are_refused_together(turn, monkeypatch):
     ran = _ran(monkeypatch)
     result = asyncio.run(turn.run(
-        "delete the dentist appointment on monday and tuesday",
-        [block("delete_calendar_event", {"title": "dentist", "day": "monday"}, id="a"),
-         block("delete_calendar_event", {"title": "dentist", "day": "tuesday"}, id="b")],
-        intent=DELETE))
-    assert ran == [] and "one change at a time" in result.text
+        "add eggs to my grocery list",
+        [block("list_add", {"item": "eggs", "list_name": "grocery"}, id="a"),
+         block("list_add", {"item": "milk", "list_name": "grocery"}, id="b")]))
+    assert ran == [] and "Nothing was changed" in result.text
 
 
 # ── F4: a stored change is reported from its result, not the model's sentence ──
@@ -310,7 +338,7 @@ def test_the_parser_requires_every_field_and_exactly_one_record():
     for missing in ("target", "timing", "more_than_one_change"):
         assert task_intent.parse_intent(_message({k: v for k, v in GOOD.items() if k != missing})) is None
     assert task_intent.parse_intent(_message(GOOD, GOOD)) is None
-    assert task_intent.parse_intent(_message(GOOD, {**GOOD, "action": "none"})) is None
+    assert task_intent.parse_intent(_message(GOOD, {**GOOD, "action": "no_change"})) is None
     assert task_intent.parse_intent(_message()) is None
 
 

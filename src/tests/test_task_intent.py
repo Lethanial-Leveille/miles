@@ -211,7 +211,7 @@ def test_the_gate_holds_in_every_round(turn, db, monkeypatch):
     monkeypatch.setattr(brain.registry, "call", lambda name, args: ran.append(name) or "ok")
     # Round one is a read; round two tries a change that was never asked for.
     result = asyncio.run(turn.run(
-        "show my tasks and cancel nothing", [], intent=Intent("none")))
+        "show my tasks and cancel nothing", [], intent=Intent("no_change")))
     assert result.text
     turn.rounds.clear()
     result = asyncio.run(turn.run("Add water plants", [block("tasks_today")],
@@ -242,7 +242,7 @@ def test_cancel_reading_with_no_tool_call_never_claims_it_archived(turn, db):
 
 
 def test_a_turn_that_ran_no_action_cannot_say_it_did(turn, db):
-    result = asyncio.run(turn.run("what do I need to add", [], draft="Done. I added it.", intent=Intent("none")))
+    result = asyncio.run(turn.run("what do I need to add", [], draft="Done. I added it.", intent=Intent("no_change")))
     assert result.text == "Nothing was changed."
 
 
@@ -437,13 +437,6 @@ def test_an_answer_outside_the_schema_is_rejected(payload):
 
 def test_a_failed_call_is_none_and_never_raises():
     assert asyncio.run(REAL_REQUEST(FakeClient(error=RuntimeError("synthetic")), "add x")) is None
-
-
-def test_other_may_name_only_a_registered_mutating_tool():
-    ok = task_intent.validate(Intent("other", tool="create_calendar_event"), "add a calendar event", date(2026, 11, 25))
-    assert ok.kind == "act" and ok.gate.offers("create_calendar_event") and not ok.gate.offers("set_timer")
-    for tool in ("get_weather", "nonsense", "task_add", "confirm_pending_action", ""):
-        assert task_intent.validate(Intent("other", tool=tool), "do something", date(2026, 11, 25)).kind == "refuse"
 
 
 def test_the_closed_gate_offers_nothing_but_a_pending_confirmation():

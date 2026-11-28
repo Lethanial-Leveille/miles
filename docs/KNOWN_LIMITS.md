@@ -29,3 +29,5 @@ Open findings that are not Blockers. Each was reviewed and deliberately left. Re
 - **Should fix** `src/task_intent.py:544` The timer validator rejects compound durations that the timer tool can represent exactly. (found by the review loop at 13424b1)
 
 - **Should fix** `src/tests/test_task_intent_followups.py:163` The rollover regression test depends on the machine’s actual task day. (found by the review loop at 13424b1)
+
+- **Known limit** `src/task_intent.py` The intent step has no "other change" action. A calendar write, `remember` and every other mutating tool outside task, list, timer and reminder keep their own confirm first flow and are offered only on a turn the wide check flagged. A statement the wide check does not flag (for example "my cat is named Sam" with no action word) no longer reaches `remember`, because an unflagged turn offers no mutating tool. The nightly memory pass is unaffected. Accepted by the owner for this pass.

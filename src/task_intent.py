@@ -22,7 +22,7 @@ import database
 import task_scheduling
 import timing
 from config import MODEL_A
-from tools import Permission, permits, registry
+from tools import permits, registry
 
 # ── Which turns could change something ──
 
@@ -49,10 +49,15 @@ def could_change(utterance, choice_pending=False):
 
 # ── The intent ──
 
+# no_change is the model saying the message asks for nothing to be changed:
+# questions, reads and chat. There is deliberately no "other change" action.
+# Calendar writes, remembered facts and every other mutating tool outside the
+# four kinds below keep their own confirm first flow and are not reachable from
+# this step as an action.
 ACTIONS = ("task_add", "task_complete", "task_archive", "task_skip_today",
-           "list_add", "list_check", "timer", "reminder", "other", "none")
+           "list_add", "list_check", "timer", "reminder", "no_change")
 
-# The one registered tool each action may call. "other" names its own.
+# The one registered tool each action may call.
 ACTION_TOOL = {
     "task_add": "task_add", "task_complete": "task_complete", "task_archive": "archive_task",
     "task_skip_today": "task_skip_today", "list_add": "list_add", "list_check": "list_check",
@@ -60,9 +65,11 @@ ACTION_TOOL = {
 }
 TASK_ACTIONS = {"task_add", "task_complete", "task_archive", "task_skip_today"}
 # Actions whose outcome is spoken by code from the tool result, not by the model.
-# Every flagged change is in it, timers, reminders and other tools included, so
-# no model sentence about a stored change is ever spoken in place of the result.
-AUTHORITATIVE = TASK_ACTIONS | {"list_add", "list_check", "timer", "reminder", "other"}
+# Every covered change (task, list, timer, reminder) is in it, so no model
+# sentence about a stored change is ever spoken in place of the result.
+AUTHORITATIVE = TASK_ACTIONS | {"list_add", "list_check", "timer", "reminder"}
+# The tools the intent step governs. Any other mutating tool is outside it.
+COVERED_TOOLS = frozenset(ACTION_TOOL.values())
 
 INTENT_TOOL = {
     "name": "record_intent",
@@ -72,17 +79,15 @@ INTENT_TOOL = {
         "properties": {
             "action": {"type": "string", "enum": list(ACTIONS),
                        "description": "task_add, task_complete, task_archive (stop tracking or cancel a "
-                                      "task), task_skip_today, list_add, list_check, timer, reminder, "
-                                      "other (a different change, name it in tool), or none when the "
-                                      "message asks for no change, only talks or asks a question."},
+                                      "task), task_skip_today, list_add, list_check, timer, reminder, or "
+                                      "no_change when the message asks for nothing to be changed: a "
+                                      "question, a request to read or look something up, or chat."},
             "target": {"type": "string",
                        "description": "The task, list item or thing named, in the user's words, without "
                                       "timing words. Empty when none."},
             "timing": {"type": "string",
                        "description": "The exact words that say when or how often, copied from the "
                                       "message, like 'every day' or 'in four days'. Empty when none."},
-            "tool": {"type": "string",
-                     "description": "Only for action other: the exact name of the one tool needed."},
             "more_than_one_change": {"type": "boolean",
                                      "description": "True when the message asks for more than one change."},
         },
@@ -91,11 +96,11 @@ INTENT_TOOL = {
 }
 
 _SYSTEM = (
-    "You read one message from the user and record what change, if any, it asks his assistant to make. "
-    "Call record_intent. You never carry anything out. Use none for chat, questions and requests to "
-    "look something up. Pick one action only. If the message asks for two changes, set "
-    "more_than_one_change. Copy the timing words exactly as said and never invent any. Changes that "
-    "are not a task, list, timer or reminder use action other and name one of these tools in tool: ")
+    "You read one message from the user and record what change, if any, it asks his assistant to make "
+    "to a task, a list, a timer or a reminder. Call record_intent. You never carry anything out. Use "
+    "no_change for chat, questions, requests to look something up and any change that is not a task, "
+    "list, timer or reminder. Pick one action only. If the message asks for two changes, set "
+    "more_than_one_change. Copy the timing words exactly as said and never invent any.")
 
 
 @dataclass(frozen=True)
@@ -103,15 +108,7 @@ class Intent:
     action: str
     target: str = ""
     timing: str = ""
-    tool: str = ""
     more: bool = False
-
-
-def _mutating_tool_summaries():
-    names = [name for name in registry.names()
-             if registry.get(name).permission in (Permission.WRITE, Permission.EXTERNAL_WRITE)
-             and name not in ACTION_TOOL.values()]
-    return "; ".join(f"{name} ({registry.get(name).summary})" for name in names)
 
 
 _REQUIRED = {"action": str, "target": str, "timing": str, "more_than_one_change": bool}
@@ -132,10 +129,8 @@ def parse_intent(message):
     for key, kind in _REQUIRED.items():
         if key not in data or type(data[key]) is not kind:
             return None
-    if not isinstance(data.get("tool", ""), str):
-        return None
     return Intent(data["action"], data["target"].strip(), data["timing"].strip(),
-                  data.get("tool", "").strip(), data["more_than_one_change"])
+                  data["more_than_one_change"])
 
 
 async def request_intent(client, utterance, pending_title=None):
@@ -144,7 +139,7 @@ async def request_intent(client, utterance, pending_title=None):
 
     Returns None when the call fails or answers outside the schema. The caller
     treats that as a refusal, because nothing may run on a guess."""
-    system = _SYSTEM + _mutating_tool_summaries()
+    system = _SYSTEM
     if pending_title:
         system += (f" The assistant just asked whether to skip {pending_title} for today or stop "
                    f"it for good. A reply like that is about {pending_title}: put it in target.")
@@ -181,7 +176,7 @@ _FINISHED = re.compile(r"\b(?:finish\w*|done|complet\w*|mark\w*|check\w*|cross\w
 
 @dataclass
 class Verdict:
-    kind: str                  # "none", "act", "refuse" or "ask"
+    kind: str                  # "none" (no change asked), "act", "refuse" or "ask"
     text: str = ""
     gate: "IntentGate | None" = None
     choice: tuple | None = None   # (task id, title) when the question waits for an answer
@@ -192,19 +187,18 @@ class IntentGate:
     """What one validated request lets the turn run. Used by TurnSafety.preflight
     on every round, so a later round cannot widen it."""
     tool: str | None = None
-    action: str = "none"
+    action: str = "no_change"
     args_ok: object = None        # callable(args) -> bool, for tools whose arguments matter
     confirm: bool = False         # a pending approval may be answered this turn
     target_id: int | None = None
     plan: dict = field(default_factory=dict)
+    # A flagged turn the model called no_change keeps the mutating tools outside
+    # the covered set (calendar, remember and the rest), each under its own
+    # confirm first flow and guards. The covered tools stay hidden.
+    others: bool = False
 
     @property
     def authoritative(self):
-        if self.action == "other":
-            # An external change is spoken from its result or staged question.
-            # A remembered fact keeps the model's own conversational reply.
-            return (self.tool in registry
-                    and registry.get(self.tool).permission is Permission.EXTERNAL_WRITE)
         return self.action in AUTHORITATIVE
 
     @property
@@ -212,7 +206,8 @@ class IntentGate:
         return self.tool is not None or self.confirm
 
     def offers(self, name):
-        return name == self.tool or (self.confirm and name == "confirm_pending_action")
+        return (name == self.tool or (self.confirm and name == "confirm_pending_action")
+                or (self.others and name not in COVERED_TOOLS and name != "confirm_pending_action"))
 
     def permits(self, name, args):
         if not self.offers(name):
@@ -223,6 +218,12 @@ class IntentGate:
 def closed_gate(confirm=False):
     """No mutating tool at all: the gate for a turn that could not change anything."""
     return IntentGate(confirm=confirm)
+
+
+def no_change_gate():
+    """The gate for a flagged turn the model called no_change: the covered
+    tools stay hidden, every other tool is offered as it was before this step."""
+    return IntentGate(others=True)
 
 
 def _refuse(text):
@@ -438,32 +439,6 @@ def _list_args(intent, utterance):
 _IDENTIFYING = ("title",)
 
 
-def _other_args(intent, utterance):
-    """For a tool outside the Tasks set: the title that picks out an existing
-    thing must be words he said and agree with the target the intent named, and
-    a day given in words must be a day he said. A new thing's own title is his
-    to word, so it is not bound. Which event is meant is then settled by the
-    tool, which refuses an ambiguous one."""
-    spoken = _words(utterance)
-    target = _words(intent.target)
-
-    def check(args):
-        for key in _IDENTIFYING:
-            value = args.get(key)
-            if value is None:
-                continue
-            words = _words(str(value))
-            if not words or words not in spoken:
-                return False
-            if target and target not in words and words not in target:
-                return False
-        day = args.get("day")
-        if isinstance(day, str) and re.fullmatch(r"[A-Za-z ']+", day.strip()):
-            return _words(day) in spoken
-        return True
-    return check
-
-
 _NEGATION = re.compile(r"\b(?:not|never|no|nothing|neither|nor|unfinished|incomplete)\b|n't\b", re.I)
 _HYPOTHETICAL = re.compile(
     r"\?|\b(?:if|when|once|whether|should|would|could|might|maybe|going to|gonna|plan to|plans to|"
@@ -522,12 +497,14 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
         return _refuse("I could not tell what you wanted to change. Please say it again.")
     if intent.more or _COMPOUND.search(utterance):
         return _refuse("Please ask for one change at a time.")
-    if intent.action == "none":
+    if intent.action == "no_change":
         return Verdict("none")
+    if intent.action not in ACTION_TOOL:
+        return _refuse("I could not tell what you wanted to change. Please say it again.")
     # The permission floor comes before any lookup, so a speaker below the
     # tool's tier learns nothing about which tasks exist or what they are called.
-    floor = ACTION_TOOL.get(intent.action)
-    if floor and floor in registry and not permits(registry.get(floor), tier):
+    floor = ACTION_TOOL[intent.action]
+    if floor in registry and not permits(registry.get(floor), tier):
         return _refuse("That needs more clearance than you have.")
     today = today or date.fromisoformat(database.task_day(datetime.now()))
     heard = _words(utterance)
@@ -556,15 +533,6 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
             return _refuse("Which item do you mean?")
         return Verdict("act", gate=IntentGate(ACTION_TOOL[intent.action], intent.action,
                                               _list_args(intent, utterance)))
-    if intent.action == "other":
-        name = intent.tool
-        if (name not in registry or name in ACTION_TOOL.values() or name == "confirm_pending_action"
-                or registry.get(name).permission not in (Permission.WRITE, Permission.EXTERNAL_WRITE)):
-            return _refuse("I could not tell which change you meant. Please say it again.")
-        if not permits(registry.get(name), tier):
-            return _refuse("That needs more clearance than you have.")
-        return Verdict("act", gate=IntentGate(name, "other", _other_args(intent, utterance)))
-
     if intent.action == "task_add":
         return _task_add(intent, utterance, today)
 

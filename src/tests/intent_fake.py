@@ -31,10 +31,10 @@ def _add(text):
 
 def fake_intent(text):
     lowered = text.lower().strip(" .!?")
-    if lowered.startswith("remember"):
-        return Intent("other", tool="remember")
-    if "calendar" in lowered:
-        return Intent("other", tool="create_calendar_event")
+    if lowered.startswith("remember") or "calendar" in lowered:
+        # Outside the intent step: the model files these under no_change and the
+        # tool's own confirm first flow handles them.
+        return Intent("no_change")
     if re.search(r"\btimer\b", lowered):
         length = re.search(r"\b(?:for|of|in)\s+(.+)$", lowered)
         return Intent("timer", "timer", length[1] if length else "")
@@ -59,4 +59,4 @@ def fake_intent(text):
     added = _add(text.strip(" .!?"))
     if added:
         return added
-    return Intent("none")
+    return Intent("no_change")

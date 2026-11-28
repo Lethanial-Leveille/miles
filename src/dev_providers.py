@@ -63,7 +63,7 @@ class Claude:
             # The dev profile has no model to read intent, so it records none.
             return SimpleNamespace(content=[SimpleNamespace(
                 type="tool_use", name="record_intent", id="intent",
-                input={"action": "none", "target": "", "timing": "", "more_than_one_change": False})],
+                input={"action": "no_change", "target": "", "timing": "", "more_than_one_change": False})],
                 usage=SimpleNamespace(input_tokens=0, output_tokens=0))
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=self.summary)],
                                usage=SimpleNamespace(input_tokens=0, output_tokens=0))
