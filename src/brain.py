@@ -1069,9 +1069,18 @@ def _validated_call(tool_uses, gate):
     it matches the gate. When it is missing or wrong and the validated request
     fully determines the call, the validated call runs in its place, with the
     arguments from the plan and never from the model."""
-    if gate is None or gate.call is None or gate.tool is None:
+    if gate is None or gate.tool is None:
         return tool_uses
-    if any(b.name == gate.tool and gate.permits(b.name, b.input) for b in tool_uses):
+    accepted = [b for b in tool_uses if b.name == gate.tool and gate.permits(b.name, b.input)]
+    if accepted:
+        clean = gate.clean_call
+        if clean is None:
+            return tool_uses
+        # Run the call as validated, so the model's wording of the title cannot
+        # reach the database, only the plan's.
+        return [SimpleNamespace(type="tool_use", id=b.id, name=b.name, input=dict(clean))
+                if b in accepted and b.input != clean else b for b in tool_uses]
+    if gate.call is None:
         return tool_uses
     return [SimpleNamespace(type="tool_use", id="validated_call", name=gate.tool, input=dict(gate.call))]
 

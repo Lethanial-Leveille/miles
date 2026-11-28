@@ -182,3 +182,29 @@ def test_an_explicit_add_or_create_is_still_added_by_the_code(turn, db, said):
     result = asyncio.run(turn.run(said, [], draft="Added the task: Buy milk."))
     assert result.text == "Added the task: Buy milk."
     assert len(db.active_tasks_matching("buy milk")) == 1
+
+
+# ── The model repeats the validated timing inside the title (seen live, 3 of 3) ──
+
+def test_i_need_to_with_the_timing_repeated_in_the_title_is_added_with_the_clean_title(turn, db):
+    result = asyncio.run(turn.run("I need to take my vitamins every day",
+                                  [block("task_add", {"task": "take my vitamins every day", "recurrence": "daily"})]))
+    assert result.text == "Added the daily task: Take my vitamins."
+    [row] = db.active_tasks_matching("vitamins")
+    assert row[1] == "Take my vitamins" and row[2] == "daily"
+
+
+def test_an_explicit_add_with_the_timing_repeated_in_the_title_is_stored_clean(turn, db):
+    result = asyncio.run(turn.run("Add reading every day",
+                                  [block("task_add", {"task": "reading every day", "recurrence": "daily"})]))
+    assert result.text == "Added the daily task: Reading."
+    [row] = db.active_tasks_matching("reading")
+    assert row[1] == "Reading"
+
+
+@pytest.mark.parametrize("title", ["take my vitamins at night", "take my vitamins every week", "take my vitamins daily"])
+def test_other_words_after_the_title_are_still_refused(turn, db, title):
+    result = asyncio.run(turn.run("I need to take my vitamins every day",
+                                  [block("task_add", {"task": title, "recurrence": "daily"})]))
+    assert result.text.startswith("Nothing was changed.")
+    assert db.active_tasks_matching("vitamins") == []

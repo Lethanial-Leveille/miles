@@ -195,6 +195,10 @@ class IntentGate:
     # stop and skip have none: the forced tool round is enough, and a wrong call
     # for a destructive change is refused, not replaced.
     call: dict | None = None
+    # The call exactly as validated. A model call the gate accepts is rewritten to
+    # this before it runs, so the stored title is the plan's title and never the
+    # model's wording with the timing repeated inside it ("take my vitamins every day").
+    clean_call: dict | None = None
     # A flagged turn the model called no_change keeps the mutating tools outside
     # the covered set (calendar, remember and the rest), each under its own
     # confirm first flow and guards. The covered tools stay hidden.
@@ -370,9 +374,21 @@ def _task_add(intent, utterance, today):
             kind = "a daily task" if recurrence else "a task"
             return Verdict("refuse", f"Nothing was changed. {existing} is already {kind} on your list.")
 
-    def args_ok(args):
+    def title_ok(written):
         # By meaning, so "Water the cactus" is the call for "add water to the cactus".
-        return (task_scheduling.same_title(title, str(args.get("task", "")))
+        if task_scheduling.same_title(title, written):
+            return True
+        # The model may repeat the validated timing inside the title, as in
+        # "take my vitamins every day". That is the same task, and the stored
+        # title is cleaned to the plan's (clean_call below).
+        said = intent.timing.strip()
+        written = " ".join(written.split())
+        if said and written.casefold().endswith(" " + said.casefold()):
+            return task_scheduling.same_title(title, written[:-len(said)].strip())
+        return False
+
+    def args_ok(args):
+        return (title_ok(str(args.get("task", "")))
                 and args.get("recurrence") == plan.recurrence
                 and args.get("start_date") == plan.start_date)
     call = {"task": title}
@@ -384,7 +400,7 @@ def _task_add(intent, utterance, today):
     # only for an explicit command ("add", "create"). "I need to..." and the like
     # stay with the model's own valid call, and a failed call is a refusal.
     explicit = re.match(r"(?:add|create)\b", text, re.I) is not None
-    return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok, call=call if explicit else None,
+    return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok, call=call if explicit else None, clean_call=call,
                                           plan=dict(recurrence=plan.recurrence, start_date=plan.start_date,
                                                     day=today.isoformat())))
 

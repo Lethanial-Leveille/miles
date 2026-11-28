@@ -66,3 +66,5 @@ Labels compare this branch with production (`main` at 51676b9), measured by runn
 
 - **Decision** `src/task_intent.py` DUPLICATES (owner, Nov 27 2026). Adding a task that is already on the list, with the same title by meaning and the same recurrence, writes nothing and says it is already there. Production could add a second row. A daily task and a one time task with one title are not duplicates.
 - **Decision** `src/task_intent.py` "I need to ..." (owner, Nov 27 2026). The code adds the task itself, when the model's call is missing or wrong, only for an explicit "add" or "create". For "I need to ..." and similar phrasings the model's own valid call still works, and a failed call is a plain refusal ("Nothing was changed. I couldn't do that. Please try again.").
+
+- **Known limit** `src/task_scheduling.py` DUPLICATES BY MEANING. The title match ignores small endings, so "read" and "reading" count as one task: adding "reading every day" while "Read" is a daily task says it is already on the list. The reverse also applies to cancelling: "cancel reading" does not find a task titled "Read".
