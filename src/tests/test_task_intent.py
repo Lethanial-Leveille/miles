@@ -241,11 +241,6 @@ def test_cancel_reading_with_no_tool_call_never_claims_it_archived(turn, db):
     assert not any("archived" in line.lower() for line in turn.audio)
 
 
-def test_a_turn_that_ran_no_action_cannot_say_it_did(turn, db):
-    result = asyncio.run(turn.run("what do I need to add", [], draft="Done. I added it.", intent=Intent("no_change")))
-    assert result.text == "Nothing was changed."
-
-
 # ── Cancel ──
 
 def test_bare_cancel_on_a_daily_task_asks_and_writes_nothing(turn, db):

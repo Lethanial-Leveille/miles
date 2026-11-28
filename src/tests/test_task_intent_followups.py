@@ -363,3 +363,44 @@ def test_a_confirmation_stream_never_shows_a_success_draft(voice, monkeypatch):
     shown = [text for kind, text in voice.events if kind == "delta"]
     assert "Done, I created it." not in " ".join(shown)
     assert changes == [] and "created it" not in result.text
+
+
+# ── F8: no_change answers normally, a declared change that did nothing says so ──
+
+COVERED = {"task_add", "task_complete", "archive_task", "task_skip_today", "list_add", "list_check",
+           "set_timer", "set_reminder"}
+
+
+@pytest.mark.parametrize("said, wrong", [
+    ("what is on my list", Intent("list_add", "list")),
+    ("did I finish reading", Intent("task_complete", "reading")),
+    ("what is on my tasks today", Intent("task_add", "tasks")),
+    ("have I got a timer going", Intent("timer", "timer", "going"))])
+def test_a_read_question_never_gets_the_nothing_was_changed_line(turn, db, said, wrong):
+    db.add_task("reading", "daily")
+    result = asyncio.run(turn.run(said, [], draft="You have reading left.", intent=wrong))
+    assert result.text == "You have reading left." and "Nothing was changed" not in result.text
+    assert not COVERED & {schema["name"] for schema in turn.offered[0]}
+
+
+def test_a_read_question_gets_the_ordinary_answer_when_the_model_says_no_change(turn, db):
+    db.add_task("reading", "daily")
+    result = asyncio.run(turn.run("did I finish reading", [], draft="Not yet.", intent=Intent("no_change")))
+    assert result.text == "Not yet."
+    assert not COVERED & {schema["name"] for schema in turn.offered[0]}
+
+
+@pytest.mark.parametrize("draft", ["Reading is done.", "Reading is off your list.", "I added that yesterday."])
+def test_passive_success_wording_on_a_no_change_turn_is_not_an_unresolved_action(turn, db, draft):
+    task = db.add_task("reading", "daily")
+    result = asyncio.run(turn.run("take reading off my task list", [], draft=draft, intent=Intent("no_change")))
+    assert result.text == draft and "Nothing was changed" not in result.text
+    assert db.get_task(task)["archived_at"] is None
+
+
+def test_a_declared_change_that_ran_nothing_says_so_with_the_reason(turn, db):
+    task = db.add_task("reading", "daily")
+    result = asyncio.run(turn.run("cancel reading today", [], draft="Done, skipped.",
+                                  intent=Intent("task_skip_today", "reading")))
+    assert result.text.startswith("Nothing was changed.") and "could not carry out" in result.text
+    assert not db.task_skipped_on(task, db.task_day())

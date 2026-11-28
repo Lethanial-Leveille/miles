@@ -444,6 +444,20 @@ _HYPOTHETICAL = re.compile(
     r"\?|\b(?:if|when|once|whether|should|would|could|might|maybe|going to|gonna|plan to|plans to|"
     r"supposed to|about to|will)\b|'ll\b", re.I)
 _QUESTION_START = re.compile(r"^(?:did|do|does|have|has|am|is|was|were|what|when|how|why|who|which)\b", re.I)
+_READ_START = re.compile(
+    r"^(?:did|does|have|has|am|is|are|was|were|what|what's|whats|how|why|who|which|where|"
+    r"when (?:did|do|does|is|was|are|were|will)|do (?:i|we|you)|any)\b", re.I)
+
+
+def _asks_a_question(utterance):
+    """True for a question about the user's own things ("what is on my list",
+    "did I finish reading"). A polite request ("can you add eggs") is not one."""
+    text = " ".join((utterance or "").split()).strip(" .!").removeprefix("please ").removeprefix("Please ")
+    if re.match(r"^(?:can|could|would|will) you\b", text, re.I):
+        return False
+    return bool(_READ_START.match(text))
+
+
 _POLITE_OPEN = re.compile(r"^(?:please\s+)?(?:(?:can|could|would|will) you\s+(?:please\s+)?)?", re.I)
 
 
@@ -493,6 +507,10 @@ def _without_start(text):
 def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     """Turn a recorded Intent into a Verdict. Every failure is a refusal or a
     question with no write; only a verdict of "act" carries a gate."""
+    # A question or a read is never a request to change something, whatever the
+    # model recorded, so it is never answered with "Nothing was changed".
+    if _asks_a_question(utterance):
+        return Verdict("none")
     if intent is None:
         return _refuse("I could not tell what you wanted to change. Please say it again.")
     if intent.more or _COMPOUND.search(utterance):
@@ -573,15 +591,3 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
                                               target_id=task_id, plan=plan))
     return Verdict("act", gate=IntentGate("archive_task", "task_archive", check,
                                               target_id=task_id, plan=plan))
-
-
-# A reply that claims a change when none ran. Applied only when no mutating tool
-# succeeded, so it can only replace words that were never true.
-_CLAIM = re.compile(
-    r"^\s*(?:done|all set|okay,? done|ok,? done)\b|"
-    r"\b(?:i(?:'ve| have| just)?|i'll go ahead and) (?:added|archived|marked|completed|removed|saved|"
-    r"scheduled|created|cancell?ed|stopped tracking|checked off|crossed off|skipped|set)\b", re.I)
-
-
-def claims_a_change(text):
-    return bool(_CLAIM.search(text or ""))

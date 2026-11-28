@@ -1763,12 +1763,6 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
             _emit(on_text, "reset", "")
             accumulated = NO_ACTION
             _emit(on_text, "delta", accumulated)
-        elif (safety.flagged or safety.expected_confirmation) and task_intent.claims_a_change(accumulated) \
-                and not safety.cancelled.is_set():
-            # No action ran, so words that say one did are not true.
-            _emit(on_text, "reset", "")
-            accumulated = "Nothing was changed."
-            _emit(on_text, "delta", accumulated)
         if hold_speech and not safety.cancelled.is_set():
             await router.feed(accumulated)
         await router.finalize()
