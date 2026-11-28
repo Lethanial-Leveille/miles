@@ -385,7 +385,6 @@ def test_ordinary_task_add_forms_keep_working(voice, db, utterance, args):
 
 @pytest.mark.parametrize(("utterance", "blocks", "expected"), [
     ("Add reading daily", [block("dismiss")], "Added the daily task: Reading."),
-    ("I need to take my vitamins every day", [], "Added the daily task: Take my vitamins."),
 ])
 def test_control_call_or_no_call_cannot_speak_success_but_the_validated_add_runs(
         voice, db, utterance, blocks, expected):
@@ -394,6 +393,15 @@ def test_control_call_or_no_call_cannot_speak_success_but_the_validated_add_runs
     assert result.text == expected
     assert all("saved the task" not in line for line in voice.audio)
     assert len(db.active_tasks_matching("reading") + db.active_tasks_matching("vitamins")) == 1
+
+
+def test_i_need_to_is_not_added_by_the_code_when_there_is_no_valid_call(voice, db):
+    """Owner decision: the code fallback runs only for an explicit add or create.
+    "I need to ..." with no valid model call is a refusal, never a success."""
+    result = asyncio.run(voice.run("I need to take my vitamins every day", []))
+    assert result.text.startswith("Nothing was changed.")
+    assert "Added" not in result.text
+    assert db.active_tasks_matching("vitamins") == []
 
 
 @pytest.mark.parametrize("utterance", ["Add reading", "Could you add reading?"])

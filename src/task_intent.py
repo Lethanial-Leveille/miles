@@ -360,6 +360,16 @@ def _task_add(intent, utterance, today):
                        f"Nothing was changed. I'm not sure '{title}' is the whole task. Say just the task, "
                        f"like 'add {title}'. Add 'every day' if it repeats.")
 
+    # No duplicates: the same task, with the same recurrence, already on the list
+    # means there is nothing to add. Without this check the forced add would
+    # make a second row, and "cancel reading" would then ask which Reading.
+    # All active tasks, compared by meaning: a substring search would miss
+    # "Water the cactus" for "water to the cactus".
+    for _id, existing, recurrence in database.active_tasks_matching(""):
+        if recurrence == plan.recurrence and task_scheduling.same_title(title, existing):
+            kind = "a daily task" if recurrence else "a task"
+            return Verdict("refuse", f"Nothing was changed. {existing} is already {kind} on your list.")
+
     def args_ok(args):
         # By meaning, so "Water the cactus" is the call for "add water to the cactus".
         return (task_scheduling.same_title(title, str(args.get("task", "")))
@@ -370,7 +380,11 @@ def _task_add(intent, utterance, today):
         call["recurrence"] = plan.recurrence
     if plan.start_date:
         call["start_date"] = plan.start_date
-    return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok, call=call,
+    # The code may add the task itself, when the model's call is missing or wrong,
+    # only for an explicit command ("add", "create"). "I need to..." and the like
+    # stay with the model's own valid call, and a failed call is a refusal.
+    explicit = re.match(r"(?:add|create)\b", text, re.I) is not None
+    return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok, call=call if explicit else None,
                                           plan=dict(recurrence=plan.recurrence, start_date=plan.start_date,
                                                     day=today.isoformat())))
 

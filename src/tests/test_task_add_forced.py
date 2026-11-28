@@ -117,3 +117,68 @@ def test_a_title_that_changes_meaning_is_refused_before_any_model_round(turn, db
     result = asyncio.run(turn.run("Add water the cactus", [], intent=Intent("task_add", "water the garden")))
     assert result.text.startswith("Nothing was changed.")
     assert not db.active_tasks_matching("garden")
+
+
+# ── No duplicates (owner decision, F1) ──
+
+def test_adding_the_same_daily_task_twice_writes_it_once(turn, db):
+    first = asyncio.run(turn.run("Add reading every day", [block("task_add", {"task": "reading", "recurrence": "daily"})]))
+    assert first.text == "Added the daily task: Reading."
+    second = asyncio.run(turn.run("Add reading every day", [block("task_add", {"task": "reading", "recurrence": "daily"})]))
+    assert second.text == "Nothing was changed. Reading is already a daily task on your list."
+    assert len(db.active_tasks_matching("reading")) == 1
+
+
+def test_adding_the_same_one_time_task_twice_writes_it_once(turn, db):
+    asyncio.run(turn.run("Add water plants", [block("task_add", {"task": "water plants"})]))
+    again = asyncio.run(turn.run("Add water plants", [block("task_add", {"task": "water plants"})]))
+    assert again.text == "Nothing was changed. Water plants is already a task on your list."
+    assert len(db.active_tasks_matching("water plants")) == 1
+
+
+def test_the_same_title_by_meaning_is_still_the_same_task(turn, db):
+    asyncio.run(turn.run("Add water the cactus", [block("task_add", {"task": "water the cactus"})]))
+    again = asyncio.run(turn.run("Add water to the cactus", []))
+    assert "already" in again.text
+    assert len(db.active_tasks_matching("cactus")) == 1
+
+
+def test_a_daily_task_and_a_one_time_task_with_one_title_are_not_duplicates(turn, db):
+    asyncio.run(turn.run("Add reading", [block("task_add", {"task": "reading"})]))
+    daily = asyncio.run(turn.run("Add reading every day", [block("task_add", {"task": "reading", "recurrence": "daily"})]))
+    assert daily.text == "Added the daily task: Reading."
+    assert len(db.active_tasks_matching("reading")) == 2
+
+
+def test_a_different_title_is_not_a_duplicate(turn, db):
+    asyncio.run(turn.run("Add reading every day", [block("task_add", {"task": "reading", "recurrence": "daily"})]))
+    other = asyncio.run(turn.run("Add reading the news every day",
+                                 [block("task_add", {"task": "reading the news", "recurrence": "daily"})]))
+    assert other.text == "Added the daily task: Reading the news."
+
+
+# ── The code adds the task itself only for "add" or "create" (owner decision, F2) ──
+
+def test_i_need_to_is_not_added_by_the_code_when_the_models_call_is_missing(turn, db):
+    result = asyncio.run(turn.run("I need to buy milk", [], draft="Added the task: Buy milk."))
+    assert result.text == "Nothing was changed. I couldn't do that. Please try again."
+    assert db.active_tasks_matching("buy milk") == []
+
+
+def test_i_need_to_is_not_added_by_the_code_when_the_models_call_is_wrong(turn, db):
+    result = asyncio.run(turn.run("I need to buy milk", [block("task_add", {"task": "buy bread"})], draft="Done."))
+    assert result.text == "Nothing was changed. That is not the change you asked for."
+    assert db.active_tasks_matching("buy") == []
+
+
+def test_i_need_to_still_works_when_the_models_call_is_valid(turn, db):
+    result = asyncio.run(turn.run("I need to buy milk", [block("task_add", {"task": "buy milk"})]))
+    assert result.text == "Added the task: Buy milk."
+    assert len(db.active_tasks_matching("buy milk")) == 1
+
+
+@pytest.mark.parametrize("said", ["Add buy milk", "Create buy milk"])
+def test_an_explicit_add_or_create_is_still_added_by_the_code(turn, db, said):
+    result = asyncio.run(turn.run(said, [], draft="Added the task: Buy milk."))
+    assert result.text == "Added the task: Buy milk."
+    assert len(db.active_tasks_matching("buy milk")) == 1
