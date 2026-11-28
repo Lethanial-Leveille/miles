@@ -211,8 +211,9 @@ def test_the_gate_holds_in_every_round(turn, db, monkeypatch):
     monkeypatch.setattr(brain.registry, "call", lambda name, args: ran.append(name) or "ok")
     # Round one is a read; round two tries a change that was never asked for.
     result = asyncio.run(turn.run(
-        "show my tasks and cancel nothing", [], intent=Intent("no_change")))
-    assert result.text
+        "show my tasks and cancel nothing", [block("tasks_today")], intent=Intent("no_change"),
+        more=[Stream([block("archive_task", {"task": "reading"})])]))
+    assert "archive_task" not in ran and result.text
     turn.rounds.clear()
     result = asyncio.run(turn.run("Add water plants", [block("tasks_today")],
                                   intent=Intent("task_add", "water plants"),
