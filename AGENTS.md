@@ -12,22 +12,23 @@ Pick the highest tier that applies and reassess if the scope changes.
 
 | Tier | When it applies | What to do |
 |---|---|---|
-| Small | A UI fix or a clear bug | Add a test. Review your own change. |
-| Medium | A new tool, screen or job | Write a five line plan. Get one Codex review. |
+| Small | A UI fix or a clear bug | Add a test. Review your own change. Run the loop only if the change touches shared behavior. |
+| Medium | A new tool, screen or job | Write a five line plan. Get one review (Claude by default). |
 | Large | Migrations, texting people, changing Evallo, money, auth or secrets | Write a short contract and get Lethanial's approval. Get a Codex review and one focused verification. |
 
 ## The loop
 
 1. Build with tests.
-2. Codex reviews and rates each finding Blocker, Should fix or Note.
+2. The reviewer rates each finding Blocker, Should fix or Note.
 3. Fix every Blocker and every Should fix that has one obvious answer.
-4. Codex verifies only those fixes. Then stop.
+4. The same reviewer verifies only those fixes. Then stop.
 
-Run it with `scripts/loop` (see `scripts/loop --help`). It does steps 2 to 4 and prints the final report.
+Run it with `scripts/loop --tier small|medium|large` (see `scripts/loop --help`). It does steps 2 to 4 and prints the final report.
 
 - Two review rounds at most. Anything still open goes in [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md), unless it is a Blocker.
-- Codex reads only the diff, the files it touches and the contract. It runs read only, never deploys and never touches production. Before a run, check usage with `python3 ~/.codex/usage.py` and tell Lethanial if it is over its threshold.
-- Use Astra High for the review. Use Opus only with his approval.
+- **Reviewer.** `--reviewer claude` is a fresh Opus session that did not write the code: a new headless session with read only tools, started in a scratch copy. `--reviewer codex` is Codex on Astra High, read only. Without `--reviewer`, the tier picks: Claude for Small and Medium, Codex for Large. With neither flag the loop stops and asks. Lethanial approved Opus as the reviewer on Claude Max; any other Opus use still needs his approval.
+- Either reviewer reads only the diff, the files it touches and the contract, never the whole repo. Neither deploys or touches production. The fixer is a separate Sonnet session, so the reviewer never reviews its own work.
+- Before a Codex run, check usage with `python3 ~/.codex/usage.py` (the loop does this) and tell Lethanial if it is over its threshold. The Claude reviewer has no usage check.
 
 ## What counts as a Blocker
 
