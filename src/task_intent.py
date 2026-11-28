@@ -751,7 +751,10 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     if not _only_today(intent, utterance, title):
         return _refuse("I can only do that for today by voice. Use the Tasks tab for another day.")
     if intent.action == "task_complete":
-        if not _affirmative(utterance):
+        # The task's own words are taken out first, so a title such as "Call when
+        # home" is not read as a hypothetical.
+        bare = re.sub(re.escape(intent.target), " it ", utterance, flags=re.I)
+        if not _affirmative(bare):
             return _refuse(f"I was not sure you finished {title}. Say it as a plain statement, "
                            f"like 'I finished {title}'.")
         if not _says_action("task_complete", utterance, intent.target, title):

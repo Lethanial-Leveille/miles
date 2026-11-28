@@ -114,3 +114,12 @@ def test_a_task_without_a_verb_name_keeps_its_old_reports(db):
     assert task_intent.validate(Intent("task_complete", "rent"), "I paid rent", WEDNESDAY).kind == "act"
     assert task_intent.validate(Intent("task_complete", "rent"), "I called rent", WEDNESDAY).kind == "refuse"
 
+
+# ── E8: a title with a hypothetical word is still a plain report ──
+
+def test_a_title_with_a_hypothetical_word_does_not_block_a_completion(db):
+    db.add_task("Call when home", None)
+    verdict = task_intent.validate(Intent("task_complete", "call when home"), "I finished call when home", WEDNESDAY)
+    assert verdict.kind == "act", verdict.text
+    assert task_intent.validate(Intent("task_complete", "call when home"),
+                                "did I finish call when home", WEDNESDAY).kind != "act"
