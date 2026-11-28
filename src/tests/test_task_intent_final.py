@@ -177,3 +177,15 @@ def test_a_compact_clock_time_is_accepted(timing):
     when = (now + timedelta(days=1)).replace(hour=17, minute=minute, second=0, microsecond=0)
     assert task_intent._due_matches(when.isoformat(), timing, now)
     assert not task_intent._due_matches(when.replace(hour=16).isoformat(), timing, now)
+
+
+# ── E6: an offset bearing reminder time does not crash validation ──
+
+def test_a_reminder_time_with_an_offset_is_compared_as_local_time():
+    from datetime import datetime, timedelta
+    verdict = task_intent.validate(Intent("reminder", "call mom", "in ten minutes"),
+                                   "remind me to call mom in ten minutes", WEDNESDAY)
+    due = (datetime.now().astimezone() + timedelta(minutes=10)).isoformat(timespec="seconds")
+    assert verdict.gate.permits("set_reminder", {"content": "call mom", "due": due})
+    late = (datetime.now().astimezone() + timedelta(hours=3)).isoformat(timespec="seconds")
+    assert not verdict.gate.permits("set_reminder", {"content": "call mom", "due": late})

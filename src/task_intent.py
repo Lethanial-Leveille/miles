@@ -471,6 +471,11 @@ def _reminder_args(intent, utterance):
     request, and the due time is the one the timing words say."""
     wanted = _words(re.sub(r"^to\s+", "", _words(intent.target)))
     timing = intent.timing
+    # A day he said that the intent left out of the timing still counts: "tomorrow
+    # at 5 pm" with only "at 5 pm" copied must not fire at 5 pm today.
+    if (timing and "tomorrow" not in _words(timing) and re.search(r"\btomorrow\b", _words(utterance))
+            and spoken_seconds(timing) is None):
+        timing = f"tomorrow {timing}"
 
     def check(args):
         content = _words(re.sub(r"^to\s+", "", _words(str(args.get("content", "")))))
