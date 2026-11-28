@@ -52,21 +52,28 @@ Timer driven, not long running:
   workout from a routine that earned a jump raises that lift's weight in the
   routine (src/hevy_progress.py). Needs HEVY_API_KEY from .env
 
-Not installed, on purpose: `miles-deploy.timer`. The unit files sit in the repo
-(`systemd/miles-deploy.timer` and `.service`) and would run scripts/auto_deploy.sh
-every two minutes, but nothing runs them. Checked on the Pi Nov 27 2026: the timer
-is absent from `systemctl list-timers`, from his crontab and from root's. So
-**pushing to main deploys nothing**. A deploy happens only when he runs
-`scripts/deploy.sh` by hand on the Pi, after a fresh backup.
+**Nothing deploys by itself. Pushing to `main` does not change the Pi.** A
+deploy happens only when he runs `scripts/deploy.sh` on the Pi, after a fresh
+backup. Checked on the Pi Nov 27 2026: no `miles-deploy` unit, no deploy timer in
+`systemctl list-timers`, nothing in his crontab or root's. This is a decision,
+not an omission: an automatic deploy would run whatever was last pushed to
+GitHub, so anyone who could push to `main` could run code on the Pi.
 
-Keep it uninstalled. If it were installed, anyone who could push to main would get
-code running on the Pi within minutes, so install it only after branch protection
-and signed commits are in place. For reference, auto_deploy.sh tests origin/main in
-a temporary worktree and calls deploy.sh only if the suite passes. It skips a dirty
-tree, a branch other than main, unpushed local commits and a turn that ended under
-two minutes ago. A failed commit is kept in `data/deploy_failed_commit` and never
-retried; there is no rollback ([BACKEND_TODO.md](BACKEND_TODO.md)).
-`scripts/auto_deploy.sh --dry-run` decides without restarting.
+`miles-deploy.timer` and `miles-deploy.service` exist in `systemd/`, written
+Oct 30 2026, and **must stay uninstalled**. They would run
+`scripts/auto_deploy.sh` every two minutes: it tests a new `origin/main` in a
+temporary worktree (which executes that code) and then calls `deploy.sh`.
+Do not copy them to `/etc/systemd/system/`, and when installing units by
+copying `systemd/`, skip those two files. `auto_deploy.sh` stays in the repo for
+`--dry-run`, which decides what it would do without restarting anything. Before
+anyone installs it, it needs a verified commit signature and a named commit
+(the owner's F1 plan: no unattended deploy, signed commits, deploy a named commit). To confirm
+nothing deploys on its own:
+
+```bash
+systemctl list-timers --all --no-pager | grep -i deploy   # no output
+systemctl cat miles-deploy.timer                          # "No files found"
+```
 
 `miles-wifi` checks whether wlan0 has a carrier and a global scope IPv4
 address, and runs `nmcli connection up Alsander` when either is missing. It
@@ -140,7 +147,7 @@ Expected on this Pi, as of Sep 15 2026:
 ```
 passwordauthentication no
 permitrootlogin without-password
-allowusers theycallmelee
+allowusers the-owner
 pubkeyauthentication yes
 ```
 
@@ -175,7 +182,7 @@ regenerated**, so editing it to say `no` is not a fix, it is a change waiting to
 be reverted by something that does not know why it mattered. Winning on sort
 order is durable in a way that editing a generated file is not.
 
-`AllowUsers theycallmelee` is the exception to all of this: it lives in
+`AllowUsers the-owner` is the exception to all of this: it lives in
 `/etc/ssh/sshd_config` itself, at line 59, because nothing in the drop in
 directory sets it and first occurrence therefore still finds it.
 
@@ -199,7 +206,7 @@ other two are the LAN and the Cloudflare tunnel.
 |---|---|---|
 | LAN | `miles.local`, port 22 only | being on the same network |
 | Cloudflare tunnel | miles.lethanial.com, the FastAPI app | nothing, it is public |
-| Tailnet | `miles` at `100.99.248.127`, any port | being on the tailnet |
+| Tailnet | `miles` at `192.0.2.10`, any port | being on the tailnet |
 
 ```bash
 tailscale status          # who is on the tailnet
@@ -225,11 +232,11 @@ starts reporting `no_dns`, this is the first place to look rather than the
 router.
 
 **The CGNAT ranges overlap, and today they do not collide.** Tailscale assigns
-from `100.64.0.0/10` and this Pi's wlan0 lease is `100.70.16.218/25`, inside
-that same range, with a link scope route for `100.70.16.128/25` out `wlan0`.
-Both current nodes are clear of it, `miles` at `100.99.248.127` and the MacBook
-at `100.103.30.91`. The failure to watch for is narrow and specific: a future
-node assigned between `100.70.16.128` and `100.70.16.255` would be routed out
+from `100.64.0.0/10` and this Pi's wlan0 lease is `100.70.20.218/25`, inside
+that same range, with a link scope route for `100.70.20.128/25` out `wlan0`.
+Both current nodes are clear of it, `miles` at `192.0.2.10` and the MacBook
+at `192.0.2.11`. The failure to watch for is narrow and specific: a future
+node assigned between `100.70.20.128` and `100.70.20.255` would be routed out
 wlan0 from this Pi and be unreachable from here, and nowhere else.
 
 ```bash

@@ -64,9 +64,16 @@ UNITS = ("miles-voice", "miles-server", "miles-tunnel")
 # proves uvicorn is listening and proves nothing about cloudflared, DNS, the
 # certificate, or the route, which is the part that actually broke.
 #
-# /docs is used because FastAPI serves it without authentication, so this needs
-# no token and cannot fail because a JWT expired.
-PUBLIC_URL   = "https://miles.lethanial.com/docs"
+# /status is used with no credentials on purpose, so this needs no token and
+# cannot fail because a JWT expired. The app answers it 403 "Not authenticated",
+# and only the app says that, so the answer proves the whole path (DNS,
+# certificate, cloudflared, uvicorn, FastAPI) without a public page. /docs was
+# the probe until Nov 27 2026, when the docs routes were switched off: they
+# published the full route map to anyone.
+PUBLIC_URL   = "https://miles.lethanial.com/status"
+# What the app itself says to a request with no or a bad token. A 403 from
+# Cloudflare or a proxy has a different body and still fails.
+APP_REFUSALS = {"Not authenticated", "Invalid or expired token"}
 HTTP_TIMEOUT = 10
 
 # Where the previous run's counters live, so a restart can be seen as a change
@@ -208,21 +215,32 @@ def check_units(state):
     return results
 
 
+def _app_refusal(exc):
+    """Whether an HTTP error is FastAPI refusing an unauthenticated request."""
+    if exc.code not in (401, 403):
+        return False
+    try:
+        return json.loads(exc.read(2000)).get("detail") in APP_REFUSALS
+    except Exception:
+        return False
+
+
 def check_tunnel():
     """The whole public path, end to end.
 
-    Anything other than a 200 is a failure regardless of which layer produced
-    it, because the question being asked is whether the app can reach Miles,
-    not which component is to blame."""
+    The probe sends no credentials, so a healthy path answers 401 or 403 in the
+    app's own words. Anything else is a failure regardless of which layer
+    produced it, because the question being asked is whether the app can reach
+    Miles, not which component is to blame."""
     try:
         request = urllib.request.Request(PUBLIC_URL, method="GET",
                                          headers={"User-Agent": "miles-healthcheck"})
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
-            if response.status == 200:
-                return [Result(OK, "tunnel", f"{PUBLIC_URL} returned 200")]
-            return [Result(FAIL, "tunnel",
+            return [Result(OK if response.status == 200 else FAIL, "tunnel",
                            f"{PUBLIC_URL} returned {response.status}")]
     except urllib.error.HTTPError as exc:
+        if _app_refusal(exc):
+            return [Result(OK, "tunnel", f"{PUBLIC_URL} answered {exc.code} from the app")]
         return [Result(FAIL, "tunnel", f"{PUBLIC_URL} returned {exc.code}")]
     except Exception as exc:
         return [Result(FAIL, "tunnel",

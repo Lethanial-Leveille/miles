@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Deploy origin/main when it is not what the services are running, but only once its tests pass.
-# Run by miles-deploy.timer. By hand: scripts/auto_deploy.sh --dry-run decides without restarting.
+# NOT installed on the Pi and not to be: nothing deploys by itself, he runs deploy.sh. Kept for
+# scripts/auto_deploy.sh --dry-run, which decides without restarting. See docs/INFRASTRUCTURE.md.
 
 # Stop on any failed command (e), on an unset variable (u), and when any part of a pipe fails.
 set -euo pipefail

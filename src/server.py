@@ -59,7 +59,11 @@ import tasks_view
 # exactly what a later cleanup deletes.
 import nightly_review  # noqa: F401
 
-app = FastAPI(title="M.I.L.E.S. API", version="0.7")
+# The interactive docs and the schema are off: unauthenticated, they publish
+# every route to anyone who can reach the tunnel. scripts/healthcheck.py probes
+# /status instead.
+app = FastAPI(title="M.I.L.E.S. API", version="0.7",
+              docs_url=None, redoc_url=None, openapi_url=None)
 init_db()
 
 # ── Auth dependency ──
@@ -1247,10 +1251,11 @@ async def websocket_chat(ws: WebSocket):
     try:
         auth_msg = await ws.receive_json()
         token = auth_msg.get("token", "")
-        if headless():
-            user = get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
-        else:
-            user = decode_token(token)["sub"]
+        # The same rule as every REST route, in production and in the test
+        # runtime alike: a scoped token (device, agent) is refused. Decoding a
+        # token is not authorization, and a branch that only the test runtime
+        # takes cannot protect production.
+        user = get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
     except Exception:
         await ws.send_json({"error": "Unauthorized"})
         await ws.close(code=1008)

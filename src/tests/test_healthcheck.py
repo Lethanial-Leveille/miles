@@ -198,3 +198,33 @@ def test_a_failed_send_never_masks_the_failure_it_carries(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "the real failure" in out
     assert "Could not send alert email" in out
+
+
+# The tunnel probe, after the docs routes were switched off (Nov 27 2026): it
+# sends no credentials and passes only on the app's own refusal.
+
+def _http_error(code, body):
+    import io
+    import urllib.error
+    return urllib.error.HTTPError(hc.PUBLIC_URL, code, "x", {}, io.BytesIO(body))
+
+
+@pytest.mark.parametrize("code,body,level", [
+    (403, b'{"detail":"Not authenticated"}', hc.OK),
+    (401, b'{"detail":"Invalid or expired token"}', hc.OK),
+    (403, b"<html>Cloudflare blocked this request</html>", hc.FAIL),   # not the app
+    (403, b'{"detail":"Forbidden"}', hc.FAIL),
+    (404, b'{"detail":"Not Found"}', hc.FAIL),                         # route gone
+    (502, b"bad gateway", hc.FAIL),
+    (530, b"tunnel down", hc.FAIL),
+])
+def test_tunnel_probe_accepts_only_the_apps_own_refusal(monkeypatch, code, body, level):
+    def fake(request, timeout):
+        raise _http_error(code, body)
+    monkeypatch.setattr(hc.urllib.request, "urlopen", fake)
+    [result] = hc.check_tunnel()
+    assert result.level == level
+
+
+def test_tunnel_probe_does_not_use_the_docs_routes():
+    assert not hc.PUBLIC_URL.rstrip("/").endswith(("/docs", "/redoc", "/openapi.json"))

@@ -276,8 +276,7 @@ Live at `https://miles.lethanial.com`.
 | `/watchdog/{alert_id}/retry`, `/watchdog/{alert_id}/remind`, `/watchdog/{alert_id}/skip` | POST | Yes, full login only |
 | `/history` | GET | Yes |
 | `/status`, `/status/details` | GET | Yes |
-| `/ws` | WebSocket | Yes, token checked in the socket |
-| `/docs` | GET | No, FastAPI's generated Swagger UI |
+| `/ws` | WebSocket | Yes, full login only, checked in the socket |
 
 ---
 

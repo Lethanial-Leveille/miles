@@ -216,7 +216,7 @@ All live in production as of Aug 10 2026. All mic independent unless noted.
 Was deferred here for part of a day because it had been reported as applied
 when it had only been installed on the MacBook. Now real on the Pi: tailscale
 1.102.4, `tailscaled` enabled and active, joined as `miles` at
-`100.99.248.127` on the tailnet.
+`192.0.2.10` on the tailnet.
 
 Full reasoning is in the decision log in
 [engineering decision log](ENGINEERING_HISTORY.md#decision-log). Kept here only as a pointer, because the
@@ -1261,7 +1261,8 @@ rarer either way.
 
 ### Roll back a deploy that will not start (asked Oct 30 2026)
 
-`scripts/auto_deploy.sh` tests a commit in a worktree before it touches the
+`scripts/auto_deploy.sh` (not installed, and kept that way; deploys are by hand
+with `scripts/deploy.sh`) tests a commit in a worktree before it touches the
 repo, so a failing suite never restarts anything. What it cannot catch is a
 commit that passes every test and still will not start: a missing package, a
 hardware path, an import only the live service reaches. Today that leaves

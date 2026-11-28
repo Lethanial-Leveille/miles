@@ -414,7 +414,7 @@ session attached to notice. The bug needs nobody watching in order to happen.
 Recovery was a cable. Plugging in ethernet worked immediately, and that is where
 the real incident starts.
 
-The wlan0 lease is CGNAT, `100.70.16.218/25`, which is not routable from the
+The wlan0 lease is CGNAT, `100.70.20.218/25`, which is not routable from the
 internet. It had been acting as a firewall that nobody had chosen, configured or
 checked. The ethernet port handed out a **routable public address with no NAT in
 front of it**.
@@ -437,12 +437,12 @@ Roughly **13,000 SSH authentication attempts from 35 distinct addresses**, which
 is simply what the internet does to a fresh port 22 and says nothing about
 anyone targeting this Pi. Every username was generic botnet stock: `root`,
 `admin`, and a long tail of unknown users. The heaviest three were
-`109.160.32.31`, `77.239.124.214` and `43.226.62.221`.
+(three addresses, omitted here).
 
 **Every attempt failed. There was no successful login, and no evidence of
 compromise.** Two things happened to be standing in the way. `PermitRootLogin
 without-password` meant the thousands of root password guesses could not
-succeed no matter how long they ran. And no attacker guessed `theycallmelee`,
+succeed no matter how long they ran. And no attacker guessed the owner's account name,
 which was the account that could in principle have been reached, because
 `PasswordAuthentication` was `yes` with no rate limiting and no user allowlist.
 
@@ -474,15 +474,15 @@ the day the address changed.
 | n8n bound to `127.0.0.1:5678` | Exposure should not depend on the network's shape | `docker-compose.yaml` port mapping |
 | uvicorn bound to `localhost` | Same, and `localhost` rather than the literal address so both loopback families are covered | [INFRASTRUCTURE.md](INFRASTRUCTURE.md#systemd-services) |
 | `PasswordAuthentication no` | Removes the entire surface those 13,000 attempts were aimed at | `00-hardening.conf`, which sorts ahead of the cloud-init file. See [INFRASTRUCTURE.md](INFRASTRUCTURE.md#ssh-configuration) |
-| `AllowUsers theycallmelee` | Ends the unknown user probes at the door | `/etc/ssh/sshd_config` line 59 |
-| Tailscale | Recovery no longer requires a publicly addressable anything | `miles` at `100.99.248.127` on the tailnet |
+| `AllowUsers the-owner` | Ends the unknown user probes at the door | `/etc/ssh/sshd_config` line 59 |
+| Tailscale | Recovery no longer requires a publicly addressable anything | `miles` at `192.0.2.10` on the tailnet |
 
 **Tailscale was reported as applied before it was, and is now real.** On
 Sep 15 2026 it was listed among these fixes while `command -v tailscale` found
 nothing and no `tailscaled` unit existed. The install had been done on the
 MacBook, and the tailnet showed one machine. It was installed on the Pi later
 the same day: tailscale 1.102.4, `tailscaled` enabled and active, joined as
-`miles` at `100.99.248.127`, verified by a round trip to the MacBook.
+`miles` at `192.0.2.10`, verified by a round trip to the MacBook.
 
 Worth keeping rather than quietly deleting, because the gap between "I applied
 that fix" and "that fix is running on the machine that needed it" is exactly
