@@ -1,6 +1,6 @@
 # Claude Code coordination
 
-Follow the shared instructions in [AGENTS.md](AGENTS.md). Start from the task, its handoff and the relevant entry in the [repository map](docs/REPOSITORY_MAP.md).
+Follow the shared instructions in [AGENTS.md](AGENTS.md). Start from the task, its handoff and the relevant entry in the [repo map](docs/REPO_MAP.md).
 
 - Follow the tiers and the loop in AGENTS.md. Run the loop with `scripts/loop`.
 - For Large work, show the owner a short contract before building and wait for approval. Use one builder at a time in its own Git worktree: Opus for Large, Sonnet for Small and Medium (see the workflow rules in AGENTS.md). Reviews run through `scripts/loop`, with the reviewer AGENTS.md picks by tier (Claude for Small and Medium, Codex for Large) and only the files AGENTS.md allows. Use a rescue only after two builder attempts.

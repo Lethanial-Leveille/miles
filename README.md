@@ -327,7 +327,7 @@ miles/
 ├── src/            Runtime. The three services import from here
 │   └── tests/      pytest suite
 ├── scripts/        Operator tools run by hand: pronunciation, phrase bank, labelling, analysis
-├── docs/           Engineering docs. Start with docs/REPOSITORY_MAP.md
+├── docs/           Engineering docs. Start with docs/REPO_MAP.md
 ├── systemd/        Every unit and timer, versioned
 └── assets/         Wake chime
 ```

@@ -21,11 +21,11 @@
 | 6 | [Acceptance harness](#acceptance-harness) | queued |
 | 7 | [CI](#ci) | queued |
 | 8 | [Cloud coding sessions](#cloud-coding-sessions) | queued |
-| 9 | [F5](#f5) | queued, not defined |
+| 9 | [SEC5](#sec5) | queued |
 | 10 | [Own the tutoring calendar](#own-the-tutoring-calendar) | queued |
 | 11 | [Tutoring prep and tracking with Evallo Prepwork](#tutoring-prep-and-tracking-with-evallo-prepwork) | queued |
 | 12 | [Mission Control v0](#mission-control-v0) | queued |
-| 13 | [F4 and F6](#f4-and-f6) | queued |
+| 13 | [SEC4 and SEC6](#sec4-and-sec6) | queued |
 | 14 | [Release control](#release-control) | queued |
 | 15 | [Tutoring reply handling and Evallo commands from Nova](#tutoring-reply-handling-and-evallo-commands-from-nova) | queued |
 | 16 | [Planner bugs and security cleanup](#planner-bugs-and-security-cleanup) | queued |
@@ -37,7 +37,7 @@
 | 22 | [Kitchen](#kitchen) | planned |
 | 23 | [Directions](#directions) | queued |
 | 24 | [Nova on iPad and Mac, with a design system](#nova-on-ipad-and-mac-with-a-design-system) | queued |
-| 25 | [Full security audit](#full-security-audit) | queued, before any errand runs unattended |
+| 25 | [Full security audit](#full-security-audit) | queued, before the errand worker uses any real account or runs unattended |
 | 26 | [Errand worker](#errand-worker) | queued |
 | 27 | [Passive memory](#passive-memory) | queued |
 | 28 | [Proactive layer](#proactive-layer) | queued |
@@ -72,7 +72,7 @@ Live already, and not in the queue: [Sessions and nightly review](#sessions-and-
 * Each phase: plan shown before building, tests, one builder at a time in its own worktree, one verification round, a fresh database backup before its own separate deploy, and a warning before anything touches production. If a usage limit hits, stop at a clean point, never half built.
 * Who builds, what is probed first, and how review ends are in the workflow rules of [AGENTS.md](../AGENTS.md#workflow-rules). Runtime models stay configurable per session type and default to the cheapest that works (`SESSION_MODELS`, Haiku 4.5 for the nightly review). Checking handwritten work needs Opus 5.5 (measured in docs/STUDY.md).
 * School and Learning use the MAS3114 Exam 3 (Monday Nov 30 2026) as their first real data: syllabus import, study plan, first learn and quiz sessions. Source material lives in `~/MILES/source_material/MAS3114/Exam3/`. Every Lesson 19 to 27 topic starts as new; determinants and null space are the prerequisites to check first.
-* The full security audit runs before any errand runs unattended.
+* The full security audit runs before the errand worker uses any real account or runs unattended.
 
 ## Design rules
 
@@ -168,9 +168,9 @@ Carried into this item: the Mac repo's `src/tests/test_evallo_tools.py` imports 
 
 **Status:** queued. Portable backend work in supported cloud sessions; the environment rules are in AGENTS.md (Choose the environment) and [DEV_ENVIRONMENT_CONTRACT.md](DEV_ENVIRONMENT_CONTRACT.md). Scope not written yet. Defined as an item in this position by Lethanial on Nov 28 2026. When its turn comes it starts with a plan and a contract shown to him, like every phase.
 
-## F5
+## SEC5
 
-**Status:** queued, not defined. No item called F5 is written anywhere in the repo. Scope not written yet. Defined as an item in this position by Lethanial on Nov 28 2026. When its turn comes it starts with a plan and a contract shown to him, like every phase.
+**Status:** queued. Login tokens that expire and can be revoked. Security work is tracked by its SEC number here with one neutral line; details stay out of this public repo.
 
 ## Own the tutoring calendar
 
@@ -184,9 +184,12 @@ Carried into this item: the Mac repo's `src/tests/test_evallo_tools.py` imports 
 
 **Status:** queued. Oversight of jobs and operational state; earlier notes are in `docs/work/dev-environment.md`. Scope not written yet. Defined as an item in this position by Lethanial on Nov 28 2026. When its turn comes it starts with a plan and a contract shown to him, like every phase.
 
-## F4 and F6
+## SEC4 and SEC6
 
-**Status:** queued. Two voice safety limits recorded in [KNOWN_LIMITS.md](KNOWN_LIMITS.md): F4 (a successful `cancel_reminder` is still spoken from model text, which can name a different reminder than the one cancelled) and F6 (only a task whose first word is a verb the code knows is held to that verb).
+**Status:** queued. Details stay out of this public repo.
+
+* **SEC4:** approvals signed on the phone after Face ID.
+* **SEC6:** outside text treated as untrusted, so it can never trigger actions.
 
 ## Release control
 
@@ -359,9 +362,9 @@ Planned only, not built.
 
 ## Full security audit
 
-**Status:** queued. Runs before any errand runs unattended.
+**Status:** queued. Runs before the errand worker uses any real account or runs unattended.
 
-After Errand worker is built and before any errand runs unattended, a full security review by an independent review subagent. It covers: everything reachable through the Cloudflare tunnel; JWT and capture key handling; every secret on disk (Apple key, Evallo token, Canvas feed URL, Google credentials and tokens, .env); the agent browser profile; prompt injection from emails, web pages and calendar text; the permission tier on every tool; Tailscale and SSH on the Pi; backups; and logs that might contain secrets. Findings are ranked by severity, and critical ones are fixed before moving on.
+Before the errand worker uses any real account or runs unattended, a full security review by an independent review subagent. It covers: everything reachable through the Cloudflare tunnel; JWT and capture key handling; every secret on disk (Apple key, Evallo token, Canvas feed URL, Google credentials and tokens, .env); the agent browser profile; prompt injection from emails, web pages and calendar text; the permission tier on every tool; Tailscale and SSH on the Pi; backups; and logs that might contain secrets. Findings are ranked by severity, and critical ones are fixed before moving on.
 
 ## Errand worker
 

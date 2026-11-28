@@ -4,7 +4,7 @@ This file is the shared engineering authority for Claude and Codex. [CLAUDE.md](
 
 ## Start with the assignment
 
-Check the task's scope, authorization, environment, branch, HEAD and working tree before editing. Use the [repository map](docs/REPOSITORY_MAP.md) to open only the relevant contract, implementation and tests. Use [isolated development commands](docs/DEVELOPMENT.md) and the [session workflow](docs/SESSION_START.md) as needed. Source and tests describe current behavior. An approved contract governs intended behavior. Surface any relevant conflict before acting and correct stale descriptive docs within scope.
+Check the task's scope, authorization, environment, branch, HEAD and working tree before editing. Use the [repo map](docs/REPO_MAP.md) to open only the relevant contract, implementation and tests. Use [isolated development commands](docs/DEVELOPMENT.md) and the [session workflow](docs/SESSION_START.md) as needed. Source and tests describe current behavior. An approved contract governs intended behavior. Surface any relevant conflict before acting and correct stale descriptive docs within scope.
 
 ## Tiers
 
@@ -90,7 +90,7 @@ Either agent can pick up an approved assignment. Use the [continuation procedure
 - Before any deployment or migration against real data, warn the owner, take a fresh backup at `~/miles/data/backups/miles-before-<what>-<YYYYMMDD-HHMMSS>.db` and prepare rollback. Never restart the voice service during a conversation. Follow the [permanent Evallo restart procedure](docs/ROADMAP.md#evallo-rules-permanent) in every deploy plan that restarts the Pi.
 - Codex never deploys, accesses production or starts another Codex run. Push only with explicit authority. Use normal Git hooks and guards. Report a guard failure and follow the authorized workflow.
 - The owner grants standing authorization for routine local Git branch creation, staging and commits within approved development assignments. Check the branch and working tree, and stage only intended paths. If the sandbox blocks an authorized operation, request approval for that exact Git command. Keep Git hooks and guards active. This authorization is limited to the approved development branch and excludes pushes, changes to `main`, history rewrites, and broader filesystem or network access.
-- Work on the authorized branch or worktree. Keep changes within scope. Nova is a separate repository and requires separate scope. Follow the [approved roadmap](docs/ROADMAP.md) and amendments one phase at a time, with a real use checkpoint between phases. Complete the roadmap security review before permitting any errand worker errand to run unattended. Leave the owner's resume untouched.
+- Work on the authorized branch or worktree. Keep changes within scope. Nova is a separate repository and requires separate scope. Follow the [approved roadmap](docs/ROADMAP.md) and amendments one phase at a time, with a real use checkpoint between phases. Complete the roadmap security audit before the errand worker uses any real account or runs unattended. Leave the owner's resume untouched.
 
 ## Secrets and private data
 
@@ -108,7 +108,7 @@ Either agent can pick up an approved assignment. Use the [continuation procedure
 
 ## Shared contracts and verification
 
-The backend owns shared API contracts. Obtain owner approval for changes and check the relevant roadmap amendments. Keep Nova copies paired with the intended backend revision using the [contract sync instructions](docs/REPOSITORY_MAP.md#shared-api-contracts).
+The backend owns shared API contracts. Obtain owner approval for changes and check the relevant roadmap amendments. Keep Nova copies paired with the intended backend revision using the [contract sync instructions](docs/REPO_MAP.md#shared-api-contracts).
 
 Explain the purpose of code changes and new concepts briefly before building. Keep changes small and logical, favor flat Python, explain the reasons behind code decisions in comments, and keep refactoring within scope. Avoid introducing APScheduler without revisiting the decision. For feature behavior that needs human or hardware validation, use [the testing ladder](docs/TESTING.md) for examples, scripted checks and owner validation. Spell numbers as words in Nova's spoken responses. Use the owner's preferred name by default and reserve the nickname for rare moments of genuine success. Use hyphen free owner facing prose.
 

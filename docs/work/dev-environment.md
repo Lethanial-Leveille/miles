@@ -22,7 +22,7 @@ The owner approved a clean environment, private state, fakes and explicit provid
 
 The [production WebSocket repair](../BACKEND_TODO.md#production-websocket-chat-repair) is queued separately. The compatibility test uses a synthetic chat callback to assert the existing dispatch on the ASGI event loop.
 
-Start from [AGENTS.md](../../AGENTS.md), [the development commands](../DEVELOPMENT.md), and [the subsystem map](../REPOSITORY_MAP.md). The runtime boundary, isolated entry points, and acceptance checks are in [dev_guards.py](../../scripts/dev_guards.py), [dev_runtime.py](../../scripts/dev_runtime.py), and [test_dev_environment.py](../../src/tests/test_dev_environment.py).
+Start from [AGENTS.md](../../AGENTS.md), [the development commands](../DEVELOPMENT.md), and [the subsystem map](../REPO_MAP.md). The runtime boundary, isolated entry points, and acceptance checks are in [dev_guards.py](../../scripts/dev_guards.py), [dev_runtime.py](../../scripts/dev_runtime.py), and [test_dev_environment.py](../../src/tests/test_dev_environment.py).
 
 ## Verification of corrections
 

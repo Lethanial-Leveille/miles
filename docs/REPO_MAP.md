@@ -1,6 +1,6 @@
 # Repo map: find a feature in two minutes
 
-One page across all three repos. For the backend's own areas in more detail see [REPOSITORY_MAP.md](REPOSITORY_MAP.md). Rules start at [AGENTS.md](../AGENTS.md), the order of work is [ROADMAP.md](ROADMAP.md), open findings are [KNOWN_LIMITS.md](KNOWN_LIMITS.md).
+The one map across all three repos (it replaced a separate backend only map on Nov 28 2026). Rules start at [AGENTS.md](../AGENTS.md), the order of work is [ROADMAP.md](ROADMAP.md), open findings are [KNOWN_LIMITS.md](KNOWN_LIMITS.md).
 
 ## The three repos
 
@@ -18,6 +18,8 @@ Paths are relative to the repo named in the first column. Contracts and handoffs
 
 | Feature | Code | Tests | Contract | Handoff or work notes |
 |---|---|---|---|---|
+| API and auth | backend `src/server.py`, `auth.py`, `scripts/dev` | `test_app_views`, `test_device_token`, `test_dev_environment` | [INFRASTRUCTURE.md](INFRASTRUCTURE.md), [DEV_ENVIRONMENT_CONTRACT.md](DEV_ENVIRONMENT_CONTRACT.md) | none |
+| SQLite and migrations | backend `src/database.py` (ordered migrations), `scripts/dev_guards.py` | `test_database`, `test_evallo_filter` (migration 45) | [DEV_ENVIRONMENT_CONTRACT.md](DEV_ENVIRONMENT_CONTRACT.md#c4-sqlite-and-synthetic-fixtures) | none |
 | Brain and tools (voice and text turns) | backend `src/brain.py`, `tools.py`, `task_intent.py` | `test_brain_loop`, `test_task_intent*`, `test_voice_action_safety` | [BRAIN.md](BRAIN.md), `work/tasks-intent-contract.md` | `work/tasks-voice-safety-amendment.md` |
 | Tasks and lists | backend `src/tasks_view.py`, `lists_tasks.py`, `task_scheduling.py`; Nova `Views/TasksView.swift`, `ListsView.swift` | `test_tasks_api`, `test_lists_tasks*`, `test_task_*` | [TASKS_CONTRACT.md](TASKS_CONTRACT.md) | [handoffs/](handoffs/), `work/tasks-*.md` |
 | Sessions and nightly review | backend `src/sessions.py`, `nightly_review.py`, `session_*.py`; Nova `Views/SessionsListView.swift` | `test_sessions*`, `test_review_v2`, `test_session_*` | [SESSIONS_CONTRACT.md](SESSIONS_CONTRACT.md), [SESSIONS.md](SESSIONS.md) | none |
@@ -36,6 +38,18 @@ Paths are relative to the repo named in the first column. Contracts and handoffs
 | Dev environment and the review loop | backend `scripts/dev`, `scripts/loop`, `scripts/dev_runtime.py` | `test_dev_environment` | [DEV_ENVIRONMENT_CONTRACT.md](DEV_ENVIRONMENT_CONTRACT.md), [DEVELOPMENT.md](DEVELOPMENT.md) | `work/dev-environment.md`, `work/engineering-workflow.md` |
 | Deploy and the Pi | backend `scripts/deploy.sh`, `systemd/` | `scripts/tests` | [INFRASTRUCTURE.md](INFRASTRUCTURE.md) | none |
 
+## Test setup notes
+
+- Headless profile (the default for `./scripts/dev`): synthetic Claude and Calendar, fake Google (`src/fake_calendar.py`), local model and embedding substitutes, mock push transports, synthetic Evallo snapshots, no dev workers. Defaults are in [config.py](../src/config.py); follow the subsystem entry point for settings it does not own.
+- Platform audio tools, speech models, radar and browser automation are separate operator paths, not part of the headless setup. The [testing ladder](TESTING.md) says which checks are scripted and which are his (subjective or hardware).
+- Capture uses its own scoped key. The Mac agent's token has scope "agent" and can never approve.
+
+## Workflows and references
+
+- [Engineering sessions](SESSION_START.md) covers starting, continuing, wrapping up and handing off work. [Engineering history](ENGINEERING_HISTORY.md) holds older decisions and measurements for targeted reference.
+- [Roadmap](ROADMAP.md) governs phase order. [Backend backlog](BACKEND_TODO.md) indexes deferred work and older research, with finished items in [archive/](archive/).
+- [Latency measurements](LATENCY.md), [incident records](INCIDENTS.md), [study system](STUDY.md) and the [duplicate memory app handoff](APP_HANDOFF_DUPLICATES.md) are available when their topics come up.
+
 ## Reading order for a fresh agent
 
 1. [AGENTS.md](../AGENTS.md): tiers, the loop, what counts as a Blocker, production limits, secrets.
@@ -43,4 +57,8 @@ Paths are relative to the repo named in the first column. Contracts and handoffs
 3. [ROADMAP.md](ROADMAP.md) for where the work sits in the order, [KNOWN_LIMITS.md](KNOWN_LIMITS.md) for what is knowingly open.
 4. [SESSION_START.md](SESSION_START.md) when picking up someone else's branch.
 
-Older decisions and measurements: [ENGINEERING_HISTORY.md](ENGINEERING_HISTORY.md). Finished backlog items: [archive/](archive/).
+## Shared API contracts
+
+The backend owns [Sessions](SESSIONS_CONTRACT.md), [Tasks](TASKS_CONTRACT.md) and any other API contract shared with Nova. Obtain owner approval and update the backend contract first. Record the exact intended backend commit and Nova commit in the handoff. In separately authorized Nova work, copy the approved backend contract from that backend commit, record its SHA with the Nova copy update, and compare the two files byte for byte. For example, run `git -C <backend> show <backend-sha>:docs/SESSIONS_CONTRACT.md | diff -u - <nova>/docs/SESSIONS_CONTRACT.md` after resolving the placeholders. Verify the paired behavior with the relevant backend and client tests. A mismatch needs an explicit pairing or reconciliation before relying on the copy.
+
+The published Nova Sessions copy preserved in local `origin/main` at `d9e8c9f` (contract last updated in `c84a151`) differs from the backend at `6e72b9e` (contract last updated in `a79808a`). Nova's copy ends its migration history at 42. The backend also documents migration 44 and nightly review v2, including undated tasks going to the backlog and code authored proposals returned as ordinary assistant text. Reconcile the copy in authorized Nova work against the backend SHA selected for that work.

@@ -8,7 +8,7 @@
 
 ## Decisions and progress
 
-[AGENTS.md](../../AGENTS.md) owns shared rules. [CLAUDE.md](../../CLAUDE.md) owns Claude coordination. [Engineering sessions](../SESSION_START.md) owns the handoff workflow and links to the [historical decision log](../ENGINEERING_HISTORY.md). The [backend backlog](../BACKEND_TODO.md) points to the approved roadmap for phase order and retains earlier research. The [repository map](../REPOSITORY_MAP.md#shared-api-contracts) records contract ownership and pairing. The [README](../../README.md#long-term-direction) records the product direction.
+[AGENTS.md](../../AGENTS.md) owns shared rules. [CLAUDE.md](../../CLAUDE.md) owns Claude coordination. [Engineering sessions](../SESSION_START.md) owns the handoff workflow and links to the [historical decision log](../ENGINEERING_HISTORY.md). The [backend backlog](../BACKEND_TODO.md) points to the approved roadmap for phase order and retains earlier research. The [repository map](../REPO_MAP.md#shared-api-contracts) records contract ownership and pairing. The [README](../../README.md#long-term-direction) records the product direction.
 
 Treat this as Medium documentation work since it changes coordination across multiple entry points. The accepted infrastructure contract and roadmap remain intact.
 

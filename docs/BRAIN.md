@@ -8,9 +8,9 @@
 > intent measured Aug 12 and Aug 13 2026. The streaming section was re
 > verified against source Sep 13 2026 and corrected.
 >
-> Verify current settings in source using the [repository map](REPOSITORY_MAP.md). Dated values here describe the evidence available at the time.
+> Verify current settings in source using the [repository map](REPO_MAP.md). Dated values here describe the evidence available at the time.
 
-Up: [Repository map](REPOSITORY_MAP.md) · [Engineering sessions](SESSION_START.md) ·
+Up: [Repository map](REPO_MAP.md) · [Engineering sessions](SESSION_START.md) ·
 [BACKEND_TODO.md](BACKEND_TODO.md) · [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md) ·
 [LATENCY.md](LATENCY.md) · [VOICE_OUTPUT.md](VOICE_OUTPUT.md) ·
 [BRAIN.md](BRAIN.md) · [INFRASTRUCTURE.md](INFRASTRUCTURE.md) ·
