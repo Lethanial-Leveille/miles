@@ -1254,7 +1254,8 @@ async def _answer_in_code(text, user_text, device, channel, tier, on_text, held,
         # Only a question that was delivered in full can be answered next turn.
         pending_action.present_choice()
     if final_text:
-        save_message("assistant", heard.text() if heard.cut else final_text, device=device)
+        save_message("assistant", heard.text() if heard.cut else final_text, device=device,
+                     channel=channel)
     if tier == "hokage" and not safety.cancelled.is_set():
         memory_pass.notice_later(user_text, datetime.now(), [])
     return TurnResult(text=final_text)
@@ -1322,7 +1323,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     """
     model = _select_model()
     timing.note_model(model)
-    user_message_id = save_message("user", user_text, device=device)
+    user_message_id = save_message("user", user_text, device=device, channel=channel)
 
     # Decide what this turn may change before the model sees any tool. A turn
     # that fails the cheap check gets no mutating tool at all.
@@ -1803,7 +1804,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     if final_text:
         # What he heard, not what was written, once he cut her off.
         reply_id = save_message("assistant", heard.text() if heard.cut else final_text,
-                                device=device)
+                                device=device, channel=channel)
     _note_what_was_left(heard, written, leaks_seen,
                         _plays_in_the_room(channel, device), ignored,
                         message_id=reply_id)

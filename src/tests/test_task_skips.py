@@ -30,9 +30,9 @@ def _run(path):
         database._run_migrations(conn)
 
 
-def test_head_is_49_and_registered_after_048():
+def test_head_is_50_and_registered_after_048():
     versions = [version for version, _ in database.MIGRATIONS]
-    assert versions[-3:] == [47, 48, 49]
+    assert versions[-4:] == [47, 48, 49, 50]
 
 
 def test_048_at_47_keeps_every_seeded_row_and_adds_only_the_table(tmp_path, monkeypatch):
@@ -50,7 +50,7 @@ def test_048_at_47_keeps_every_seeded_row_and_adds_only_the_table(tmp_path, monk
     _run(path)
     _run(path)
     with closing(sqlite3.connect(path)) as conn:
-        assert _version(conn) == 49
+        assert _version(conn) == 50
         after = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         assert after - tables == {"task_skips"}
         for table, rows in before.items():
@@ -78,7 +78,7 @@ def test_048_rolls_back_on_injected_failure_and_retries(tmp_path, monkeypatch):
         assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'task_skips'").fetchone() is None
     _run(path)
     with closing(sqlite3.connect(path)) as conn:
-        assert _version(conn) == 49
+        assert _version(conn) == 50
 
 
 # ── the receipt table as the earlier 047 created it ──
@@ -100,7 +100,7 @@ def test_049_repairs_a_database_that_applied_the_original_047(tmp_path, monkeypa
     _run(path)
     monkeypatch.setattr(database, "DB_PATH", path)
     with closing(sqlite3.connect(path)) as conn:
-        assert _version(conn) == 49
+        assert _version(conn) == 50
         rows = {r[0]: r[1:] for r in conn.execute(
             "SELECT request_id, reply, state, created_at FROM chat_request_receipts")}
     # Identities are kept, and unknown times read as old.

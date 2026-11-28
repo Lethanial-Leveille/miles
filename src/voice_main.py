@@ -141,7 +141,7 @@ def _run_local(match, user_text):
     print(f"(local intent: {match.name} {match.slots} @ {match.score:.2f})", flush=True)
     fallback, key, dismissed = local_intent.execute(match)
 
-    save_message("user", user_text)
+    save_message("user", user_text, channel="voice")
     # What history records is what she actually said, which is why play returns
     # the variant text rather than a bool. The fallback is only reached when
     # nothing is rendered for the key.
@@ -155,7 +155,7 @@ def _run_local(match, user_text):
     if spoken is None:
         spoken = fallback
         tts.speak(spoken)
-    save_message("assistant", spoken)
+    save_message("assistant", spoken, channel="voice")
     return TurnResult(text=spoken, dismissed=dismissed)
 
 
@@ -199,10 +199,10 @@ def _run_go_on(user_text):
     if not said:
         return None
     print("(local intent: go_on)", flush=True)
-    save_message("user", user_text)
+    save_message("user", user_text, channel="voice")
     # Cut again, what is still unsaid belongs to this reply, so a later stop to
     # nothing finishes this row and not the one before it.
-    resume.attach(save_message("assistant", said))
+    resume.attach(save_message("assistant", said, channel="voice"))
     return TurnResult(text=said, dismissed=False)
 
 
@@ -215,8 +215,8 @@ def _run_test_paragraph(user_text):
     resume.keep(TEST_PARAGRAPH)
     said = speak_what_was_left()
     print("(local intent: test_paragraph)", flush=True)
-    save_message("user", user_text)
-    resume.attach(save_message("assistant", said))
+    save_message("user", user_text, channel="voice")
+    resume.attach(save_message("assistant", said, channel="voice"))
     return TurnResult(text=said, dismissed=False)
 
 

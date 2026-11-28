@@ -1249,6 +1249,20 @@ def _migration_049_receipt_expiry_columns(conn):
         conn.execute("UPDATE chat_request_receipts SET state = 'done' WHERE reply IS NOT NULL")
 
 
+def _migration_050_history_channel(conn):
+    """Which channel a turn arrived on, voice or text, so a mistake can be traced
+    to how it was said. Nullable: rows written before this stay NULL, because
+    nothing records how they were said. The same shape as 046, so a column that
+    is already there is accepted and one of another kind is refused."""
+    for _, name, kind, required, default, primary_key in conn.execute("PRAGMA table_info(conversation_history)"):
+        if name.casefold() == "channel":
+            if (kind.upper() != "TEXT" or required or primary_key
+                    or (default is not None and default.strip().upper() != "NULL")):
+                raise sqlite3.OperationalError("Incompatible conversation_history.channel column")
+            return
+    conn.execute("ALTER TABLE conversation_history ADD COLUMN channel TEXT")
+
+
 # The reply text of a finished request is kept a day, so a lost response can be
 # replayed, then erased. The row stays a week as proof the id was used, then goes.
 RECEIPT_REPLY_HOURS = 24
@@ -1405,6 +1419,7 @@ MIGRATIONS = [
     (47, _migration_047_chat_request_receipts),
     (48, _migration_048_task_skips),
     (49, _migration_049_receipt_expiry_columns),
+    (50, _migration_050_history_channel),
 ]
 
 # Migrations from this one on run inside one transaction with their version update.
@@ -2299,12 +2314,14 @@ def delete_memory(memory_id: int) -> bool:
 
 # ── Conversation history ──
 
-def save_message(role, content, device="pi"):
+def save_message(role, content, device="pi", channel=None):
+    """channel is "voice" or "text" when the turn has one, else NULL."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
-        "INSERT INTO conversation_history (role, content, created_at, source_device) VALUES (?, ?, ?, ?)",
-        (role, content, datetime.now().isoformat(), device)
+        "INSERT INTO conversation_history (role, content, created_at, source_device, channel) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (role, content, datetime.now().isoformat(), device, channel)
     )
     message_id = c.lastrowid
     conn.commit()
