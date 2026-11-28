@@ -4,23 +4,62 @@ This file is the shared engineering authority for Claude and Codex. [CLAUDE.md](
 
 ## Start with the assignment
 
-Check the task's scope, authorization, environment, branch, HEAD and working tree before editing. Use the [repository map](docs/REPOSITORY_MAP.md) to open only the relevant contract, implementation and tests. Use [isolated development commands](docs/DEVELOPMENT.md) and the [session workflow](docs/SESSION_START.md) as needed. Read only the files supplied for an independent review under the owner's narrower review scope. Source and tests describe current behavior. An approved contract governs intended behavior. Surface any relevant conflict before acting and correct stale descriptive docs within scope.
+Check the task's scope, authorization, environment, branch, HEAD and working tree before editing. Use the [repository map](docs/REPOSITORY_MAP.md) to open only the relevant contract, implementation and tests. Use [isolated development commands](docs/DEVELOPMENT.md) and the [session workflow](docs/SESSION_START.md) as needed. Source and tests describe current behavior. An approved contract governs intended behavior. Surface any relevant conflict before acting and correct stale descriptive docs within scope.
 
-Classify by risk, affected surfaces, dependencies and consequences. Choose the highest applicable class and reassess if the scope changes.
+## Tiers
 
-| Class | When it applies | Workflow |
+Pick the highest tier that applies and reassess if the scope changes.
+
+| Tier | When it applies | What to do |
 |---|---|---|
-| Small | Localized, reversible work with known behavior and limited fallout | Implement directly, run targeted verification and self review. |
-| Medium | Coordinated changes across components or behavior with meaningful but contained regression risk | Give a concise plan, run relevant regression tests and review the affected behavior in proportion to the risk. |
-| Large | Architecture, migrations, security boundaries, production behavior, real commitments or similarly consequential changes | Obtain an owner approved contract before implementation and follow the applicable independent contract and implementation review gates. |
+| Small | A UI fix or a clear bug | Add a test. Review your own change. |
+| Medium | A new tool, screen or job | Write a five line plan. Get one Codex review. |
+| Large | Migrations, texting people, changing Evallo, money, auth or secrets | Write a short contract and get Lethanial's approval. Get a Codex review and one focused verification. |
 
-Use ordinary reasoning for routine implementation and documentation. Use High for difficult architectural decisions and material risks. Reserve Astra High for genuinely consequential independent reviews, within the owner's configured workflow. Use prior findings and avoid repeated planning, broad exploration and loading unrelated files. Independent reviews are limited to one contract review and one implementation review per phase. A repeat requires owner approval and a material unresolved risk.
+## The loop
 
-## Work together or independently
+1. Build with tests.
+2. Codex reviews and rates each finding Blocker, Should fix or Note.
+3. Fix every Blocker and every Should fix that has one obvious answer.
+4. Codex verifies only those fixes. Then stop.
 
-The owner may ask Claude and Codex to collaborate, or ask either agent to work alone. Either agent can plan, implement, test and document an approved assignment within its role and permissions. In collaboration, agree who owns the next step and keep one active writer per worktree. When an agent becomes unavailable or reaches its usage limit, use the [continuation procedure](docs/SESSION_START.md) and the existing contract, branch, handoff and test evidence.
+Run it with `scripts/loop` (see `scripts/loop --help`). It does steps 2 to 4 and prints the final report.
 
-A required independent review must use a fresh reviewer session that did not draft the contract or implement the changes under review. Follow the configured reviewer, scope and review limits. The owner or authorized coordinator arranges the review. If it cannot be completed, preserve the work, record the pending gate and stop at that gate. A change of agent or operating mode carries forward all approved scope, holds, review gates, permission limits and requirements for separate approval.
+- Two review rounds at most. Anything still open goes in [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md), unless it is a Blocker.
+- Codex reads only the diff, the files it touches and the contract. It runs read only, never deploys and never touches production. Before a run, check usage with `python3 ~/.codex/usage.py` and tell Lethanial if it is over its threshold.
+- Use Astra High for the review. Use Opus only with his approval.
+
+## What counts as a Blocker
+
+A finding is a Blocker only if it can realistically happen in his real life and would do one of these:
+
+- lose data
+- contact a real person wrongly
+- change Evallo wrongly
+- spend money
+- say something false
+
+Everything else is Should fix or Note.
+
+## When to ask Lethanial
+
+Ask only when:
+
+- two valid fixes change behavior he would notice
+- the scope grows past the plan
+- a Blocker survives round two
+
+Otherwise decide, record the reason and keep going.
+
+## Limits
+
+- At most two feature branches are open at once.
+- Do not add new workflow documents unless he asks.
+- The final report has five parts: built, found, fixed, deferred, questions for him.
+
+## Switching agents
+
+Either agent can pick up an approved assignment. Use the [continuation procedure](docs/SESSION_START.md) and the existing contract, branch, handoff and test evidence. Keep one active writer per worktree. A change of agent carries forward all approved scope, holds and permission limits.
 
 ## Choose the environment
 

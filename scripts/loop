@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""Run the review loop from AGENTS.md as one command.
+
+    scripts/loop --base main [--contract docs/X_CONTRACT.md] [--tests "CMD"]
+
+Steps: Codex reviews the diff (round 1), Claude fixes Blockers and Should fix
+items, the tests run, Codex verifies only those fixes (round 2), leftovers go
+in docs/KNOWN_LIMITS.md, and a five part report prints. It never pushes and
+never deploys. Codex runs read only on a scratch copy of the diff and the
+files the diff touches.
+
+Exit codes: 0 done, 2 bad setup, 3 a Blocker survived round two (ask Lethanial),
+4 Codex usage over its threshold (rerun with --usage-ok after telling him),
+5 tests fail after the fixes.
+"""
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+RATINGS = ("Blocker", "Should fix", "Note")
+# What a Blocker may do in his real life. Anything else is not a Blocker.
+HARMS = ("data_loss", "wrong_contact", "wrong_evallo_change", "spend_money", "false_statement")
+SKIP_NAMES = ("uv.lock",)
+SKIP_SUFFIXES = (".pem", ".key", ".db", ".sqlite", ".png", ".jpg", ".wav", ".bin")
+MAX_FILE_BYTES = 200_000
+
+REVIEW_PROMPT = """Adversarial review of the changes in diff.patch (git diff {base}...HEAD).
+Challenge the approach and design. Find correctness, error handling, security,
+data loss and contract drift problems. The changed files are under files/{contract_note}
+Do not edit files.
+
+Rate every finding Blocker, Should fix or Note.
+A finding is a Blocker ONLY if it can realistically happen in the owner's real life
+AND would do one of: data_loss, wrong_contact (contact a real person wrongly),
+wrong_evallo_change, spend_money, false_statement. Otherwise it is Should fix or Note.
+
+Reply with ONE JSON object and nothing else:
+{{"findings": [{{"id": "F1", "rating": "Blocker|Should fix|Note", "harm": "<one of the five above, or none>",
+"file": "path", "line": 1, "summary": "one sentence", "scenario": "how it happens in real life",
+"obvious_fix": true, "fix": "the fix", "changes_visible_behavior": false}}]}}
+obvious_fix is false when two valid fixes exist. changes_visible_behavior is true when
+those fixes differ in behavior the owner would notice."""
+
+VERIFY_PROMPT = """Verify ONLY the fixes in fixes.patch against the findings in findings.json.
+For each finding say whether the fix resolves it. Also report any Blocker or Should fix
+that the fixes THEMSELVES introduced; do not re-review anything else. Same rating rules:
+a Blocker needs a realistic real life case of data_loss, wrong_contact, wrong_evallo_change,
+spend_money or false_statement. Do not edit files.
+
+Reply with ONE JSON object and nothing else:
+{{"results": [{{"id": "F1", "status": "resolved|unresolved", "note": "short"}}],
+"introduced": [{{"id": "N1", "rating": "Blocker|Should fix|Note", "harm": "...", "file": "path",
+"line": 1, "summary": "one sentence", "scenario": "how it happens"}}]}}"""
+
+FIX_PROMPT = """Fix ONLY the findings in the JSON below, in this repository. Rules:
+- Add or update a test for each fix. Keep changes small and in scope.
+- Run the tests with: {tests}
+- Commit locally with a clear message. Do not push. Do not deploy. Do not touch production.
+- Never print secrets. Use fake names and emails only.
+- If a finding cannot be fixed safely, leave it and say why in your final message.
+
+Findings:
+{findings}
+"""
+
+
+def run(cmd, cwd=None, input_text=None, check=False):
+    return subprocess.run(cmd, cwd=cwd, input=input_text, stdin=None if input_text else subprocess.DEVNULL,
+                          capture_output=True, text=True, check=check)
+
+
+def git(*args, cwd):
+    r = run(["git", *args], cwd=cwd)
+    if r.returncode != 0:
+        sys.exit(f"git {' '.join(args)} failed: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+def parse_json(text):
+    """Pull the JSON object out of a model reply, tolerating code fences."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("no JSON object in reply")
+    return json.loads(text[start:end + 1])
+
+
+def normalize(f):
+    """Enforce the Blocker rule mechanically: no real life harm, no Blocker."""
+    f = dict(f)
+    if f.get("rating") not in RATINGS:
+        f["rating"] = "Should fix"
+    if f["rating"] == "Blocker" and f.get("harm") not in HARMS:
+        f["rating"] = "Should fix"
+        f["downgraded"] = True
+    f.setdefault("obvious_fix", True)
+    f.setdefault("changes_visible_behavior", False)
+    return f
+
+
+def partition(findings):
+    """Return (fix, ask, defer). Ask only when two valid fixes change visible behavior."""
+    fix, ask, defer = [], [], []
+    for f in findings:
+        if f["rating"] == "Note":
+            defer.append(f)
+        elif not f["obvious_fix"] and f["changes_visible_behavior"]:
+            ask.append(f)
+        else:
+            fix.append(f)
+    return fix, ask, defer
+
+
+def build_scratch(root, base, contract, scratch):
+    diff = git("diff", f"{base}...HEAD", cwd=root)
+    (scratch / "diff.patch").write_text(diff + "\n")
+    names = git("diff", "--name-only", f"{base}...HEAD", cwd=root).splitlines()
+    for name in names:
+        p = root / name
+        if (not p.is_file() or p.name in SKIP_NAMES or p.name.startswith(".env")
+                or p.suffix in SKIP_SUFFIXES or p.stat().st_size > MAX_FILE_BYTES):
+            continue
+        dest = scratch / "files" / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(p, dest)
+    note = ""
+    if contract:
+        shutil.copy2(root / contract, scratch / "contract.md")
+        note = " The contract is contract.md."
+    return note
+
+
+def codex(codex_bin, profile, scratch, prompt, out_name):
+    out = scratch / out_name
+    r = run([codex_bin, "exec", "-p", profile, "-s", "read-only", "--skip-git-repo-check",
+             "-C", str(scratch), "-o", str(out), prompt])
+    if r.returncode != 0 or not out.exists():
+        sys.exit(f"codex failed (exit {r.returncode}): {r.stderr.strip()[:300]}")
+    return parse_json(out.read_text())
+
+
+def write_known_limits(root, items):
+    path = root / "docs" / "KNOWN_LIMITS.md"
+    path.parent.mkdir(exist_ok=True)
+    if not path.exists():
+        path.write_text("# Known limits\n\nOpen findings that are not Blockers. Each was reviewed and "
+                        "deliberately left. Remove an entry when it is fixed.\n")
+    with path.open("a") as fh:
+        for f in items:
+            fh.write(f"\n- **{f['rating']}** `{f.get('file', '?')}:{f.get('line', '?')}` "
+                     f"{f.get('summary', '')} (found by the review loop at {git('rev-parse', '--short', 'HEAD', cwd=root)})\n")
+
+
+def report(built, found, fixed, deferred, questions):
+    def block(title, lines):
+        return f"## {title}\n" + ("\n".join(f"- {x}" for x in lines) if lines else "- none") + "\n"
+    return "\n".join([block("Built", built), block("Found", found), block("Fixed", fixed),
+                      block("Deferred", deferred), block("Questions for you", questions)])
+
+
+def fmt(f):
+    return f"[{f['rating']}] {f.get('id', '?')} {f.get('file', '?')}:{f.get('line', '?')} {f.get('summary', '')}"
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Review loop: review, fix, verify, report. Never pushes or deploys.")
+    ap.add_argument("--base", default="main", help="branch the work is compared with (default main)")
+    ap.add_argument("--contract", help="contract file, relative to the repo, for Large work")
+    ap.add_argument("--tests", help="test command (default ./scripts/dev test)")
+    ap.add_argument("--usage-ok", action="store_true", help="you were told Codex usage is high and said go")
+    ap.add_argument("--dry-run", action="store_true", help="show what would run, call no model")
+    a = ap.parse_args(argv)
+
+    root = Path(git("rev-parse", "--show-toplevel", cwd=os.getcwd()))
+    tests = a.tests or ("./scripts/dev test" if (root / "scripts/dev").exists() else "python3 -m pytest src/tests -q")
+    codex_bin = os.environ.get("LOOP_CODEX", "codex")
+    claude_bin = os.environ.get("LOOP_CLAUDE", "claude")
+    usage = os.environ.get("LOOP_USAGE", str(Path.home() / ".codex/usage.py"))
+
+    if git("status", "--porcelain", cwd=root):
+        sys.exit("Working tree is not clean. Commit or set aside the build first.")
+    if git("rev-parse", a.base, cwd=root) == git("rev-parse", "HEAD", cwd=root):
+        sys.exit(f"Nothing to review: HEAD equals {a.base}.")
+    if a.contract and not (root / a.contract).is_file():
+        sys.exit(f"Contract not found: {a.contract}")
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
+    built = [f"{branch}: {git('rev-list', '--count', f'{a.base}..HEAD', cwd=root)} commits over {a.base}"]
+
+    if a.dry_run:
+        print(f"Would review {branch} against {a.base} with Codex (astra-high, read only),\n"
+              f"fix with Claude (sonnet), test with `{tests}`, verify with Codex, then report.")
+        return 0
+
+    u = run([sys.executable, usage])
+    print(u.stdout.strip())
+    if u.returncode == 2 and not a.usage_ok:
+        print("Codex usage is over its threshold. Tell Lethanial, then rerun with --usage-ok.")
+        return 4
+
+    scratch = Path(tempfile.mkdtemp(prefix="miles-loop."))
+    os.chmod(scratch, 0o700)
+    note = build_scratch(root, a.base, a.contract, scratch)
+
+    # Round 1: review.
+    r1 = codex(codex_bin, "astra-high", scratch, REVIEW_PROMPT.format(base=a.base, contract_note=note), "round1.json")
+    findings = [normalize(f) for f in r1.get("findings", [])]
+    for n, f in enumerate(findings, 1):
+        f.setdefault("id", f"F{n}")
+    found = [fmt(f) + (" (downgraded: no real life harm)" if f.get("downgraded") else "") for f in findings]
+    fix, ask, defer = partition(findings)
+    questions = [f"Two valid fixes change behavior you would notice: {fmt(f)}. Fix options: {f.get('fix', '?')}" for f in ask]
+    fixed, deferred = [], [fmt(f) for f in defer]
+
+    surviving_blocker = False
+    if fix:
+        before = git("rev-parse", "HEAD", cwd=root)
+        (scratch / "findings.json").write_text(json.dumps(fix, indent=1))
+        allowed = ["Read", "Edit", "Write", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)",
+                   "Bash(git diff:*)", f"Bash({tests}:*)", "Bash(python3:*)"]
+        r = run([claude_bin, "-p", "--model", "sonnet", "--permission-mode", "acceptEdits",
+                 "--allowedTools", *allowed], cwd=root,
+                input_text=FIX_PROMPT.format(tests=tests, findings=json.dumps(fix, indent=1)))
+        if r.returncode != 0:
+            sys.exit(f"claude fix step failed (exit {r.returncode}): {r.stderr.strip()[:300]}")
+        if git("status", "--porcelain", cwd=root):
+            git("add", "-A", cwd=root)
+            git("commit", "-m", "Fix review loop findings", cwd=root)
+        t = subprocess.run(tests, shell=True, cwd=root, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        if t.returncode != 0:
+            print((t.stdout + t.stderr)[-1500:])
+            print("Tests fail after the fixes. Stopped before verification.")
+            return 5
+        # Round 2: verify only the fixes, then stop.
+        (scratch / "fixes.patch").write_text(git("diff", f"{before}..HEAD", cwd=root) + "\n")
+        r2 = codex(codex_bin, "astra-high", scratch, VERIFY_PROMPT, "round2.json")
+        status = {x.get("id"): x.get("status") for x in r2.get("results", [])}
+        introduced = [normalize(f) for f in r2.get("introduced", [])]
+        leftovers = []
+        for f in fix:
+            if status.get(f["id"]) == "resolved":
+                fixed.append(fmt(f))
+            elif f["rating"] == "Blocker":
+                surviving_blocker = True
+                questions.append(f"Blocker still open after round two: {fmt(f)}. Is the design wrong, or the fix?")
+            else:
+                leftovers.append(f)
+        for f in introduced:
+            if f["rating"] == "Blocker":
+                surviving_blocker = True
+                questions.append(f"Blocker introduced by a fix: {fmt(f)}")
+            elif f["rating"] == "Should fix":
+                leftovers.append(f)
+        deferred += [fmt(f) for f in leftovers]
+        defer += leftovers
+    elif not ask:
+        fixed.append("nothing needed fixing")
+
+    # Open items other than Blockers go in KNOWN_LIMITS.md. Questions are not written down; they are asked.
+    if defer:
+        write_known_limits(root, defer)
+        git("add", "docs/KNOWN_LIMITS.md", cwd=root)
+        git("commit", "-m", "Record review loop findings in KNOWN_LIMITS", cwd=root)
+
+    text = report(built, found, fixed, deferred, questions)
+    (scratch / "report.md").write_text(text)
+    print(text)
+    print(f"Scratch copy and report: {scratch}")
+    return 3 if (surviving_blocker or ask) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
