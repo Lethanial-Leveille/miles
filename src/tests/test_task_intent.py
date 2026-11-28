@@ -167,10 +167,19 @@ def test_supported_adds_still_work_through_the_intent_step(turn, db, utterance, 
         assert task["scheduled_for"] == db.task_day() and task["due_date"] is None
 
 
-def test_a_first_day_is_refused_because_voice_cannot_store_it(turn, db):
-    result = asyncio.run(turn.run("add reading every day starting Monday",
-                                  intent=Intent("task_add", "reading", "every day starting Monday")))
-    assert "Nothing was changed" in result.text and not active(db, "reading")
+def test_a_supported_first_day_is_accepted_and_carried_to_the_write(turn, db):
+    """The scheduling amendment allows "starting <day>" for a daily task, so the
+    voice path stores it instead of refusing it."""
+    from datetime import timedelta
+    first = date.fromisoformat(db.task_day()) + timedelta(days=1)
+    spoken = first.strftime("%A")
+    result = asyncio.run(turn.run(
+        f"add reading every day starting tomorrow",
+        [block("task_add", {"task": "reading", "recurrence": "daily", "start_date": first.isoformat()})],
+        intent=Intent("task_add", "reading", "every day starting tomorrow")))
+    [row] = active(db, "reading")
+    assert db.get_task(row[0])["start_date"] == first.isoformat() and "Added the daily task" in result.text
+    assert spoken in result.text
 
 
 def test_the_validator_sees_spoken_counts_and_dawn():
