@@ -189,3 +189,16 @@ def test_a_reminder_time_with_an_offset_is_compared_as_local_time():
     assert verdict.gate.permits("set_reminder", {"content": "call mom", "due": due})
     late = (datetime.now().astimezone() + timedelta(hours=3)).isoformat(timespec="seconds")
     assert not verdict.gate.permits("set_reminder", {"content": "call mom", "due": late})
+
+
+# ── F11: a day he said that the intent left out still binds the reminder ──
+
+def test_tomorrow_the_intent_did_not_copy_still_means_tomorrow():
+    from datetime import datetime, timedelta
+    said = "remind me to call the bank tomorrow at 5 pm"
+    verdict = task_intent.validate(Intent("reminder", "call the bank", "at 5 pm"), said, WEDNESDAY)
+    now = datetime.now()
+    at_five = now.replace(hour=17, minute=0, second=0, microsecond=0)
+    assert verdict.gate.permits("set_reminder", {"content": "call the bank",
+                                                 "due": (at_five + timedelta(days=1)).isoformat()})
+    assert not verdict.gate.permits("set_reminder", {"content": "call the bank", "due": at_five.isoformat()})
