@@ -4,6 +4,12 @@ Open findings that are not Blockers. Each was reviewed and deliberately left. Re
 
 Labels compare this branch with production (`main` at 51676b9), measured by running the same scripted model through both trees. **REGRESSION** means the branch behaves worse than production for that scenario. **PRE EXISTING** means production does the same or worse.
 
+## First fix after this deploy
+
+- **W1, a false "Done" on a misclassified no_change turn.** REGRESSION, the original false success bug, now rarer but not gone. The intent model picks `no_change` for a request that really was a change, the covered tools are hidden, and the model's own text ("Done, I added milk") is spoken although nothing ran. Production would have run the action, so on this scenario the branch is worse. A safety net that replaced such replies with "Nothing was changed." was built and then removed before this deploy, because Codex showed it could also replace a correct answer to "did you add milk?" with a false denial. The next fix has to tell the two cases apart without a word list on the reply, for example by checking this turn's actual tool results, or by making the intent call itself harder to misclassify. Decided by the owner, Nov 27 2026.
+
+## Other open items
+
 - **Should fix** `src/task_intent.py` PRE EXISTING. Permanent-stop keywords take priority even when explicitly negated ("don't stop reading for good, just skip it today" is refused as unclear). Production archives the task for good on that sentence, so the branch is safer. (found by the review loop at 13424b1)
 
 - **Should fix** `src/task_intent.py` PRE EXISTING. A first day on a daily task is accepted by voice only when the intent copies the "starting ..." words and the call carries the matching `start_date`. Production's task tool has no first day at all and silently starts the task today. (found by the review loop at 13424b1)
@@ -18,8 +24,6 @@ Labels compare this branch with production (`main` at 51676b9), measured by runn
 
 - **Known limit** `src/task_intent.py` PRE EXISTING (exposure), fixed for questions. A question turn ("what do you remember about my commute?") no longer reaches `remember`; production offered it on every turn. `remember` stays on a flagged turn that is not a question, so "remember that my cat is Sam" works. Found as F1.
 
-- **Known limit** `src/brain.py` N1 and V1: PRE EXISTING for a reply that claims a change when the model called no tool (production speaks model text always); REGRESSION for the case where the classifier wrongly says no_change on a real change (production would have run the call, the branch hides the covered tools). Code now replaces a first person past tense claim ("I added", "Done, I archived it") with "Nothing was changed." on a flagged no_change or question turn that ran no change. The check is a wide net: a claim worded another way, and a claim on an unflagged chat turn, still gets through, the same as production. A classifier miss on a real change still changes nothing and asks him to say it again.
-
 - **Known limit** `src/voice_action_safety.py` PRE EXISTING. F4: a successful `cancel_reminder` is still spoken from model text, which can name a different reminder than the one cancelled. It is outside the covered set by contract. Production did the same.
 
 - **Known limit** `src/task_intent.py` PRE EXISTING. F7: the task day is read after the intent call returns, so a request spoken at 03:59:59 whose intent call returns after 04:00 is recorded on the new day. Production reads the clock at write time, after an even longer model call, so it did the same or worse.
@@ -27,3 +31,21 @@ Labels compare this branch with production (`main` at 51676b9), measured by runn
 - **Known limit** `src/task_intent.py` PRE EXISTING. V4: a recognized question opens the no_change tool set (calendar and the rest, but not `remember`) even when the intent call failed. Production offered every tool on every turn. Closing it would mean answering a read question with "I could not tell what you wanted", which is worse than today.
 
 - **Known limit** `src/task_intent.py` PRE EXISTING. F6: only a task whose first word is a verb it knows (take, call, pay, get, buy, send, submit) is held to that verb. "I bought my vitamins" no longer completes "Take vitamins", but "Pick up vitamins" still accepts any report verb. Production completed on any call the model made.
+
+- **Known limit** `src/task_intent.py` N1, the gap that remains with the net removed: on a no_change turn the model's reply is spoken as is, as in production. See the first fix above.
+
+- **Known limit** `src/task_intent.py` PRE EXISTING. F1: a question that starts with "can you" ("Can you tell me what you remember about my commute?") still offers `remember`, because "can you" also starts real requests. Production offered it on every turn.
+
+- **Known limit** `src/task_intent.py` REGRESSION, rare. F8: if the intent model misclassifies "show my list and check whether milk is on it" as a list change, the answer is "Please ask for one change at a time." Production answers it. Rephrasing works. When the model picks `no_change` it answers normally.
+
+- **Known limit** `src/task_intent.py` PRE EXISTING. F11: "remind me tomorrow to call the bank" with the timing left out of the intent writes a reminder with no due date, which defaults to today. "today" and "tonight" are never bound. Production behaves the same.
+
+- **Known limit** `src/task_intent.py` REGRESSION, safe direction. E8, E9, E10: some unusual phrasings are refused and he rephrases: a task whose stored title contains "if" ("What if analysis"), "cancel reading, I don't do it anymore", and a compound timer such as "half an hour and ten minutes". Production would have tried them.
+
+- **Known limit** `src/task_intent.py` REGRESSION, rare. W2: the word "tomorrow" inside a reminder's own text ("call before tomorrow's meeting") can move the reminder itself to tomorrow.
+
+- **Known limit** `src/task_intent.py` REGRESSION, rare. W3: a preposition inside a list item ("add tape to fix the shelf to my grocery list") can be read as the start of the list name, so the item may land on a wrong or new list.
+
+- **Known limit** `src/task_intent.py` REGRESSION. W4: a `no_change` result skips the "multiple changes" finding, so the gate can offer a non covered write tool on that turn. Those tools keep their own guards and confirm first flows.
+
+- **Known limit** `src/task_intent.py` REGRESSION, tiny. W5: the reminder time check drops the UTC offset before subtracting, so on the one day a year daylight saving ends a reminder can be an hour late.
