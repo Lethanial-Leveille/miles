@@ -5,6 +5,7 @@ import re
 import threading
 import time
 from datetime import datetime
+from types import SimpleNamespace
 from typing import NamedTuple
 
 from dev_providers import Claude
@@ -1054,6 +1055,27 @@ def first_call_kwargs(request: TurnRequest, *, speculative=False) -> dict:
     return kwargs
 
 
+def _forced_tool_choice(gate, tools):
+    """Make the model call the one tool a validated request allows, on the first
+    round only. Left to choose, it sometimes answered in words alone ("Added the
+    daily task") or said it had no such tool, and nothing was written."""
+    if gate is None or gate.tool is None or not any(t["name"] == gate.tool for t in tools):
+        return None
+    return {"type": "tool", "name": gate.tool}
+
+
+def _validated_call(tool_uses, gate):
+    """The calls to run for a validated request. The model's own call stands when
+    it matches the gate. When it is missing or wrong and the validated request
+    fully determines the call, the validated call runs in its place, with the
+    arguments from the plan and never from the model."""
+    if gate is None or gate.call is None or gate.tool is None:
+        return tool_uses
+    if any(b.name == gate.tool and gate.permits(b.name, b.input) for b in tool_uses):
+        return tool_uses
+    return [SimpleNamespace(type="tool_use", id="validated_call", name=gate.tool, input=dict(gate.call))]
+
+
 def _run_tools(tool_uses, model, tier, *, safety=None):
     """Execute every tool the model called, in order, logging each one.
 
@@ -1408,6 +1430,10 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
         first_kwargs["tools"] = safety.tool_schemas(first_kwargs["tools"], registry)
         if not first_kwargs["tools"]:
             del first_kwargs["tools"]
+        else:
+            forced = _forced_tool_choice(safety.gate, first_kwargs["tools"])
+            if forced:
+                first_kwargs["tool_choice"] = forced
     stream_source = replay if replay is not None else _claude().messages.stream(**first_kwargs)
     async with stream_source as stream:
         # Iterating raw events rather than stream.text_stream. text_stream
@@ -1493,7 +1519,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     accumulated, _, _ = extract_memories(accumulated)
     accumulated = strip_leading_bracket_cue(accumulated, leaks_seen)
 
-    tool_uses = [b for b in final_message.content if b.type == "tool_use"]
+    tool_uses = _validated_call([b for b in final_message.content if b.type == "tool_use"], safety.gate)
     if tool_uses and not hold:
         await router.finalize()
         await tts_task

@@ -70,7 +70,10 @@ def voice(db, monkeypatch):
 
 
 @pytest.mark.parametrize("reverse", [False, True])
-def test_refused_schedule_cannot_speak_success_or_let_archive_escape(voice, db, reverse):
+def test_wrong_calls_cannot_speak_success_or_let_archive_escape(voice, db, reverse):
+    """The model's batch holds a task_add with no start day and an archive of
+    another task. Neither runs. The validated request runs once, from its own
+    plan (with the start day), and the reply is written by code."""
     existing = db.add_task("water plants")
     batch = [block("task_add", {"task": "reading", "recurrence": "daily"}),
              block("archive_task", {"task": "water plants"})]
@@ -78,11 +81,9 @@ def test_refused_schedule_cannot_speak_success_or_let_archive_escape(voice, db, 
         batch.reverse()
     result = asyncio.run(voice.run("Add reading daily starting Monday", batch))
     assert state(db, existing) == (None, "pending")
-    assert not db.active_tasks_matching("reading")
-    assert "Nothing was changed" in result.text
+    assert len(db.active_tasks_matching("reading")) == 1
+    assert result.text.startswith("Added the daily task: Reading, starting ")
     assert all("Done" not in line and "saved the task" not in line for line in voice.audio)
-    # The refusal is the only text the client ever sees: no provisional success.
-    assert ("reset", "") not in voice.events
     assert [e for e in voice.events if e[0] == "delta"] == [("delta", result.text)]
 
 
@@ -276,21 +277,28 @@ def test_unusable_proposals_do_not_mutate(monkeypatch, mode):
     assert calls == []
 
 
-def test_model_without_a_tool_result_cannot_announce_completion(voice):
+def test_model_without_a_tool_result_cannot_announce_completion(voice, db):
+    # The model made no call and said "Done. I saved the task." The validated
+    # add runs anyway, and only the code written result is spoken.
     result = asyncio.run(voice.run("Add reading", []))
-    assert result.text == NO_ACTION
+    assert result.text == "Added the task: Reading."
+    assert len(db.active_tasks_matching("reading")) == 1
     assert " ".join(voice.audio) == result.text
     assert [e for e in voice.events if e[0] == "delta"] == [("delta", result.text)]
 
 
-def test_clear_task_request_cannot_be_diverted_into_unrelated_mutation(voice, monkeypatch):
-    def no_tool(*args):
-        pytest.fail("Unrelated write was dispatched")
+def test_clear_task_request_cannot_be_diverted_into_unrelated_mutation(voice, db, monkeypatch):
+    actual = brain.registry.call
 
-    monkeypatch.setattr(brain.registry, "call", no_tool)
+    def only_the_add(name, args):
+        if name != "task_add":
+            pytest.fail("Unrelated write was dispatched")
+        return actual(name, args)
+
+    monkeypatch.setattr(brain.registry, "call", only_the_add)
     result = asyncio.run(voice.run("Add a daily task to read", [
         block("set_timer", {"amount": 4, "unit": "minutes"})]))
-    assert "Nothing was changed" in result.text and not any("Done" in line for line in voice.audio)
+    assert result.text == "Added the daily task: Read." and not any("Done" in line for line in voice.audio)
 
 
 def test_new_request_in_same_conversation_cancels_active_authority(monkeypatch):
@@ -375,16 +383,17 @@ def test_ordinary_task_add_forms_keep_working(voice, db, utterance, args):
     assert "Added the" in result.text
 
 
-@pytest.mark.parametrize(("utterance", "blocks"), [
-    ("Add reading daily", [block("dismiss")]),
-    ("I need to take my vitamins every day", []),
+@pytest.mark.parametrize(("utterance", "blocks", "expected"), [
+    ("Add reading daily", [block("dismiss")], "Added the daily task: Reading."),
+    ("I need to take my vitamins every day", [], "Added the daily task: Take my vitamins."),
 ])
-def test_control_refusal_and_missing_tool_cannot_speak_success(voice, db, utterance, blocks):
+def test_control_call_or_no_call_cannot_speak_success_but_the_validated_add_runs(
+        voice, db, utterance, blocks, expected):
     result = asyncio.run(voice.run(utterance, blocks))
     assert not result.dismissed
-    assert result.text and "saved the task" not in result.text
+    assert result.text == expected
     assert all("saved the task" not in line for line in voice.audio)
-    assert not db.active_tasks_matching("reading") and not db.active_tasks_matching("vitamins")
+    assert len(db.active_tasks_matching("reading") + db.active_tasks_matching("vitamins")) == 1
 
 
 @pytest.mark.parametrize("utterance", ["Add reading", "Could you add reading?"])
@@ -401,9 +410,10 @@ def test_unrelated_earlier_round_cannot_change_state_before_task_refusal(voice, 
     result = asyncio.run(voice.run(utterance, [
         block("set_timer", {"amount": 4, "unit": "minutes"}), block("tasks_today"),
     ], extra=[Stream([block("task_add", {"task": "reading"})], "Done.")]))
-    assert "Nothing was changed" in result.text
+    # The timer batch never runs; the validated add runs once in its place.
+    assert result.text == "Added the task: Reading."
     assert not db.active_tasks_matching("side effect marker")
-    assert not db.active_tasks_matching("reading")
+    assert len(db.active_tasks_matching("reading")) == 1
 
 
 def test_confirmation_reports_absent_results_by_action(voice, monkeypatch):

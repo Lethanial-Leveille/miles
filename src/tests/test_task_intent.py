@@ -218,8 +218,9 @@ def test_the_gate_holds_in_every_round(turn, db, monkeypatch):
     result = asyncio.run(turn.run("Add water plants", [block("tasks_today")],
                                   intent=Intent("task_add", "water plants"),
                                   more=[Stream([block("set_timer", {"amount": 1, "unit": "minutes"})])]))
-    assert "set_timer" not in ran
-    assert "Nothing was changed" in result.text
+    # The first batch was not the add, so the validated add runs in its place and
+    # the later round never gets to start a timer.
+    assert "set_timer" not in ran and ran.count("task_add") == 1
 
 
 @pytest.mark.parametrize("wrong", [

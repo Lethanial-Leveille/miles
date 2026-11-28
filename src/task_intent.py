@@ -188,6 +188,13 @@ class IntentGate:
     confirm: bool = False         # a pending approval may be answered this turn
     target_id: int | None = None
     plan: dict = field(default_factory=dict)
+    # The tool call the validated request fully determines, when it does and when
+    # running it is harmless to repeat as the plan says (an add). If the model's
+    # own call is missing or does not match the gate, this exact call is run
+    # instead, so a validated add never depends on the model's choice. Complete,
+    # stop and skip have none: the forced tool round is enough, and a wrong call
+    # for a destructive change is refused, not replaced.
+    call: dict | None = None
     # A flagged turn the model called no_change keeps the mutating tools outside
     # the covered set (calendar, remember and the rest), each under its own
     # confirm first flow and guards. The covered tools stay hidden.
@@ -358,7 +365,12 @@ def _task_add(intent, utterance, today):
         return (task_scheduling.same_title(title, str(args.get("task", "")))
                 and args.get("recurrence") == plan.recurrence
                 and args.get("start_date") == plan.start_date)
-    return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok,
+    call = {"task": title}
+    if plan.recurrence:
+        call["recurrence"] = plan.recurrence
+    if plan.start_date:
+        call["start_date"] = plan.start_date
+    return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok, call=call,
                                           plan=dict(recurrence=plan.recurrence, start_date=plan.start_date,
                                                     day=today.isoformat())))
 
