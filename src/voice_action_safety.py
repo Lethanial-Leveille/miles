@@ -3,6 +3,7 @@
 import inspect
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from threading import Event
 
@@ -23,18 +24,27 @@ NOTHING_CHANGED = "Nothing was changed."
 # pronoun ("Set a timer", not "Set reminders are listed below").
 _CLAIM_WORDS = frozenset({"stopped", "added", "archived", "skipped", "saved", "removed", "marked"})
 _SET_THEN = frozenset({"a", "an", "the", "your", "my", "it", "that", "this", "up"})
-_OPENING_QUOTES = " \t\r\n\"'\u201c\u201d\u2018\u2019"
+_OPENING_QUOTES = " \t\r\n\"'\u201c\u201d\u2018\u2019*_`~"
+_FOLLOWING_WORD = re.compile(r"\s+\w")
 _CUE = re.compile(r"\[[^\]]*\]\s*")
+
+
+def _strip_opening(text):
+    """Drop opening quotes, markdown emphasis and emoji."""
+    i = 0
+    while i < len(text) and (text[i] in _OPENING_QUOTES or unicodedata.category(text[i]) in ("So", "Sk")):
+        i += 1
+    return text[i:]
 
 
 def claim_state(text, final=False):
     """"claim", "clear" or "wait" for the start of a reply. "wait" means the
     first word (or, for "Set", the second) is not complete yet. A word of ten
     characters or more cannot be a claim word, so the wait is short."""
-    body = text.lstrip(_OPENING_QUOTES)
+    body = _strip_opening(text)
     cue = _CUE.match(body)
     if cue:
-        body = body[cue.end():].lstrip(_OPENING_QUOTES)
+        body = _strip_opening(body[cue.end():])
     elif body.startswith("["):
         return "clear" if final else "wait"
     first = re.match(r"[A-Za-z]+", body)
@@ -46,7 +56,7 @@ def claim_state(text, final=False):
     if word in _CLAIM_WORDS:
         return "claim"
     if word == "done":
-        return "claim" if not rest or rest[0] in ".," else "clear"
+        return "clear" if _FOLLOWING_WORD.match(rest) else "claim"
     if word == "set":
         following = re.match(r"\s+([A-Za-z]+)", rest)
         if not following:

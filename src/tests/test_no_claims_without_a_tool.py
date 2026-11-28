@@ -15,7 +15,8 @@ from voice_action_safety import ClaimGate, claim_state, opens_with_claim
 
 CLAIMS = ["Stopped the daily task: Stretching.", "Added milk to the list.", "Archived it.", "Skipped it for today.",
           "Saved it.", "Removed that.", "Marked it done.", "Set a timer for ten minutes.", "Done.",
-          "Done, all set.", "Done", "stopped it.", "  \"Archived it.\"", "[calmly] Added the task."]
+          "Done, all set.", "Done", "stopped it.", "  \"Archived it.\"", "[calmly] Added the task.",
+          "Done!", "Done;", "Done - milk is added.", "Done: added milk", "**Done.**", "_Done!_", "\u2705 Done!"]
 HONEST = ["Yes, I added milk earlier.", "I didn't add it twice.", "Set reminders are listed below.",
           "Done with the dishes? Good.", "Addedum noted.", "The task was stopped earlier.", "Okay."]
 

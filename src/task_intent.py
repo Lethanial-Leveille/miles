@@ -808,7 +808,8 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage", followup
         if _asks_a_question(followup.answer):
             return Verdict("none", question=True)
         if intent is None:
-            return _refuse("I didn't catch what you wanted to change. Please say it again.")
+            # No reading of his answer: treat it as an ordinary turn, like no_change.
+            return Verdict("none")
         if intent.action == "no_change":
             return Verdict("none")
         if intent.more or re.search(r"\bboth\b", followup.answer, re.I):

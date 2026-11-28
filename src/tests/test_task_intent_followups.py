@@ -706,3 +706,9 @@ def test_quote_mark_refusal_has_no_timing_question(turn, db):
                                   intent=Intent("task_add", "water plants")))
     assert "Nothing was changed" in result.text and "When do you want that?" not in result.text
     assert not db.active_tasks_matching("water plants")
+
+
+def test_a_followup_with_no_intent_reading_falls_back_to_an_ordinary_turn():
+    followup = task_intent.FollowUp("add milk", "Anything else?", "tell me a joke")
+    verdict = task_intent.validate(None, "tell me a joke", WEDNESDAY, followup=followup)
+    assert verdict.kind == "none" and verdict.gate is None
