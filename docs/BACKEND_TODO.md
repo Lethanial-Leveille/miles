@@ -2293,3 +2293,7 @@ Talk Mode, widgets, and WeatherKit in place of OpenWeatherMap. Ranked by
 value: the shortcut is cheap and the most used, the Live Activity needs the push
 plumbing that now exists, and WeatherKit only matters if OpenWeatherMap annoys
 him.
+
+### Real model scenario harness (queued Nov 28 2026)
+
+A reusable script, kept in `scripts/`, that does what the standing rule in AGENTS.md asks. It exports the code to a temporary folder on the Pi, copies the live database through SQLite's backup, sets `MILES_DB_PATH` and a redirected `HOME`, and runs a scenario list through `brain.ask_nova` on the text channel and on the voice channel. The voice run stubs the speech output so Claude is called and ElevenLabs is not. Each scenario states its setup rows, the phrases, the expected reply pattern and the expected database change. A generic check fails any reply that claims a change the database does not show. The list starts with the Nov 27 2026 night: daily adds, duplicates, cancel then answer, "the second one", "yeah stretching", "both", the claim cases, "did I add eggs?", the timing refusal, the eggs list. The model is not deterministic, so ambiguous phrases run several times and report a count. It prints counts and pass or fail only, never secrets, and deletes the copy and the temporary folder when it ends.

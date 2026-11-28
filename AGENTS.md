@@ -58,6 +58,12 @@ Otherwise decide, record the reason and keep going.
 - Do not add new workflow documents unless he asks.
 - The final report has five parts: built, found, fixed, deferred, questions for him.
 
+## Real model scenario run, before and after every deploy
+
+Every deploy plan includes an automated run of the real model scenarios, once before the deploy (on the new code) and once after it (on the deployed code). The agent runs it, not the owner. It starts a temporary second instance of the code on the Pi against a fresh copy of the live database, sends the scenario list through the text path and through the voice path (the text is injected where speech recognition hands off, with ElevenLabs stubbed, so it uses Claude but not speech output), and reports pass or fail per scenario and per channel. A reply that claims a change the database does not show is a failure. Then it deletes the copy and stops the instance. The live database, the live services and the live checkout are never touched.
+
+The owner's own test list contains only subjective or hardware checks: how the voice sounds and feels, the mic, the speaker, the phone. Never ask him to type scenario phrases by hand. The reusable harness is a queued item in [docs/BACKEND_TODO.md](docs/BACKEND_TODO.md#real-model-scenario-harness-queued-nov-28-2026); until it exists, write the run as a throwaway script outside the repo.
+
 ## Switching agents
 
 Either agent can pick up an approved assignment. Use the [continuation procedure](docs/SESSION_START.md) and the existing contract, branch, handoff and test evidence. Keep one active writer per worktree. A change of agent carries forward all approved scope, holds and permission limits.
