@@ -175,3 +175,21 @@ def test_the_app_routes_never_show_or_keep_an_unsupported_claim(turn, db, monkey
         frames = [json.loads(line[6:]) for line in streamed.iter_lines() if line.startswith("data: ")]
     shown = [frame["text"] for frame in frames if "text" in frame]
     assert shown and all("Stopped" not in text for text in shown) and shown[-1] == "Nothing was changed."
+
+
+# ── Owner decision F2: the claim check skips questions and reads ──
+
+@pytest.mark.parametrize("question, reply", [
+    ("Did I add eggs to the grocery list?", "Added eggs to the grocery list at seven, along with the detergent."),
+    ("What did you stop earlier?", "Stopped the daily task: Stretching, after you asked."),
+    ("Did you archive reading?", "Archived reading yesterday."),
+])
+def test_an_honest_answer_to_a_question_is_left_alone(turn, db, question, reply):
+    result = asyncio.run(turn.run(question, [], draft=reply, intent=Intent("no_change")))
+    assert result.text == reply
+
+
+def test_a_bare_statement_with_a_claim_is_still_replaced(turn, db):
+    result = asyncio.run(turn.run("Stretching", [], draft="Stopped the daily task: Stretching.",
+                                  intent=Intent("no_change")))
+    assert result.text == "Nothing was changed."

@@ -708,7 +708,16 @@ def test_quote_mark_refusal_has_no_timing_question(turn, db):
     assert not db.active_tasks_matching("water plants")
 
 
-def test_a_followup_with_no_intent_reading_falls_back_to_an_ordinary_turn():
+def test_a_followup_with_no_intent_reading_is_refused_safely():
+    """Owner decision: when the answer to a change question cannot be read, nothing is
+    written and nothing is answered as chat, where a model could claim the change."""
     followup = task_intent.FollowUp("add milk", "Anything else?", "tell me a joke")
     verdict = task_intent.validate(None, "tell me a joke", WEDNESDAY, followup=followup)
-    assert verdict.kind == "none" and verdict.gate is None
+    assert verdict.kind == "refuse" and verdict.gate is None
+    assert verdict.text == "Nothing was changed. I couldn't tell what you meant. Please say it again."
+
+
+def test_a_followup_question_is_still_answered_normally_when_the_intent_call_fails():
+    followup = task_intent.FollowUp("add milk", "Anything else?", "what's the weather?")
+    verdict = task_intent.validate(None, "what's the weather?", WEDNESDAY, followup=followup)
+    assert verdict.kind == "none"

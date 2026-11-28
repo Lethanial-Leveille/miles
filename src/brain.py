@@ -1540,7 +1540,10 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     stream_source = replay if replay is not None else _claude().messages.stream(**first_kwargs)
     # A reply that opens by claiming a change is held back only until its first
     # word is complete; see voice_action_safety.ClaimGate.
-    gate = ClaimGate()
+    # A question or a read is answered with what happened earlier ("Added eggs at
+    # seven"), so the claim check skips it. A bare statement is still checked.
+    claims_checked = not task_intent._asks_a_question(user_text)
+    gate = ClaimGate(active=claims_checked)
     async with stream_source as stream:
         # Iterating raw events rather than stream.text_stream. text_stream
         # yields only text, which is safe, but it also hides block boundaries,
@@ -1758,7 +1761,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
 
                 round_text = ""
                 hold_round = bool(kwargs.get("tools"))
-                gate2 = ClaimGate(active=not safety.used)
+                gate2 = ClaimGate(active=claims_checked and not safety.used)
                 async with _claude().messages.stream(
                     model=model,
                     max_tokens=1000,
@@ -1795,7 +1798,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
                     await tts_task2
                     raise RuntimeError("Unexpected tool after tool dispatch closed")
                 if not more_tools and not safety.cancelled.is_set():
-                    if not safety.used and opens_with_claim(round_text):
+                    if claims_checked and not safety.used and opens_with_claim(round_text):
                         # Only reads ran, so "Stopped it" is false. The gate kept
                         # the claim off the speaker; the screen is told to drop it.
                         round_text = NOTHING_CHANGED
@@ -1905,7 +1908,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
             _emit(on_text, "reset", "")
             accumulated = NO_ACTION
             _emit(on_text, "delta", accumulated)
-        elif not safety.cancelled.is_set() and opens_with_claim(accumulated):
+        elif claims_checked and not safety.cancelled.is_set() and opens_with_claim(accumulated):
             # No tool ran at all, so a reply that opens with "Stopped" or "Added"
             # is false. The gate kept it off the speaker; the screen drops it.
             _emit(on_text, "reset", "")

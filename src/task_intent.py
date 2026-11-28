@@ -810,8 +810,10 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage", followup
         if _asks_a_question(followup.answer):
             return Verdict("none", question=True)
         if intent is None:
-            # No reading of his answer: treat it as an ordinary turn, like no_change.
-            return Verdict("none")
+            # No reading of his answer. The earlier request was a possible change,
+            # so never answer as if it were chat, where a model could claim the
+            # change was made. Refuse safely and let him say it again.
+            return _refuse("I couldn't tell what you meant. Please say it again.")
         if intent.action == "no_change":
             return Verdict("none")
         if intent.more or re.search(r"\bboth\b", followup.answer, re.I):
