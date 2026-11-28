@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """Run the review loop from AGENTS.md as one command.
 
-    scripts/loop --base main [--contract docs/X_CONTRACT.md] [--tests "CMD"]
+    scripts/loop --base main --tier medium [--contract docs/X_CONTRACT.md] [--tests "CMD"]
+    scripts/loop --base main --reviewer codex
 
-Steps: Codex reviews the diff (round 1), Claude fixes Blockers and Should fix
-items, the tests run, Codex verifies only those fixes (round 2), leftovers go
-in docs/KNOWN_LIMITS.md, and a five part report prints. It never pushes and
-never deploys. Codex runs read only on a scratch copy of the diff and the
-files the diff touches.
+Steps: the reviewer reviews the diff (round 1), Claude Sonnet fixes Blockers and
+Should fix items, the tests run, the same reviewer verifies only those fixes
+(round 2), leftovers go in docs/KNOWN_LIMITS.md, and a five part report prints.
+It never pushes and never deploys.
+
+Reviewer: --reviewer claude is a fresh Opus session that did not write the code
+(a new headless session, read only tools, run in the scratch copy). --reviewer
+codex is Codex on Astra at High, read only. Without --reviewer, --tier picks one:
+claude for small and medium, codex for large. With neither, the loop stops and
+asks, because a wrong guess on a Large change is worse than one more flag.
+Both reviewers see only a scratch copy of the diff and the files it touches.
 
 Exit codes: 0 done, 2 bad setup, 3 a Blocker survived round two (ask Lethanial),
 4 Codex usage over its threshold (rerun with --usage-ok after telling him),
@@ -135,6 +142,29 @@ def build_scratch(root, base, contract, scratch):
     return note
 
 
+def default_reviewer(tier):
+    """Large changes get Codex, everything smaller gets a fresh Opus session."""
+    return "codex" if tier == "large" else "claude"
+
+
+def claude_review(claude_bin, scratch, prompt, out_name):
+    """A fresh Opus session as reviewer. It never saw the build: a new headless
+    session, no resume, only read tools, started inside the scratch copy."""
+    r = run([claude_bin, "-p", "--model", "opus", "--tools", "Read,Grep,Glob",
+             "--no-session-persistence", "--output-format", "text"],
+            cwd=scratch, input_text=prompt)
+    if r.returncode != 0 or not r.stdout.strip():
+        sys.exit(f"claude review failed (exit {r.returncode}): {r.stderr.strip()[:300]}")
+    (scratch / out_name).write_text(r.stdout)
+    return parse_json(r.stdout)
+
+
+def review(reviewer, bins, scratch, prompt, out_name):
+    if reviewer == "claude":
+        return claude_review(bins["claude"], scratch, prompt, out_name)
+    return codex(bins["codex"], "astra-high", scratch, prompt, out_name)
+
+
 def codex(codex_bin, profile, scratch, prompt, out_name):
     out = scratch / out_name
     r = run([codex_bin, "exec", "-p", profile, "-s", "read-only", "--skip-git-repo-check",
@@ -170,11 +200,20 @@ def fmt(f):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Review loop: review, fix, verify, report. Never pushes or deploys.")
     ap.add_argument("--base", default="main", help="branch the work is compared with (default main)")
+    ap.add_argument("--reviewer", choices=("claude", "codex"),
+                    help="claude: a fresh Opus session. codex: Codex on Astra High")
+    ap.add_argument("--tier", choices=("small", "medium", "large"),
+                    help="picks the reviewer when --reviewer is not given")
     ap.add_argument("--contract", help="contract file, relative to the repo, for Large work")
     ap.add_argument("--tests", help="test command (default ./scripts/dev test)")
-    ap.add_argument("--usage-ok", action="store_true", help="you were told Codex usage is high and said go")
+    ap.add_argument("--usage-ok", action="store_true", help="Codex usage is high and you said go (codex reviewer only)")
     ap.add_argument("--dry-run", action="store_true", help="show what would run, call no model")
     a = ap.parse_args(argv)
+
+    reviewer = a.reviewer or (default_reviewer(a.tier) if a.tier else None)
+    if reviewer is None:
+        sys.exit("Say who reviews: --reviewer claude|codex, or --tier small|medium|large "
+                 "(claude for small and medium, codex for large).")
 
     root = Path(git("rev-parse", "--show-toplevel", cwd=os.getcwd()))
     tests = a.tests or ("./scripts/dev test" if (root / "scripts/dev").exists() else "python3 -m pytest src/tests -q")
@@ -189,25 +228,29 @@ def main(argv=None):
     if a.contract and not (root / a.contract).is_file():
         sys.exit(f"Contract not found: {a.contract}")
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
-    built = [f"{branch}: {git('rev-list', '--count', f'{a.base}..HEAD', cwd=root)} commits over {a.base}"]
+    built = [f"{branch}: {git('rev-list', '--count', f'{a.base}..HEAD', cwd=root)} commits over {a.base}",
+             f"reviewer: {reviewer}" + (" (fresh Opus session)" if reviewer == "claude" else " (Codex, Astra High)")]
+    bins = {"codex": codex_bin, "claude": claude_bin}
 
     if a.dry_run:
-        print(f"Would review {branch} against {a.base} with Codex (astra-high, read only),\n"
+        who = "a fresh Opus session (read only)" if reviewer == "claude" else "Codex (astra-high, read only)"
+        print(f"Would review {branch} against {a.base} with {who},\n"
               f"fix with Claude (sonnet), test with `{tests}`, verify with Codex, then report.")
         return 0
 
-    u = run([sys.executable, usage])
-    print(u.stdout.strip())
-    if u.returncode == 2 and not a.usage_ok:
-        print("Codex usage is over its threshold. Tell Lethanial, then rerun with --usage-ok.")
-        return 4
+    if reviewer == "codex":
+        u = run([sys.executable, usage])
+        print(u.stdout.strip())
+        if u.returncode == 2 and not a.usage_ok:
+            print("Codex usage is over its threshold. Tell Lethanial, then rerun with --usage-ok.")
+            return 4
 
     scratch = Path(tempfile.mkdtemp(prefix="miles-loop."))
     os.chmod(scratch, 0o700)
     note = build_scratch(root, a.base, a.contract, scratch)
 
     # Round 1: review.
-    r1 = codex(codex_bin, "astra-high", scratch, REVIEW_PROMPT.format(base=a.base, contract_note=note), "round1.json")
+    r1 = review(reviewer, bins, scratch, REVIEW_PROMPT.format(base=a.base, contract_note=note), "round1.json")
     findings = [normalize(f) for f in r1.get("findings", [])]
     for n, f in enumerate(findings, 1):
         f.setdefault("id", f"F{n}")
@@ -237,7 +280,7 @@ def main(argv=None):
             return 5
         # Round 2: verify only the fixes, then stop.
         (scratch / "fixes.patch").write_text(git("diff", f"{before}..HEAD", cwd=root) + "\n")
-        r2 = codex(codex_bin, "astra-high", scratch, VERIFY_PROMPT, "round2.json")
+        r2 = review(reviewer, bins, scratch, VERIFY_PROMPT, "round2.json")
         status = {x.get("id"): x.get("status") for x in r2.get("results", [])}
         introduced = [normalize(f) for f in r2.get("introduced", [])]
         leftovers = []
