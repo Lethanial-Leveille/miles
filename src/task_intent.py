@@ -238,13 +238,20 @@ _CLAIM = re.compile(
     r"|^(?:all )?(?:done|set)[.!]*$|\b(?:timer|reminder) (?:is )?set\b", re.I)
 
 
+_EARLIER = re.compile(r"\b(?:yesterday|last (?:night|week|month|time)|ago|earlier|previously|before)\b", re.I)
+
+
 def claims_a_change(text):
     """True when a reply says, in first person past tense, that something was
     done ("I added", "I've marked it done", "Done, I saved it"). Wide on purpose:
     it is a safety net for a turn that ran nothing, and a miss is the same as
     before it existed. A statement about his own past ("You finished reading
     yesterday") or a state ("Reading is done") is not a claim."""
-    return bool(_CLAIM.search((text or "").replace("\u2019", "'").strip()))
+    text = (text or "").replace("\u2019", "'").strip()
+    # "I added that yesterday" reports an earlier change, not one made this turn.
+    if _EARLIER.search(text):
+        return False
+    return bool(_CLAIM.search(text))
 
 
 def _refuse(text):

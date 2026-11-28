@@ -217,7 +217,7 @@ def test_a_first_person_claim_of_a_change_is_recognized(reply):
 @pytest.mark.parametrize("reply", [
     "You finished reading yesterday.", "Reading is done.", "You have two tasks left today.",
     "I checked your list and milk is on it.", "I can add that if you like.", "Your timer is not set.",
-    "You added eggs on Monday.", "I don't see a task called reading."])
+    "You added eggs on Monday.", "I don't see a task called reading.", "I added that yesterday."])
 def test_a_read_or_a_statement_about_his_past_is_not_a_claim(reply):
     assert not task_intent.claims_a_change(reply)
 
