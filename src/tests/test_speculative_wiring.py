@@ -51,6 +51,7 @@ def test_the_text_is_what_voice_main_would_send(text, turn_type, expected):
 
 @pytest.fixture
 def gate(monkeypatch):
+    monkeypatch.setattr(brain.registry, "api_schemas", lambda: [])
     started = []
 
     class _Turn:
@@ -216,6 +217,7 @@ class _Stream:
 
 @pytest.fixture
 def turn(monkeypatch, memories):
+    monkeypatch.setattr(brain.registry, "api_schemas", lambda: [])
     calls = []
     recall_later = []
     monkeypatch.setattr(brain, "speak", lambda *a, **k: None)
@@ -396,3 +398,8 @@ def test_follow_ups_are_marked_by_the_voice_loop_and_the_speculation():
     assert "run_turn(followup_text, named=said_wake, followup=True," in (
         SRC / "voice_main.py").read_text()
     assert 'followup=turn_type == "followup"' in (SRC / "speculative_turn.py").read_text()
+
+
+def test_a_tool_capable_turn_bypasses_speculation(gate, monkeypatch):
+    monkeypatch.setattr(brain.registry, "api_schemas", lambda: [{"name": "web_search"}])
+    assert _consider() is None and gate == []

@@ -79,12 +79,12 @@ def turn(monkeypatch):
     # device defaults to the Pi because most of these tests ask what the room
     # speaker does, and the room is where the Pi is. A test about the app says
     # so, and then nothing should ever be played whatever the channel.
-    def run(channel, *streams, on_text=None, device="pi"):
+    def run(channel, *streams, on_text=None, device="pi", said="hi"):
         remaining = list(streams)
         monkeypatch.setattr(brain, "claude", SimpleNamespace(
             messages=SimpleNamespace(
                 stream=lambda **kwargs: (run.calls.append(kwargs), remaining.pop(0))[1])))
-        result = asyncio.run(brain.ask_nova_async("hi", device=device, channel=channel,
+        result = asyncio.run(brain.ask_nova_async(said, device=device, channel=channel,
                                                   on_text=on_text))
         return result, played
     run.calls = []
@@ -107,17 +107,18 @@ def test_the_same_reply_on_voice_is_played(turn):
     assert played == ["Twelve credits is full time."]
 
 
-def test_a_silent_tool_turn_shows_done_without_saying_it(turn):
+def test_a_silent_tool_turn_shows_the_tool_result_without_saying_it(turn):
     timer = SimpleNamespace(type="tool_use", name="set_timer", id="toolu_1",
-                            input={"minutes": 5})
-    result, played = turn("text", _FakeStream([], [timer]))
-    assert result.text == "Done."
+                            input={"amount": 5, "unit": "minutes"})
+    result, played = turn("text", _FakeStream([], [timer]), said="set a timer for five minutes")
+    # The stored timer is reported from its own result, never from a model sentence.
+    assert result.text == "ran"
     assert played == []
 
 
 def test_code_written_lines_all_go_through_the_channel_check():
     """A later direct speak call in the turn would bring the bug straight back."""
-    source = inspect.getsource(brain.ask_nova_async)
+    source = inspect.getsource(brain._committed_turn)
     assert "run_in_executor(None, speak" not in source
     assert "_tts_consumer(" not in source
 
@@ -140,7 +141,7 @@ def test_a_voice_turn_gets_no_note():
 
 def test_the_note_is_used_in_the_turn():
     assert "_with_text_note(recent, channel)" in inspect.getsource(brain.build_request)
-    assert "build_request(" in inspect.getsource(brain.ask_nova_async)
+    assert "build_request(" in inspect.getsource(brain._committed_turn)
 
 
 def test_the_reply_is_streamed_as_it_is_written(turn):
@@ -181,7 +182,8 @@ def test_a_turn_that_only_stores_something_still_answers(turn):
                              input={"content": "Last day is September 25."})
     result, played = turn("text",
                           _FakeStream([], [stored]),
-                          _FakeStream(["So you have nine shifts left."]))
+                          _FakeStream(["So you have nine shifts left."]),
+                          said="remember my last day is September 25")
     assert result.text == "So you have nine shifts left."
     assert played == []
     assert "tools" not in turn.calls[1], "nothing left to look up, so no tools"
@@ -207,14 +209,15 @@ def test_an_addition_is_read_back_by_code_with_no_second_call(turn, monkeypatch)
     create = SimpleNamespace(type="tool_use", name="create_calendar_event", id="toolu_1",
                              input={"summary": "study block", "start_time": "tomorrow at 2pm",
                                     "duration_minutes": 60})
-    result, played = turn("voice", _FakeStream([], [create]))
+    result, played = turn("voice", _FakeStream([], [create]),
+                          said="add a study block to my calendar tomorrow at two")
     assert len(turn.calls) == 1
     assert played[-1] == said
     assert result.text == said
 
 
-def test_a_failed_addition_still_goes_back_to_nova(turn, monkeypatch):
-    """An error announces nothing, so Nova has to say what went wrong."""
+def test_a_failed_addition_has_a_code_written_outcome(turn, monkeypatch):
+    """A failed write gets a code outcome rather than an unverified second reply."""
     def fail(name, args):
         raise ValueError("'tomorrow' names a day but not a time; ask him what time")
 
@@ -222,9 +225,10 @@ def test_a_failed_addition_still_goes_back_to_nova(turn, monkeypatch):
     create = SimpleNamespace(type="tool_use", name="create_calendar_event", id="toolu_1",
                              input={"summary": "study block", "start_time": "tomorrow",
                                     "duration_minutes": 60})
-    result, _ = turn("voice", _FakeStream([], [create]), _FakeStream(["What time tomorrow?"]))
-    assert len(turn.calls) == 2
-    assert result.text == "What time tomorrow?"
+    result, _ = turn("voice", _FakeStream([], [create]), _FakeStream(["What time tomorrow?"]),
+                     said="add a study block to my calendar tomorrow")
+    assert len(turn.calls) == 1
+    assert "could not confirm" in result.text
 
 
 def test_every_tool_says_what_it_is_doing():
@@ -347,7 +351,7 @@ def test_a_spoken_lead_in_is_saved_when_the_follow_up_says_nothing(turn):
     so her next turn never saw the question he was answering."""
     result, played = turn("voice",
                           _FakeStream(["Got it. How's the toe feeling now?"], [_remember()]),
-                          _FakeStream([]))
+                          _FakeStream([]), said="remember my toe is sore")
     assert played == ["Got it.", "How's the toe feeling now?"]
     assert result.text == "Got it. How's the toe feeling now?"
 
@@ -355,7 +359,7 @@ def test_a_spoken_lead_in_is_saved_when_the_follow_up_says_nothing(turn):
 def test_history_holds_the_lead_in_and_the_follow_up_as_heard(turn):
     result, played = turn("voice",
                           _FakeStream(["Got it."], [_remember()]),
-                          _FakeStream(["That explains the pull ups."]))
+                          _FakeStream(["That explains the pull ups."]), said="remember my toe is sore")
     assert played == ["Got it.", "That explains the pull ups."]
     assert result.text == "Got it. That explains the pull ups."
 
@@ -365,9 +369,12 @@ def test_on_the_app_an_empty_follow_up_brings_the_lead_in_back(turn):
     events = []
     result, played = turn("text",
                           _FakeStream(["Got it. How's the toe feeling now?"], [_remember()]),
-                          _FakeStream([]),
+                          _FakeStream([]), said="remember my toe is sore",
                           on_text=lambda kind, text: events.append((kind, text)))
     assert played == []
     assert result.text == "Got it. How's the toe feeling now?"
     assert events[-1] == ("delta", "Got it. How's the toe feeling now?")
-    assert events.index(("reset", "")) < len(events) - 1
+    # A turn that could change something shows no provisional text, so there is
+    # nothing to reset: the lead in arrives once, with the final reply.
+    assert ("reset", "") not in events
+    assert [e for e in events if e[0] == "delta"] == [("delta", "Got it. How's the toe feeling now?")]

@@ -246,8 +246,8 @@ Live at `https://miles.lethanial.com`.
 |----------|--------|------|
 | `/auth/login` | POST | No |
 | `/auth/refresh` | POST | Yes |
-| `/chat` | POST | Yes |
-| `/chat/stream` | POST, server sent events | Yes |
+| `/chat` | POST, request identity required for mutations | Yes |
+| `/chat/stream` | POST, server sent events with the same mutation identity | Yes |
 | `/speak` | POST, returns mp3 | Yes |
 | `/memories` | GET, POST | Yes |
 | `/memories/{memory_id}` | PATCH, DELETE | Yes |
@@ -259,8 +259,8 @@ Live at `https://miles.lethanial.com`.
 | `/lists`, `/lists/{list_id}/items` | GET | Yes |
 | `/lists/items/{item_id}/check`, `/lists/items/{item_id}/uncheck` | POST | Yes |
 | `/tasks/today` | GET | Yes |
-| `/tasks/overview` | GET, today, the next days and the backlog | Yes |
-| `/tasks` | POST, add a task to today or the backlog | Yes |
+| `/tasks/overview` | GET, today, the next days, the backlog and upcoming daily tasks | Yes |
+| `/tasks` | POST, add a task to today, the backlog or a daily schedule with an optional first day | Yes |
 | `/tasks/{task_id}/complete`, `/tasks/{task_id}/reopen`, `/tasks/{task_id}/backlog` | POST | Yes |
 | `/sessions`, `/sessions/{session_id}` | GET, POST | Yes |
 | `/sessions/{session_id}/turns` | POST, server sent events | Yes |

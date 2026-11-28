@@ -212,7 +212,7 @@ def test_brain_no_longer_saves_extracted_tags():
     double write whatever the tool already stored."""
     import inspect
     import brain
-    source = inspect.getsource(brain.ask_nova_async)
+    source = inspect.getsource(brain._committed_turn)
     assert "extract_memories" in source, "still stripped so it is not spoken"
     assert "save_memory" not in source, "but no longer saved"
 

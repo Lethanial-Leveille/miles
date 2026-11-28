@@ -66,7 +66,8 @@ def claude(monkeypatch):
     monkeypatch.setattr(st, "_client", SimpleNamespace(messages=SimpleNamespace(stream=stream)))
     def warm():
         state.warmed += 1
-    monkeypatch.setattr(st.tts, "warm", warm)
+    import tts
+    monkeypatch.setattr(tts, "warm", warm)
     monkeypatch.setattr(brain.registry, "api_schemas", lambda: [{"name": "fake_tool"}])
     return state
 
@@ -112,16 +113,17 @@ def test_claimed_midway_it_replays_the_buffer_then_follows_live(claude):
     assert texts == ["A.", " B.", " C.", " D."]
 
 
-def test_the_call_is_exactly_the_real_turns_first_call(claude):
+def test_speculation_has_no_executable_provider_tools(claude):
     turn = st.SpeculativeTurn(_request)
     assert _wait(lambda: turn._buffer.done)
-    assert claude.calls == [brain.first_call_kwargs(_request())]
+    assert claude.calls == [brain.first_call_kwargs(_request(), speculative=True)]
+    assert "tools" not in claude.calls[0]
 
 
-def test_elevenlabs_is_warmed_when_the_call_goes_out(claude):
+def test_speculation_does_not_warm_the_synthesis_provider(claude):
     turn = st.SpeculativeTurn(_request)
     assert _wait(lambda: turn._buffer.done)
-    assert claude.warmed == 1
+    assert claude.warmed == 0
 
 
 def test_cancelling_midway_closes_the_stream(claude):

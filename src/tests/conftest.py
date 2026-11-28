@@ -38,6 +38,19 @@ def quiet_evallo_filter(monkeypatch, request):
     monkeypatch.setattr(evallo_filter, "load_state", lambda: Quiet())
 
 
+@pytest.fixture(autouse=True)
+def fake_intent_model(monkeypatch):
+    """No test reaches the intent model. This stands in with simple patterns;
+    a test that needs another answer patches task_intent.request_intent."""
+    import task_intent
+    from intent_fake import fake_intent
+
+    async def request(client, utterance, pending_title=None):
+        return fake_intent(utterance)
+
+    monkeypatch.setattr(task_intent, "request_intent", request)
+
+
 @pytest.fixture
 def db(tmp_path, monkeypatch):
     """Point database.py at a throwaway sqlite file for the duration of one

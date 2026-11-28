@@ -158,6 +158,7 @@ class Synthesis:
                  output_format=None):
         self.text = text
         self.error = None
+        self.playback_complete = False
         self.requested_at = time.monotonic()
         # Everything played, kept for spoken_archive. A long reply is about
         # 1.3MB, held only until the turn ends.
@@ -407,6 +408,8 @@ def play(synthesis, interrupt=None, her=None):
     # seconds, or None when it played to the end. brain keeps only the heard
     # part in her history, so Claude knows where he cut in.
     synthesis.heard_s = None
+    synthesis.playback_complete = False
+    playback_failed = False
     first_write_at, written = None, 0
 
     with speak_lock:
@@ -436,6 +439,7 @@ def play(synthesis, interrupt=None, her=None):
                     timing.note_tts(ttfb_ms,
                                     (time.monotonic() - synthesis.requested_at) * 1000.0)
         except Exception as e:
+            playback_failed = True
             print(f"TTS playback error: {e}", flush=True)
         finally:
             if aplay is not None:
@@ -453,7 +457,10 @@ def play(synthesis, interrupt=None, her=None):
                         if interrupt.wait(0.02):
                             aplay.kill()
                             break
-                aplay.wait()
+                exit_code = aplay.wait()
+                synthesis.playback_complete = (
+                    exit_code == 0 and written > 0 and not playback_failed
+                    and synthesis.error is None and (interrupt is None or not interrupt.is_set()))
             # Playback runs in real time from the first write, so the time since
             # then is what reached the room; what sits queued in the pipe and the
             # ALSA buffer was never heard. Capped at what was written, for a

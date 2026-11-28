@@ -1274,7 +1274,7 @@ def test_the_routes_own_422s_are_fixed_strings_in_the_same_shape(client, agent):
 def _at_44(tmp_path, monkeypatch):
     path = str(tmp_path / "m.db")
     monkeypatch.setattr(database, "DB_PATH", path)
-    real = list(database.MIGRATIONS)
+    real = [(version, migrate) for version, migrate in database.MIGRATIONS if version <= 45]
     monkeypatch.setattr(database, "MIGRATIONS", real[:44])
     database.init_db()
     return path, real

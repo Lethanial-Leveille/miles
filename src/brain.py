@@ -22,13 +22,15 @@ from parsing import extract_memories, strip_leading_bracket_cue
 import screen_text
 from stream_router import StreamRouter
 import interrupt_speech
-from tools import registry, Permission, ToolNotice, permits
+from tools import AUTHORIZED_DAY, AUTHORIZED_ITEM, AUTHORIZED_TASK, registry, Permission, ToolNotice, permits
 from database import log_tool_call
 import alerts
 import memory_pass
 import phrasebank
 import resume
 import spoken_archive
+import task_intent
+from voice_action_safety import CONFIRM, NO_ACTION, PARALLEL_READS, TurnSafety
 
 # Imported for its side effect: registering the tools. Without it the registry
 # is empty, the capability block is blank, and Nova silently has no
@@ -137,6 +139,7 @@ class TurnResult(NamedTuple):
     # from dismissed: dismissed ends a conversation he ended, this ends one he
     # was never having with her, and the difference is whether she says anything.
     ignored: bool = False
+    proposal_receipt: str | None = None
 
 # Turn counter for the A/B alternation. Resets on service restart, which is
 # harmless: alternation stays balanced from whatever point it resumes.
@@ -212,6 +215,7 @@ class _Heard:
 
     def __init__(self):
         self.parts = []
+        self.confirmable_audio = False
         self.cut = False
         # Sentences given to the speaker, whether they played whole or were cut.
         # Counted rather than matched by text: the router's record is indexed by
@@ -417,6 +421,7 @@ async def _tts_consumer(queue: asyncio.Queue, text_parts: list, leaks_seen: set,
                     heard.cut_during(sentences, synthesis)
                 else:
                     heard.played(sentences)
+                    heard.confirmable_audio = bool(getattr(synthesis, "playback_complete", False))
             if interrupted:
                 # He said the wake word, or spoke, over her. Drop the rest rather than
                 # finishing the thought he interrupted, which is the entire
@@ -481,9 +486,10 @@ async def _say(text, channel, device):
 # state changes, not work.
 _STAGE_WORDS = {
     "archive_task":            "Retiring the task",
+    "task_skip_today":         "Skipping the task for today",
     "cancel_reminder":         "Cancelling a reminder",
     "check_calendar_freebusy": "Checking when you're free",
-    "confirm_pending_action":  "Making the change",
+    "confirm_pending_action":  "Checking the confirmation",
     "create_calendar_event":   "Adding it to your calendar",
     "delete_calendar_event":   "Deleting the event",
     "edit_routine":            "Reading your routine",
@@ -628,6 +634,26 @@ def _emit(on_text, kind, text):
         on_text(kind, text)
     except Exception as exc:
         print(f"Streaming callback failed: {exc}", flush=True)
+
+
+class _HeldText:
+    """Wraps a streaming callback for a turn that could change something.
+
+    Model text on such a turn is provisional: it can say "Done" before any
+    action ran, and a stream that drops would leave that on the screen. So
+    deltas and resets are swallowed while the turn works, and the one final
+    reply, built after the actions finish, is sent by flush. Stage updates are
+    not text and pass through."""
+
+    def __init__(self, on_text):
+        self.on_text = on_text
+
+    def __call__(self, kind, text):
+        if kind not in ("delta", "reset"):
+            self.on_text(kind, text)
+
+    def flush(self, final_text):
+        _emit(self.on_text, "delta", final_text)
 
 
 def _trim_history(messages: list) -> list:
@@ -1018,16 +1044,17 @@ def build_request(user_text, channel, tier, model, history, pending_alerts,
     return TurnRequest(model, system, recent, fingerprint)
 
 
-def first_call_kwargs(request: TurnRequest) -> dict:
-    """The arguments of a turn's first Claude call, in one place.
+def first_call_kwargs(request: TurnRequest, *, speculative=False) -> dict:
+    kwargs = dict(model=request.model, max_tokens=1000, system=request.system,
+                  messages=request.messages)
+    if not speculative:
+        schemas = registry.api_schemas()
+        if schemas:
+            kwargs["tools"] = schemas
+    return kwargs
 
-    A speculative turn opens this same call before the endpoint, and the real
-    turn may replay it only if nothing differs, so both build it here."""
-    return dict(model=request.model, max_tokens=1000, system=request.system,
-                messages=request.messages, tools=registry.api_schemas())
 
-
-def _run_tools(tool_uses, model, tier):
+def _run_tools(tool_uses, model, tier, *, safety=None):
     """Execute every tool the model called, in order, logging each one.
 
     Runs on an executor thread from the caller, because the tool functions are
@@ -1050,36 +1077,223 @@ def _run_tools(tool_uses, model, tier):
         notice = False
         try:
             spec = registry.get(block.name)
-            if not permits(spec, tier):
+            if safety is not None and safety.cancelled.is_set():
+                output, is_error = "The request was cancelled before dispatch.", True
+            elif not permits(spec, tier):
                 output = (f"Refused: {block.name} needs more clearance than "
                           f"{tier}. Say you are not allowed to do that.")
                 is_error = True
             else:
-                output = registry.call(block.name, dict(block.input))
-                is_error = False
+                with pending_action.proposing_tool(spec):
+                    output = registry.call(block.name, dict(block.input))
+                is_error = (safety is not None
+                            and spec.permission in (Permission.WRITE, Permission.EXTERNAL_WRITE)
+                            and (output is None or output is False))
+                if is_error:
+                    output = "I could not confirm the result of that action."
         except ToolNotice as exc:
             # Before the general case, which would catch it too. Sent as an
             # error so Nova speaks it, without "failed", because nothing did.
-            output = str(exc)
+            if safety is None or not safety.guarded or isinstance(exc, lists_tasks.TaskEligibilityNotice):
+                output = str(exc)
+            else:
+                output = "Nothing was changed by that action."
             is_error = True
             notice = True
         except Exception as exc:
-            output = f"{block.name} failed: {exc}"
+            output = (f"{block.name} failed: {exc}" if safety is None
+                      else "I could not confirm the result of that action.")
             is_error = True
 
         elapsed = (time.monotonic() - started) * 1000.0
-        log_tool_call(block.name, dict(block.input), output,
-                      is_error=is_error and not notice, is_notice=notice,
-                      duration_ms=elapsed, model=model)
+        try:
+            log_tool_call(block.name, dict(block.input), output,
+                          is_error=is_error and not notice, is_notice=notice,
+                          duration_ms=elapsed, model=model)
+        except Exception:
+            if safety is None:
+                raise
+            # A diagnostic failure cannot erase a confirmed operation result.
+            print("Tool audit recording failed.", flush=True)
         results.append({"block": block, "output": output, "is_error": is_error})
     return results
 
 
-async def ask_nova_async(user_text: str, device: str = "pi",
-                         channel: str = "voice",
-                         tier: str = "hokage", on_text=None,
-                         speculation=None, named=False,
-                         conversation_start=None, followup=False) -> TurnResult:
+def _tool_permission(block):
+    return registry.get(block.name).permission if block.name in registry else None
+
+
+def _has_mutation(blocks):
+    return any(_tool_permission(block) not in (Permission.READ, Permission.CONTROL)
+               for block in blocks)
+
+
+async def _dispatch_tools(blocks, model, tier, safety):
+    refused = safety.preflight(blocks, registry, tier, pending_action.confirmation_allowed)
+    results = [None] * len(blocks)
+    parallel = []
+    slots = asyncio.Semaphore(4)
+    mutating = _has_mutation(blocks)
+
+    async def run(index, block):
+        # The validated task id travels with the call, so the task tools write
+        # to that row and never resolve the words a second time.
+        gate = safety.gate
+        authorized = (gate.target_id if gate is not None and block.name == gate.tool else None)
+        token = AUTHORIZED_TASK.set(authorized)
+        # The validated day goes to every covered write, not only the ones on an
+        # existing task, so no write reads the clock again.
+        validated_day = gate.plan.get("day") if gate is not None and block.name == gate.tool else None
+        day_token = AUTHORIZED_DAY.set(validated_day)
+        item_token = AUTHORIZED_ITEM.set(
+            gate.plan.get("item_id") if gate is not None and block.name == gate.tool else None)
+        try:
+            [result] = await asyncio.to_thread(_run_tools, [block], model, tier, safety=safety)
+        finally:
+            AUTHORIZED_TASK.reset(token)
+            AUTHORIZED_DAY.reset(day_token)
+            AUTHORIZED_ITEM.reset(item_token)
+        results[index] = result
+        if _tool_permission(block) is not Permission.READ:
+            safety.finished[block.id] = result
+            safety.finished[(block.name, json.dumps(block.input, sort_keys=True))] = result
+
+    async def independent(index, block):
+        async with slots:
+            await run(index, block)
+
+    try:
+        sequential = []
+        after_mutation = []
+        for index, block in enumerate(blocks):
+            if index in refused:
+                results[index] = {"block": block, "output": refused[index], "is_error": True}
+            elif (_tool_permission(block) is Permission.READ and block.name in PARALLEL_READS
+                  and (not mutating or block.name == "get_weather")):
+                parallel.append(asyncio.create_task(independent(index, block)))
+            elif mutating and safety.guarded and block.name in {"tasks_today", "list_show"}:
+                after_mutation.append((index, block))
+            else:
+                sequential.append((index, block))
+        # Guarded Tasks state reads see the result first. Within each group
+        # preserve order. Weather is independent of the local write.
+        for index, block in sequential + after_mutation:
+            await run(index, block)
+        if parallel:
+            await asyncio.gather(*parallel)
+    except asyncio.CancelledError:
+        safety.cancelled.set()
+        raise
+    finally:
+        for task in parallel:
+            if not task.done():
+                task.cancel()
+
+    return results
+
+
+def _code_reply(results, staged=None):
+    parts = []
+    for result in results:
+        block = result["block"]
+        permission = _tool_permission(block)
+        if permission is Permission.CONTROL and not result["is_error"]:
+            continue
+        if permission is Permission.READ and block.name not in PARALLEL_READS:
+            if not result["is_error"]:
+                parts.append("I checked that information separately.")
+            continue
+        if staged and permission is Permission.EXTERNAL_WRITE and not result["is_error"]:
+            continue
+        output = result["output"]
+        if isinstance(output, str) and output.strip():
+            parts.append(output.strip())
+        elif permission is not Permission.READ:
+            parts.append("I could not confirm the result of that action.")
+    if staged:
+        parts.append(staged)
+    return " ".join(dict.fromkeys(parts))
+
+
+async def _deliver_tool_reply(text, channel, device, on_text, safety, heard, leaks_seen):
+    if safety.cancelled.is_set() or heard.cut:
+        return
+    _emit(on_text, "delta", text)
+    if _plays_in_the_room(channel, device):
+        # Use the existing interruptible player; an interrupted proposal
+        # cannot become eligible for confirmation.
+        question = pending_action.staged_question()
+        queue = asyncio.Queue()
+        queue.put_nowait(text)
+        queue.put_nowait(None)
+        played = _Heard()
+        await _consumer_for(channel, device)(queue, [], leaks_seen, played)
+        if question and not played.cut and played.confirmable_audio and question in played.said():
+            pending_action.mark_presented(question)
+        heard.parts.extend(played.parts)
+        if played.cut:
+            heard.cut = True
+            heard.tail = played.tail
+    else:
+        await _say(text, channel, device)
+        if pending_action.staged_question() and not safety.cancelled.is_set():
+            pending_action.mark_presented(pending_action.staged_question())
+
+
+async def _answer_in_code(text, user_text, device, channel, tier, on_text, held, safety,
+                          asked_choice=False):
+    """End a turn with words written by code, no model call. Used when the intent
+    step refused a request or asked a question: nothing ran, so nothing but the
+    plain refusal or question may be said."""
+    heard = _Heard()
+    await _deliver_tool_reply(text, channel, device, on_text, safety, heard, set())
+    final_text = "" if safety.cancelled.is_set() else screen_text.for_display(text, channel)
+    if held is not None and not safety.cancelled.is_set():
+        held.flush(final_text)
+    if asked_choice and final_text and not heard.cut and not safety.cancelled.is_set():
+        # Only a question that was delivered in full can be answered next turn.
+        pending_action.present_choice()
+    if final_text:
+        save_message("assistant", heard.text() if heard.cut else final_text, device=device)
+    if tier == "hokage" and not safety.cancelled.is_set():
+        memory_pass.notice_later(user_text, datetime.now(), [])
+    return TurnResult(text=final_text)
+
+
+def _track(safety, coroutine):
+    task = asyncio.create_task(coroutine)
+    safety.workers.append(task)
+    return task
+
+
+async def ask_nova_async(user_text: str, device: str = "pi", channel: str = "voice",
+                         tier: str = "hokage", on_text=None, speculation=None,
+                         named=False, conversation_start=None, followup=False,
+                         *, actor=None, cancelled=None, delivery=None, app_conversation=None,
+                         proposal_receipt=None, allow_writes=True):
+    safety = TurnSafety(user_text, cancelled or threading.Event(), allow_writes=allow_writes)
+    scope = (device, channel, actor, app_conversation if device == "app" else conversation_start)
+    try:
+        with pending_action.committed_turn(scope, tier, user_text, safety.cancelled, delivery,
+                                           app=device == "app", receipt=proposal_receipt):
+            safety.expected_confirmation = pending_action.expects_confirmation()
+            result = await _committed_turn(user_text, device, channel, tier, on_text, speculation,
+                                           named, conversation_start, followup, safety)
+            return result._replace(proposal_receipt=pending_action.presented_receipt())
+    except asyncio.CancelledError:
+        safety.cancelled.set()
+        raise
+    finally:
+        tasks = [task for task in safety.workers if not task.done()]
+        if tasks:
+            safety.cancelled.set()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _committed_turn(user_text, device, channel, tier, on_text, speculation,
+                          named, conversation_start, followup, safety):
     """Run one turn.
 
     speculation, when given, is a speculative_turn.SpeculativeTurn that may
@@ -1108,11 +1322,35 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     """
     model = _select_model()
     timing.note_model(model)
-    # Every Claude turn advances the confirmation clock, so an event proposed
-    # on this turn can only be approved on the next one.
-    pending_action.begin_turn()
-
     user_message_id = save_message("user", user_text, device=device)
+
+    # Decide what this turn may change before the model sees any tool. A turn
+    # that fails the cheap check gets no mutating tool at all.
+    choice = pending_action.take_choice()
+    safety.gate = task_intent.closed_gate(confirm=safety.expected_confirmation)
+    held = None
+    needs_intent = choice is not None or (not safety.expected_confirmation
+                                          and task_intent.could_change(user_text))
+    # A yes or no to a pending proposal can run an external change, so its
+    # model text is held just like a new request's: "Done" is never shown
+    # before the confirmation tool has run, or after it was refused.
+    if (needs_intent or safety.expected_confirmation) and on_text is not None:
+        held = on_text = _HeldText(on_text)
+    if needs_intent:
+        safety.flagged = True
+        intent = await task_intent.request_intent(_claude(), user_text, choice[1] if choice else None)
+        verdict = task_intent.validate(intent, user_text, choice=choice, tier=tier)
+        if verdict.kind in ("refuse", "ask"):
+            if verdict.choice:
+                pending_action.ask_choice(*verdict.choice)
+            return await _answer_in_code(verdict.text, user_text, device, channel, tier,
+                                         on_text, held, safety, asked_choice=bool(verdict.choice))
+        if verdict.kind == "act":
+            safety.gate = verdict.gate
+        else:
+            # The model called it no_change. The covered tools stay hidden and
+            # the calendar, remember and the other tools keep their own flow.
+            safety.gate = task_intent.no_change_gate(question=verdict.question)
     # Taken here, not inside build_request: consuming the alerts is a side
     # effect, and a speculative turn has to be able to build the same request
     # without one.
@@ -1123,7 +1361,9 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     # wait. It is used only if what it was built from is exactly what this turn
     # would build from now; otherwise it is dropped and the call made here.
     replay = None
-    if speculation is not None:
+    if speculation is not None and registry.api_schemas():
+        speculation.cancel()
+    elif speculation is not None:
         replay = speculation.claim(
             turn_fingerprint(user_text, channel, tier, model, history, pending, named,
                              followup))
@@ -1151,7 +1391,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     leaks_seen     = set()  # shared across both TTS consumers and the returned-text strips this turn
 
     heard = _Heard()
-    tts_task = asyncio.create_task(
+    tts_task = _track(safety,
         _consumer_for(channel, device)(sentence_queue, spoken_parts, leaks_seen, heard))
 
     accumulated   = ""
@@ -1160,8 +1400,14 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     claude_start  = time.monotonic()
     first_token   = None
     sentence_seen = False
-    stream_source = replay if replay is not None else _claude().messages.stream(
-        **first_call_kwargs(request))
+    hold = bool(registry.api_schemas())
+    hold_speech = hold or safety.expects_action
+    first_kwargs = first_call_kwargs(request)
+    if "tools" in first_kwargs:
+        first_kwargs["tools"] = safety.tool_schemas(first_kwargs["tools"], registry)
+        if not first_kwargs["tools"]:
+            del first_kwargs["tools"]
+    stream_source = replay if replay is not None else _claude().messages.stream(**first_kwargs)
     async with stream_source as stream:
         # Iterating raw events rather than stream.text_stream. text_stream
         # yields only text, which is safe, but it also hides block boundaries,
@@ -1174,6 +1420,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # them and get_final_message returns the parsed input, so a half
         # written argument has no path to TTS by construction.
         async for event in stream:
+            if safety.cancelled.is_set():
+                return TurnResult(text="")
             _emit(on_text, "stage", _stage_for(event))
             # Chosen here, played only if the tool turns out to be slow; see
             # _bridge_if_slow. Only when Nova wrote no lead in of her own, and
@@ -1186,7 +1434,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             if gap:
                 accumulated += gap
                 _emit(on_text, "delta", gap)
-                await router.feed(gap)
+                if not hold_speech:
+                    await router.feed(gap)
             if event.type != "content_block_delta":
                 continue
             if event.delta.type != "text_delta":
@@ -1199,7 +1448,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                             (first_token - claude_start) * 1000.0)
             accumulated += text
             _emit(on_text, "delta", text)
-            await router.feed(text)
+            if not hold_speech:
+                await router.feed(text)
 
             # The wait between the first token and the first speakable
             # sentence. Nothing reaches TTS until a sentence boundary lands,
@@ -1243,13 +1493,26 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     accumulated = strip_leading_bracket_cue(accumulated, leaks_seen)
 
     tool_uses = [b for b in final_message.content if b.type == "tool_use"]
+    if tool_uses and not hold:
+        await router.finalize()
+        await tts_task
+        raise RuntimeError("Unexpected tool after tool dispatch closed")
     called_tools = {b.name for b in tool_uses}
     # What this turn's own remember calls wrote, so the memory pass after it
     # does not queue the same fact again in pieces.
-    remembered = [b.input.get("content", "") for b in tool_uses if b.name == "remember"]
+    remembered = []
 
     if tool_uses:
         action_start = time.monotonic()
+        mutating = _has_mutation(tool_uses)
+        only_control_draft = all(_tool_permission(block) is Permission.CONTROL for block in tool_uses)
+        # Permit only fixed, neutral lead-ins while a read may lead to another
+        # tool round. A draft containing any outcome stays provisional.
+        neutral = {"let me check.": "Let me check.", "let me see.": "Let me see."}
+        safe_lead = neutral.get(accumulated.strip().casefold()) if not mutating else None
+        if hold_speech and not safety.cancelled.is_set():
+            if safe_lead and not only_control_draft:
+                await router.feed(safe_lead)
         await router.finalize()
 
         # Run the tools and drain the bridge sentence at the same time, so the
@@ -1264,18 +1527,20 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         # stopwatch, so tool_ms reported whichever finished last. A weather call
         # that took 580ms logged 6006ms, because what it was really measuring
         # was the bridge sentence playing through the speaker.
-        tool_future = loop.run_in_executor(None, _run_tools, tool_uses, model, tier)
+        tool_future = _track(safety, _dispatch_tools(tool_uses, model, tier, safety))
         tool_start  = time.monotonic()
-        bridge      = await _bridge_if_slow(tool_future, None if heard.cut else bridge_key)
+        bridge      = await _bridge_if_slow(tool_future, None if heard.cut or mutating else bridge_key)
         results     = await tool_future
+        remembered = [r["block"].input.get("content", "") for r in results
+                      if r["block"].name == "remember" and not r["is_error"]]
         timing.note_tool((time.monotonic() - tool_start) * 1000.0)
         await tts_task
 
         # dismiss is a state change, not work. The tool executes nothing; the
         # transition happens here. Read before filtering so a turn that both
         # answers something and says goodbye still runs its real tools.
-        dismissed = any(r["block"].name == "dismiss" for r in results)
-        ignored   = any(r["block"].name == "ignore" for r in results)
+        dismissed = any(r["block"].name == "dismiss" and not r["is_error"] for r in results)
+        ignored   = any(r["block"].name == "ignore" and not r["is_error"] for r in results)
 
         # This replaces the hardcoded `any(r["type"] == "weather")` whitelist.
         # Whether a second call happens is now a property of the tool, declared
@@ -1288,7 +1553,29 @@ async def ask_nova_async(user_text: str, device: str = "pi",
         staged = pending_action.words_for_turn()
         needs_second_call = _needs_second_call(results) and staged is None
 
-        if needs_second_call:
+        authoritative = (safety.guarded or staged is not None
+                         or any(r["is_error"] and _tool_permission(r["block"]) is not Permission.READ
+                                for r in results))
+        if safety.cancelled.is_set():
+            final_text = ""
+        elif authoritative:
+            _emit(on_text, "reset", "")
+            final_text = _code_reply(results, staged)
+            if safety.expects_action and not safety.used and not staged:
+                # Only reads ran, so the change that was asked for did not happen.
+                final_text = f"{final_text} {NO_ACTION}".strip()
+            await _deliver_tool_reply(final_text, channel, device, on_text, safety, heard, leaks_seen)
+        elif needs_second_call:
+            if mutating and accumulated and not heard.cut:
+                # Legacy lead-ins remain available only after a successful
+                # noncovered operation, including a follow-up question.
+                lead_queue = asyncio.Queue()
+                lead_router = StreamRouter(lead_queue, record=written)
+                lead_player = _track(safety, _consumer_for(channel, device)(
+                    lead_queue, spoken_parts, leaks_seen, heard))
+                await lead_router.feed(accumulated)
+                await lead_router.finalize()
+                await lead_player
             # Whatever Nova said alongside the call is not part of the answer
             # the tool result produces. A reader who was shown it has to be told
             # to drop it. A listener cannot be: see lead_in below.
@@ -1310,7 +1597,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # player would start a second watcher reading the mic while the
             # carrier still holds his interruption, and answer what he stopped.
             consumer2       = _collect_text if heard.cut else _consumer_for(channel, device)
-            tts_task2       = asyncio.create_task(
+            tts_task2       = _track(safety,
                 consumer2(sentence_queue2, spoken_parts2, leaks_seen, heard)
             )
 
@@ -1332,9 +1619,15 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             second_first = None
             for round_index in range(MAX_TOOL_ROUNDS):
                 last_round = round_index == MAX_TOOL_ROUNDS - 1
-                kwargs = {} if last_round or only_stored else {"tools": registry.api_schemas()}
+                schemas = [] if last_round or only_stored else registry.api_schemas()
+                schemas = safety.tool_schemas(schemas, registry)
+                if safety.used:
+                    schemas = [schema for schema in schemas if schema["name"] not in registry
+                               or registry.get(schema["name"]).permission is Permission.READ]
+                kwargs = {"tools": schemas} if schemas else {}
 
                 round_text = ""
+                hold_round = bool(kwargs.get("tools"))
                 async with _claude().messages.stream(
                     model=model,
                     max_tokens=1000,
@@ -1343,12 +1636,15 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                     **kwargs,
                 ) as stream2:
                     async for event in stream2:
+                        if safety.cancelled.is_set():
+                            return TurnResult(text="")
                         _emit(on_text, "stage", _stage_for(event))
                         gap = _block_gap(event, round_text)
                         if gap:
                             round_text += gap
                             _emit(on_text, "delta", gap)
-                            await router2.feed(gap)
+                            if not hold_round:
+                                await router2.feed(gap)
                         if event.type != "content_block_delta":
                             continue
                         if event.delta.type != "text_delta":
@@ -1359,38 +1655,47 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                                 (second_first - second_start) * 1000.0)
                         round_text += event.delta.text
                         _emit(on_text, "delta", event.delta.text)
-                        await router2.feed(event.delta.text)
+                        if not hold_round:
+                            await router2.feed(event.delta.text)
 
                     followup_message = await stream2.get_final_message()
 
-                # Joined with a space. Concatenated bare, a sentence ending one
-                # round ran into the next in history: "Monday.LeetCode".
-                final_text = f"{final_text} {round_text}".strip()
-                more_tools = [b for b in followup_message.content
-                              if b.type == "tool_use"]
-                called_tools |= {b.name for b in more_tools}
-                remembered += [b.input.get("content", "") for b in more_tools
-                               if b.name == "remember"]
-                if not more_tools:
+                more_tools = [b for b in followup_message.content if b.type == "tool_use"]
+                # A tool-free final round cannot authorize an unexpected tool block.
+                if not hold_round and more_tools:
+                    await router2.finalize()
+                    await tts_task2
+                    raise RuntimeError("Unexpected tool after tool dispatch closed")
+                if not more_tools and not safety.cancelled.is_set():
+                    if hold_round:
+                        await router2.feed(round_text)
+                    final_text = f"{final_text} {round_text}".strip()
+                if not more_tools or safety.cancelled.is_set():
                     break
-
-                more_results = await loop.run_in_executor(
-                    None, _run_tools, more_tools, model, tier)
-                if pending_action.words_for_turn() is not None:
-                    # A change proposed after a lookup. Its question is spoken
-                    # in code below, not in the model's words.
+                called_tools |= {b.name for b in more_tools}
+                more_results = await _dispatch_tools(more_tools, model, tier, safety)
+                remembered += [r["block"].input.get("content", "") for r in more_results
+                               if r["block"].name == "remember" and not r["is_error"]]
+                if _has_mutation(more_tools):
+                    _emit(on_text, "reset", "")
+                    outcome = _code_reply(more_results, pending_action.words_for_turn())
+                    await router2.finalize()
+                    await tts_task2
+                    await _deliver_tool_reply(outcome, channel, device, on_text, safety, heard, leaks_seen)
+                    final_text = outcome
                     break
                 followup_messages = followup_messages + [
                     {"role": "assistant", "content": followup_message.content},
                     {"role": "user", "content": _tool_result_blocks(more_results)},
                 ]
 
-            await router2.finalize()
-            await tts_task2
+            if not tts_task2.done():
+                await router2.finalize()
+                await tts_task2
             final_text, _, _ = extract_memories(final_text)
             final_text = strip_leading_bracket_cue(final_text, leaks_seen)
             late_question = pending_action.words_for_turn()
-            if late_question is not None:
+            if late_question is not None and late_question not in final_text:
                 await _say(late_question, channel, device)
                 _emit(on_text, "delta", f" {late_question}" if final_text else late_question)
                 final_text = f"{final_text} {late_question}".strip()
@@ -1403,7 +1708,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # something other than what was spoken. A spoken lead in is kept; on
             # the app, where it was cleared, it comes back only when the follow
             # up is empty, so the reply is never blank.
-            if _plays_in_the_room(channel, device):
+            if _plays_in_the_room(channel, device) and not safety.guarded:
                 final_text = f"{lead_in} {final_text}".strip()
             elif not final_text and lead_in:
                 _emit(on_text, "delta", lead_in)
@@ -1412,7 +1717,12 @@ async def ask_nova_async(user_text: str, device: str = "pi",
             # Timer, reminder, cancel, dismiss: the text Nova said alongside
             # the call is the answer. A second round trip here would spend a
             # second of latency rephrasing "Timer set."
-            final_text = " ".join(spoken_parts).strip()
+            final_text = accumulated if mutating else " ".join(spoken_parts).strip()
+            if dismissed and not ignored and not safety.cancelled.is_set():
+                final_text = accumulated
+                await _deliver_tool_reply(final_text, channel, device, None, safety, heard, leaks_seen)
+            elif mutating and final_text:
+                await _say(final_text, channel, device)
             if staged is not None:
                 await _say(staged, channel, device)
                 _emit(on_text, "delta", f" {staged}" if final_text else staged)
@@ -1455,14 +1765,24 @@ async def ask_nova_async(user_text: str, device: str = "pi",
     else:
         dismissed = False
         ignored   = False
+        if safety.expects_action and not safety.cancelled.is_set():
+            _emit(on_text, "reset", "")
+            accumulated = NO_ACTION
+            _emit(on_text, "delta", accumulated)
+        if hold_speech and not safety.cancelled.is_set():
+            await router.feed(accumulated)
         await router.finalize()
+        if hold_speech and router.sentences_emitted and first_token is not None:
+            timing.mark("first_sentence_ms", (time.monotonic() - first_token) * 1000.0)
         await tts_task
         final_text = accumulated
 
     # Fixed in code, not asked for again: see screen_text. What is saved and
     # returned is what the app shows, and the done event replaces the streamed
     # deltas with it, so the screen ends on the tidied reply.
-    final_text = screen_text.for_display(final_text, channel)
+    final_text = "" if safety.cancelled.is_set() else screen_text.for_display(final_text, channel)
+    if held is not None and not safety.cancelled.is_set():
+        held.flush(final_text)
 
     # An empty response is a turn Nova deliberately stayed silent through, and
     # writing it down puts a blank assistant message into the history that the
@@ -1489,7 +1809,7 @@ async def ask_nova_async(user_text: str, device: str = "pi",
                         message_id=reply_id)
     # After the reply, on its own thread. Only for him: a guest's words are not
     # facts about Lethanial, and speech not meant for Nova is not his to keep.
-    if tier == "hokage" and not ignored:
+    if tier == "hokage" and not ignored and not safety.cancelled.is_set():
         memory_pass.notice_later(user_text, datetime.now(), remembered)
     return TurnResult(text=final_text, dismissed=dismissed, ignored=ignored)
 
@@ -1497,7 +1817,8 @@ async def ask_nova_async(user_text: str, device: str = "pi",
 def ask_nova(user_text: str, device: str = "pi",
              channel: str = "voice", tier: str = None, on_text=None,
              speculation=None, named=False,
-             conversation_start=None, followup=False) -> TurnResult:
+             conversation_start=None, followup=False, *, actor=None, cancelled=None, delivery=None,
+             app_conversation=None, proposal_receipt=None, allow_writes=True) -> TurnResult:
     # None means "look it up", so a demotion set in one turn is in force on the
     # next without the caller having to thread it through.
     loop = _thread_loop()
@@ -1506,6 +1827,8 @@ def ask_nova(user_text: str, device: str = "pi",
             ask_nova_async(user_text, device=device, channel=channel,
                            tier=tier or effective_tier(), on_text=on_text,
                            speculation=speculation, named=named, followup=followup,
-                           conversation_start=conversation_start))
+                           conversation_start=conversation_start, actor=actor, cancelled=cancelled,
+                           delivery=delivery, app_conversation=app_conversation,
+                           proposal_receipt=proposal_receipt, allow_writes=allow_writes))
     finally:
         _cancel_leftovers(loop)

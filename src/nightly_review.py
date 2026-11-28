@@ -24,7 +24,7 @@ import calendar_tools
 import evallo_filter
 import sessions
 from config import SESSION_BLOCK_EARLIEST, SESSION_BLOCK_LATEST
-from database import (add_attending, add_task, attending_set, backlog_tasks, complete_task,
+from database import (TaskNotStarted, add_attending, add_task, attending_set, backlog_tasks, complete_task,
                       get_task, last_session_summary, move_task, must_do_counts,
                       save_day_plan, session_has_user_message, session_plan,
                       set_session_plan, set_task_calendar_event, set_task_status, task_day,
@@ -183,7 +183,10 @@ def update_task_status(task_id, status, move_to=None, now=None):
     if task["recurrence"] == "daily":
         if status != "done":
             raise ToolNotice(f"{title} is a daily task; it can only be marked done.")
-        complete_task(task_id, now)
+        try:
+            complete_task(task_id, now)
+        except TaskNotStarted as exc:
+            raise ToolNotice(f"{title} starts {day_words(exc.start_date)}. Nothing was marked done.") from None
         return f"Marked {title} done for today."
 
     if status == "done":

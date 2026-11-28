@@ -74,7 +74,7 @@ def test_a_proposal_is_spoken_by_code_not_rephrased():
     """Sep 14 2026: staged for the 21st, spoken as the 14th, created on the 21st.
     Guards the wiring, since a whole turn cannot run here without speaking."""
     import inspect
-    source = inspect.getsource(brain.ask_nova_async)
+    source = inspect.getsource(brain._committed_turn)
     assert "staged = pending_action.words_for_turn()" in source
     assert "needs_second_call = _needs_second_call(results) and staged is None" in source
     assert "late_question = pending_action.words_for_turn()" in source

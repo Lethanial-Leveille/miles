@@ -1,9 +1,12 @@
 import asyncio
+import hashlib
 import json
+import logging
 import re
 import subprocess
 import sys
 import threading
+from uuid import uuid4
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -11,7 +14,7 @@ from runtime_profile import current, development, headless
 
 current()
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
@@ -19,12 +22,12 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, UUID4, field_validator
 from jose import JWTError
 
 from auth import (verify_password, create_token, decode_token, DEVICE_SCOPE,
                   DEVICE_TOKEN_EXPIRE_DAYS, AGENT_SCOPE, AGENT_TOKEN_EXPIRE_DAYS)
-from brain import ask_nova
+from brain import TurnResult, ask_nova
 from database import (
     init_db, get_active_memories, get_pending_memories,
     approve_memory, delete_memory, get_history,
@@ -34,7 +37,7 @@ from database import (
     all_lists, list_items, check_list_item, uncheck_list_item, list_item_exists,
     task_day, tasks_today, complete_task,
     save_push_device, remove_push_device, save_health_sync,
-    log_phone_presence, latest_phone_presence,
+    log_phone_presence, latest_phone_presence, reserve_chat_request, finish_chat_request,
 )
 from config import MEMORY_SIMILAR_LIST
 from system_state import get_system_state
@@ -110,8 +113,13 @@ class ChatRequest(BaseModel):
     # before this field and its callers should not have to be updated at once.
     channel: Literal["voice", "text"] = "voice"
 
+    conversation_id: UUID4 | None = None
+    request_id: UUID4 | None = None
+    proposal_receipt: UUID4 | None = None
+
 class ChatResponse(BaseModel):
     response: str
+    proposal_receipt: str | None = None
 
 class SpeakRequest(BaseModel):
     text: str
@@ -200,10 +208,40 @@ def refresh(user: str = Depends(get_current_user)):
 
 # ── Core endpoints ──
 
-@app.post("/chat", response_model=ChatResponse)
+def _app_chat_turn(body, user, **transport):
+    identified = body.conversation_id is not None and body.request_id is not None
+    if identified:
+        request_id = body.request_id.hex
+        fingerprint = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        prior = reserve_chat_request(user, request_id, fingerprint)
+        if prior is not None:
+            previous_fingerprint, reply, state = prior
+            if previous_fingerprint != fingerprint:
+                raise HTTPException(status_code=409, detail="That request identifier was already used.")
+            if state == "failed":
+                raise HTTPException(status_code=409, detail=("That request did not record a reply, and its outcome is unknown. It may "
+                                "have been carried out. Check the affected task, calendar or list before asking again."))
+            if reply is None and state == "done":
+                raise HTTPException(status_code=409, detail="That reply has expired. Check the app for the outcome before asking again.")
+            if reply is None:
+                raise HTTPException(status_code=409, detail="That request is already recorded. Check its outcome before asking again.")
+            # A duplicate gets the recorded reply, but cannot acquire approval authority.
+            return TurnResult(text=reply)
+    cancelled = transport.setdefault("cancelled", threading.Event())
+    result = ask_nova(
+        body.message, device="app", channel=body.channel, actor=user,
+        app_conversation=body.conversation_id.hex if identified else uuid4().hex,
+        proposal_receipt=body.proposal_receipt.hex if body.proposal_receipt and identified else None,
+        allow_writes=identified, **transport)
+    if identified and not cancelled.is_set():
+        finish_chat_request(user, request_id, result.text)
+    return result
+
+
+@app.post("/chat", response_model=ChatResponse, response_model_exclude_none=True)
 def chat(body: ChatRequest, user: str = Depends(get_current_user)):
-    response = ask_nova(body.message, device="app", channel=body.channel).text
-    return ChatResponse(response=response)
+    result = _app_chat_turn(body, user)
+    return ChatResponse(response=result.text, proposal_receipt=result.proposal_receipt)
 
 
 # How long the stream waits with nothing to send before writing a comment
@@ -212,10 +250,10 @@ def chat(body: ChatRequest, user: str = Depends(get_current_user)):
 _KEEPALIVE_S = 15
 
 
-def _sse(kind: str, text: str) -> str:
+def _sse(kind: str, text: str, **extra) -> str:
     """One Server Sent Event. The blank line at the end is what ends the event,
     and json keeps a reply containing newlines from ending it early."""
-    return f"event: {kind}\ndata: {json.dumps({'text': text})}\n\n"
+    return f"event: {kind}\ndata: {json.dumps({'text': text, **extra})}\n\n"
 
 
 @app.post("/chat/stream")
@@ -224,35 +262,46 @@ async def chat_stream(body: ChatRequest, user: str = Depends(get_current_user)):
 
     ask_nova runs its own event loop, so it runs on a worker thread and hands
     each piece back here with call_soon_threadsafe, which is the only safe way
-    into this loop from another thread. The turn finishes whatever happens to
-    this response: it is already writing to the database and, on voice, to the
-    speaker."""
+    into this loop from another thread. A disconnect cancels unused authority.
+    A mutation that already started may finish."""
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
+    cancelled = threading.Event()
+    delivered = threading.Event()
 
-    def on_text(kind: str, text: str):
-        loop.call_soon_threadsafe(queue.put_nowait, (kind, text))
+    def on_text(kind: str, text: str, **extra):
+        if not cancelled.is_set():
+            loop.call_soon_threadsafe(queue.put_nowait, (kind, text, extra))
 
     def run_turn():
         try:
-            result = ask_nova(body.message, device="app", channel=body.channel,
-                              on_text=on_text)
-            on_text("done", result.text)
+            result = _app_chat_turn(body, user, on_text=on_text, cancelled=cancelled, delivery=delivered)
+            receipt = {"proposal_receipt": result.proposal_receipt} if result.proposal_receipt else {}
+            on_text("done", result.text, **receipt)
+        except HTTPException as exc:
+            on_text("error", exc.detail)
         except Exception as exc:
             on_text("error", str(exc))
 
     threading.Thread(target=run_turn, daemon=True).start()
 
     async def events():
-        while True:
-            try:
-                kind, text = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
-            except asyncio.TimeoutError:
-                yield ": keep-alive\n\n"
-                continue
-            yield _sse(kind, text)
-            if kind in ("done", "error"):
-                return
+        try:
+            while True:
+                try:
+                    kind, text, extra = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                yield _sse(kind, text, **extra)
+                if kind == "done":
+                    delivered.set()
+                    return
+                if kind == "error":
+                    return
+        finally:
+            if not delivered.is_set():
+                cancelled.set()
 
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
@@ -538,9 +587,10 @@ def get_tasks_today(user: str = Depends(get_current_user)):
     """day is the 4am day the list is for. At 1am it is still yesterday's
     date, and the app should say so rather than leave him wondering why
     today's vitamins show as done."""
-    return {"day": task_day(),
+    captured = tasks_view.now()
+    return {"day": task_day(captured),
             "tasks": [{"id": t[0], "text": t[1], "recurrence": t[2]}
-                      for t in tasks_today()]}
+                      for t in tasks_today(captured)]}
 
 
 # ── Quick capture ──
@@ -563,9 +613,17 @@ def quick_capture(body: CaptureRequest, key_id: int = Depends(get_capture_key)):
 
 
 class TaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(min_length=1, max_length=200)
-    where: Literal["today", "backlog"]
+    where: Literal["today", "backlog", "daily"]
     due_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    start_date: Optional[str] = Field(default=None, pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def trim_title(cls, title):
+        return title.strip() if isinstance(title, str) else title
 
 
 def _task_http(exc: tasks_view.TaskError):
@@ -580,32 +638,72 @@ def tasks_overview(days: int = Query(3, ge=1, le=7), user: str = Depends(get_cur
 
 @app.post("/tasks", status_code=201)
 def create_task(body: TaskCreate, user: str = Depends(get_current_user)):
-    title = body.title.strip()
-    if not title:
-        raise HTTPException(status_code=422, detail="The title cannot be blank")
     if body.due_date:
         try:
             date.fromisoformat(body.due_date)
         except ValueError:
             raise HTTPException(status_code=422, detail="due_date is not a real date")
-    return {"task": tasks_view.create(title, body.where, body.due_date)}
+    try:
+        return {"task": tasks_view.create(body.title, body.where, body.due_date, body.start_date)}
+    except tasks_view.TaskError as exc:
+        raise _task_http(exc)
+
+
+def _unique_task_body(pairs):
+    body = dict(pairs)
+    if len(body) != len(pairs):
+        raise ValueError("Duplicate keys")
+    return body
+
+
+async def _task_action_day(request: Request, user: str = Depends(get_current_user)):
+    # Read raw bytes so explicit JSON null and malformed JSON cannot look like no body.
+    raw = await request.body()
+    if not raw:
+        return None
+    try:
+        body = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_task_body)
+        if body == {}:
+            return None
+        if not isinstance(body, dict) or set(body) != {"day"}:
+            raise ValueError("Expected day")
+        day = body["day"]
+        if not isinstance(day, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", day):
+            raise ValueError("Expected YYYY-MM-DD")
+        date.fromisoformat(day)
+    except (ValueError, RecursionError):
+        raise HTTPException(status_code=422, detail="Expected a valid day in YYYY-MM-DD form") from None
+    return day
+
+
+def _apply_task_action(task_id, day, *, complete):
+    if day is None:
+        action = "complete" if complete else "reopen"
+        logging.getLogger("uvicorn.error").info("Legacy Tasks %s for task %s", action, task_id)
+    try:
+        today, task = tasks_view.apply_completion(task_id, day, complete=complete)
+    except tasks_view.TaskError as exc:
+        error = {"detail": exc.detail}
+        if exc.code is not None:
+            error["code"] = exc.code
+        if exc.today is not None:
+            error["today"] = exc.today
+        if exc.start_date is not None:
+            error["start_date"] = exc.start_date
+        return JSONResponse(status_code=exc.status, content=error)
+    if complete:
+        return {"completed": True, "day": today, "task": task}
+    return {"task": task}
 
 
 @app.post("/tasks/{task_id}/complete")
-def finish_task(task_id: int, user: str = Depends(get_current_user)):
-    try:
-        task = tasks_view.complete(task_id)
-    except tasks_view.TaskError as exc:
-        raise _task_http(exc)
-    return {"completed": True, "day": task_day(tasks_view.now()), "task": task}
+def finish_task(task_id: int, day: Optional[str] = Depends(_task_action_day)):
+    return _apply_task_action(task_id, day, complete=True)
 
 
 @app.post("/tasks/{task_id}/reopen")
-def reopen_task(task_id: int, user: str = Depends(get_current_user)):
-    try:
-        return {"task": tasks_view.reopen(task_id)}
-    except tasks_view.TaskError as exc:
-        raise _task_http(exc)
+def reopen_task(task_id: int, day: Optional[str] = Depends(_task_action_day)):
+    return _apply_task_action(task_id, day, complete=False)
 
 
 @app.post("/tasks/{task_id}/backlog")
@@ -1150,9 +1248,9 @@ async def websocket_chat(ws: WebSocket):
         auth_msg = await ws.receive_json()
         token = auth_msg.get("token", "")
         if headless():
-            get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
+            user = get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
         else:
-            _ = decode_token(token)["sub"]
+            user = decode_token(token)["sub"]
     except Exception:
         await ws.send_json({"error": "Unauthorized"})
         await ws.close(code=1008)
@@ -1171,10 +1269,11 @@ async def websocket_chat(ws: WebSocket):
             channel = data.get("channel", "voice")
             if channel not in ("voice", "text"):
                 channel = "voice"
-            if headless():
-                result = await asyncio.to_thread(ask_nova, message, device="app", channel=channel)
-            else:
-                result = ask_nova(message, device="app", channel=channel)
-            await ws.send_json({"response": result.text})
+            turn = ChatRequest(message=message, channel=channel)
+            # ask_nova runs its own event loop, which cannot nest inside this
+            # one, so the synchronous turn runs on a worker thread in every profile.
+            result = await asyncio.to_thread(_app_chat_turn, turn, user)
+            response = result.text
+            await ws.send_json({"response": response})
     except WebSocketDisconnect:
         pass

@@ -32,7 +32,6 @@ import time
 import alerts
 import brain
 import local_intent
-import tts
 import verification
 from config import MODEL_A, MODEL_AB_TEST, SPECULATIVE_CLAUDE
 from database import get_recent_messages, last_reply_at
@@ -193,10 +192,8 @@ class SpeculativeTurn:
                 raise Cancelled()
             self.request = request
             self.fingerprint = request.fingerprint
-            # The first sentence will want ElevenLabs about 1.5s from now.
-            tts.warm()
             self.opened_at = time.monotonic()
-            async with _claude().messages.stream(**brain.first_call_kwargs(request)) as stream:
+            async with _claude().messages.stream(**brain.first_call_kwargs(request, speculative=True)) as stream:
                 async for event in stream:
                     self._buffer.push(event)
                 final = await stream.get_final_message()
@@ -280,7 +277,7 @@ def consider(text, turn_type, embedded_seconds, embedding, voiceprint):
     global _current
     # A/B alternation advances a counter when the model is chosen, so there is
     # no way to know the real turn's model in advance. It is off in production.
-    if not SPECULATIVE_CLAUDE or MODEL_AB_TEST:
+    if not SPECULATIVE_CLAUDE or MODEL_AB_TEST or brain.registry.api_schemas():
         return None
     # Before the intent examples are encoded, classify would spend seconds.
     if not local_intent.is_warm():
