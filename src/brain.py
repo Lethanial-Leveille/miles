@@ -1271,7 +1271,42 @@ async def _deliver_tool_reply(text, channel, device, on_text, safety, heard, lea
             pending_action.mark_presented(pending_action.staged_question())
 
 
-def _log_app_turn(channel, intent, verdict, intent_ms):
+# ── An answer to the assistant's own question ──
+
+# The last exchange per (device, actor): what he asked, what she replied, when,
+# and whether his message could have been a change request. Memory only, because
+# the window is five minutes and conversation_history carries no actor. A bare
+# answer ("Stretching") has nothing for the wide check to flag, so without this
+# the model answered it with no tool and no intent step.
+FOLLOWUP_WINDOW_S = 300
+_last_exchange = {}
+_exchange_clock = time.monotonic
+
+
+def _remember_exchange(key, user_text, reply, possible, tier):
+    if key is None:
+        return
+    if reply and reply.strip():
+        _last_exchange[key] = (user_text, reply.strip(), _exchange_clock(), possible, tier)
+    else:
+        _last_exchange.pop(key, None)
+
+
+def _followup_for(key, answer, tier):
+    """A FollowUp when the last assistant reply for this device and actor was a
+    question, recent, and asked about a possible change request. Ordinary chat
+    stays as fast as before because only such a question qualifies."""
+    entry = _last_exchange.get(key) if key is not None else None
+    if entry is None:
+        return None
+    earlier, reply, when, possible, was_tier = entry
+    if (not possible or was_tier != tier or not reply.endswith("?")
+            or not 0 <= _exchange_clock() - when <= FOLLOWUP_WINDOW_S):
+        return None
+    return task_intent.FollowUp(earlier, reply, answer)
+
+
+def _log_app_turn(channel, intent, verdict, intent_ms, followup=False):
     """One journal line for an app chat turn: how it was said, what the intent
     step read, what the code decided and what it cost. The target and timing are
     the few words the intent step copied, never the whole message, and a
@@ -1285,13 +1320,14 @@ def _log_app_turn(channel, intent, verdict, intent_ms):
         "verdict": verdict.kind if verdict else "skipped",
         "text": (verdict.text if verdict else "")[:200],
         "intent_ms": round(intent_ms),
+        "followup": "yes" if followup else "no",
     }
     print("App turn: " + " ".join(f"{key}={json.dumps(value)}" for key, value in fields.items()),
           flush=True)
 
 
 async def _answer_in_code(text, user_text, device, channel, tier, on_text, held, safety,
-                          asked_choice=False):
+                          asked_choice=False, possible=True):
     """End a turn with words written by code, no model call. Used when the intent
     step refused a request or asked a question: nothing ran, so nothing but the
     plain refusal or question may be said."""
@@ -1306,6 +1342,7 @@ async def _answer_in_code(text, user_text, device, channel, tier, on_text, held,
     if final_text:
         save_message("assistant", heard.text() if heard.cut else final_text, device=device,
                      channel=channel)
+        _remember_exchange(safety.exchange_key, user_text, final_text, possible, tier)
     if tier == "hokage" and not safety.cancelled.is_set():
         memory_pass.notice_later(user_text, datetime.now(), [])
     return TurnResult(text=final_text)
@@ -1323,6 +1360,7 @@ async def ask_nova_async(user_text: str, device: str = "pi", channel: str = "voi
                          *, actor=None, cancelled=None, delivery=None, app_conversation=None,
                          proposal_receipt=None, allow_writes=True):
     safety = TurnSafety(user_text, cancelled or threading.Event(), allow_writes=allow_writes)
+    safety.exchange_key = (device, actor)
     scope = (device, channel, actor, app_conversation if device == "app" else conversation_start)
     try:
         with pending_action.committed_turn(scope, tier, user_text, safety.cancelled, delivery,
@@ -1380,8 +1418,16 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     choice = pending_action.take_choice()
     safety.gate = task_intent.closed_gate(confirm=safety.expected_confirmation)
     held = None
-    needs_intent = choice is not None or (not safety.expected_confirmation
-                                          and task_intent.could_change(user_text))
+    wide = task_intent.could_change(user_text)
+    # An answer to her own question about a change gets the intent step even
+    # though the words alone would not (see _followup_for). A pending skip or
+    # stop choice, a pending confirmation and a message the wide check already
+    # flags keep their own paths.
+    followup = None
+    if choice is None and not safety.expected_confirmation and not wide:
+        followup = _followup_for(safety.exchange_key, user_text, tier)
+    needs_intent = choice is not None or (not safety.expected_confirmation and wide) or followup is not None
+    plain_on_text = on_text
     # A yes or no to a pending proposal can run an external change, so its
     # model text is held just like a new request's: "Done" is never shown
     # before the confirmation tool has run, or after it was refused.
@@ -1392,18 +1438,29 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     if needs_intent:
         safety.flagged = True
         intent_started = time.monotonic()
-        intent = await task_intent.request_intent(_claude(), user_text, choice[1] if choice else None)
+        if followup is not None:
+            intent = await task_intent.request_intent(_claude(), user_text, None, followup=followup)
+        else:
+            intent = await task_intent.request_intent(_claude(), user_text, choice[1] if choice else None)
         intent_ms = (time.monotonic() - intent_started) * 1000.0
-        verdict = task_intent.validate(intent, user_text, choice=choice, tier=tier)
+        verdict = task_intent.validate(intent, user_text, choice=choice, tier=tier, followup=followup)
         timing.note_verdict(verdict.kind)
+        if followup is not None and verdict.kind == "none":
+            # Not about the change after all: an ordinary turn, as fast as one
+            # the wide check never flagged, with no mutating tool offered.
+            held, on_text, safety.flagged = None, plain_on_text, False
+            needs_intent = False
     if device == "app":
-        _log_app_turn(channel, intent, verdict, intent_ms)
+        _log_app_turn(channel, intent, verdict, intent_ms, followup=followup is not None)
+    possible = wide or (verdict is not None and verdict.kind != "none")
+    safety.possible_change = possible
     if needs_intent:
         if verdict.kind in ("refuse", "ask"):
             if verdict.choice:
                 pending_action.ask_choice(*verdict.choice)
             return await _answer_in_code(verdict.text, user_text, device, channel, tier,
-                                         on_text, held, safety, asked_choice=bool(verdict.choice))
+                                         on_text, held, safety, asked_choice=bool(verdict.choice),
+                                         possible=possible)
         if verdict.kind == "act":
             safety.gate = verdict.gate
         else:
@@ -1863,6 +1920,8 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     if ignored and not final_text:
         delete_message(user_message_id)
     reply_id = None
+    _remember_exchange(safety.exchange_key, user_text, "" if ignored else final_text,
+                       safety.possible_change, tier)
     if final_text:
         # What he heard, not what was written, once he cut her off.
         reply_id = save_message("assistant", heard.text() if heard.cut else final_text,

@@ -158,6 +158,10 @@ class TurnSafety:
     # for code that builds a TurnSafety without the step, as older tests do.
     gate: object = None
     flagged: bool = False
+    # Whether his message could have been a change request, for the next turn's follow up check.
+    possible_change: bool = False
+    # (device, actor) of this turn, the key of the last exchange brain remembers.
+    exchange_key: object = None
     used: bool = False
     finished: dict = field(default_factory=dict)
     workers: list = field(default_factory=list)
