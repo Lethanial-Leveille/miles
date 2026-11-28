@@ -36,7 +36,7 @@ Evallo, calendar writes, texting, existing tables, and production. Migration 048
 - Task turns take one extra small model call. Ordinary chat is unchanged.
 - Confirmations sound more standard, because code writes them.
 - No “Done” flashes on screen and then vanishes when the connection drops.
-- Old chat replies expire from the database and its backups.
+- Old chat replies expire from the live database. Copies already in backups stay until those backups age out.
 
 ## Conflicts with the approved documents
 
