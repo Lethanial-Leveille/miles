@@ -215,9 +215,13 @@ def _app_chat_turn(body, user, **transport):
         fingerprint = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
         prior = reserve_chat_request(user, request_id, fingerprint)
         if prior is not None:
-            previous_fingerprint, reply = prior
+            previous_fingerprint, reply, state = prior
             if previous_fingerprint != fingerprint:
                 raise HTTPException(status_code=409, detail="That request identifier was already used.")
+            if state == "failed":
+                raise HTTPException(status_code=409, detail="That request never finished and has expired. Ask again as a new request.")
+            if reply is None and state == "done":
+                raise HTTPException(status_code=409, detail="That reply has expired. Check the app for the outcome before asking again.")
             if reply is None:
                 raise HTTPException(status_code=409, detail="That request is already recorded. Check its outcome before asking again.")
             # A duplicate gets the recorded reply, but cannot acquire approval authority.

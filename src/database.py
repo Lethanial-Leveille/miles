@@ -1200,28 +1200,56 @@ def _migration_046_task_start_date(conn):
 
 
 def _migration_047_chat_request_receipts(conn):
+    # created_at and state exist so the row can expire (see expire_chat_requests).
+    # 047 had not shipped when expiry was decided, so it was changed in place
+    # rather than adding a migration that would only patch an unreleased table.
     conn.execute("""
         CREATE TABLE chat_request_receipts (
             actor TEXT NOT NULL,
             request_id TEXT NOT NULL,
             fingerprint TEXT NOT NULL,
             reply TEXT,
+            created_at TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'pending'
+                CHECK (state IN ('pending', 'done', 'failed')),
             PRIMARY KEY (actor, request_id)
         )
     """)
 
 
-def reserve_chat_request(actor, request_id, fingerprint):
-    """Reserve before processing. A reservation without a reply is never retried."""
+def _migration_048_task_skips(conn):
+    """A daily task has no way to say "not today" except a completion, which
+    would read as done. One row here is one skipped day for one task; the task,
+    its completions and every other table are untouched."""
+    conn.execute("""
+        CREATE TABLE task_skips (
+            task_id INTEGER NOT NULL REFERENCES tasks(id),
+            date TEXT NOT NULL,
+            PRIMARY KEY (task_id, date)
+        )
+    """)
+
+
+# The reply text of a finished request is kept a day, so a lost response can be
+# replayed, then erased. The row stays a week as proof the id was used, then goes.
+RECEIPT_REPLY_HOURS = 24
+RECEIPT_ROW_DAYS = 7
+
+
+def reserve_chat_request(actor, request_id, fingerprint, now=None):
+    """Reserve before processing. A reservation without a reply is never retried.
+
+    Returns None for a new reservation, else (fingerprint, reply, state)."""
+    stamp = (now or datetime.now()).isoformat()
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         cursor = conn.execute("""
-            INSERT INTO chat_request_receipts (actor, request_id, fingerprint)
-            VALUES (?, ?, ?) ON CONFLICT (actor, request_id) DO NOTHING
-        """, (actor, request_id, fingerprint))
+            INSERT INTO chat_request_receipts (actor, request_id, fingerprint, created_at)
+            VALUES (?, ?, ?, ?) ON CONFLICT (actor, request_id) DO NOTHING
+        """, (actor, request_id, fingerprint, stamp))
         if cursor.rowcount:
             return None
         return conn.execute("""
-            SELECT fingerprint, reply FROM chat_request_receipts
+            SELECT fingerprint, reply, state FROM chat_request_receipts
             WHERE actor = ? AND request_id = ?
         """, (actor, request_id)).fetchone()
 
@@ -1229,9 +1257,44 @@ def reserve_chat_request(actor, request_id, fingerprint):
 def finish_chat_request(actor, request_id, reply):
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.execute("""
-            UPDATE chat_request_receipts SET reply = ?
-            WHERE actor = ? AND request_id = ?
+            UPDATE chat_request_receipts SET reply = ?, state = 'done'
+            WHERE actor = ? AND request_id = ? AND state = 'pending'
         """, (reply, actor, request_id))
+
+
+def expire_chat_requests(now=None):
+    """Erase old reply text, fail old unfinished rows, delete old rows.
+
+    Strictly older than the limit, so a row exactly at 24 hours or 7 days still
+    stands. Returns (erased, failed, deleted). Rows are stamped with local time
+    like the rest of the file, so the cutoffs are local time too."""
+    now = now or datetime.now()
+    day_ago = (now - timedelta(hours=RECEIPT_REPLY_HOURS)).isoformat()
+    week_ago = (now - timedelta(days=RECEIPT_ROW_DAYS)).isoformat()
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        deleted = conn.execute(
+            "DELETE FROM chat_request_receipts WHERE created_at < ?", (week_ago,)).rowcount
+        failed = conn.execute(
+            "UPDATE chat_request_receipts SET state = 'failed' "
+            "WHERE state = 'pending' AND created_at < ?", (day_ago,)).rowcount
+        erased = conn.execute(
+            "UPDATE chat_request_receipts SET reply = NULL "
+            "WHERE reply IS NOT NULL AND created_at < ?", (day_ago,)).rowcount
+    return erased, failed, deleted
+
+
+def skip_task_day(task_id, day):
+    """Record that a daily task is skipped on `day`. True when newly skipped."""
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        return conn.execute(
+            "INSERT OR IGNORE INTO task_skips (task_id, date) VALUES (?, ?)",
+            (task_id, day)).rowcount > 0
+
+
+def task_skipped_on(task_id, day):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute("SELECT 1 FROM task_skips WHERE task_id = ? AND date = ?",
+                            (task_id, day)).fetchone() is not None
 
 
 MIGRATIONS = [
@@ -1282,6 +1345,7 @@ MIGRATIONS = [
     (45, _migration_045_evallo_filter),
     (46, _migration_046_task_start_date),
     (47, _migration_047_chat_request_receipts),
+    (48, _migration_048_task_skips),
 ]
 
 # Migrations from this one on run inside one transaction with their version update.
@@ -2660,6 +2724,10 @@ def add_task(text, recurrence=None, now=None, scheduled_for=None, due_date=None,
         conn.close()
 
 
+class TaskSkipped(ValueError):
+    """A daily task cannot be marked done on a day it was skipped."""
+
+
 class TaskNotStarted(ValueError):
     def __init__(self, start_date):
         super().__init__("The daily task has not started")
@@ -2673,6 +2741,8 @@ def complete_task(task_id, now=None):
         task_id, complete=True, now=captured, today=task_day(captured), expected_day=None)
     if result == "not_started":
         raise TaskNotStarted(task["start_date"])
+    if result == "skipped":
+        raise TaskSkipped("The daily task was skipped today")
     return result == "ok"
 
 
@@ -2715,8 +2785,10 @@ def tasks_today(now=None):
                   SELECT 1 FROM task_completions c
                   WHERE c.task_id = t.id
                     AND (t.recurrence IS NULL OR c.date = ?))
+              AND NOT EXISTS (
+                  SELECT 1 FROM task_skips s WHERE s.task_id = t.id AND s.date = ?)
             ORDER BY t.id
-        """, (today, today, today)).fetchall()
+        """, (today, today, today, today)).fetchall()
     finally:
         conn.close()
 
@@ -3165,6 +3237,11 @@ def apply_task_completion(task_id, *, complete, now, today, expected_day):
                 return "day_changed", None
             if task["recurrence"] is not None and task["start_date"] and task["start_date"] > today:
                 return ("not_started" if complete else "not_done"), task
+            if (task["recurrence"] is not None and conn.execute(
+                    "SELECT 1 FROM task_skips WHERE task_id = ? AND date = ?",
+                    (task_id, today)).fetchone()):
+                # A skipped day is not due, so it can be neither done nor reopened.
+                return ("skipped" if complete else "not_done"), task
             if complete:
                 _record_task_completion(conn, task_id, today, now)
             elif task["recurrence"] is not None:
@@ -3202,6 +3279,8 @@ def tasks_for_day(day, today=None):
             FROM tasks
             WHERE archived_at IS NULL
               AND (recurrence IS NULL OR start_date IS NULL OR start_date <= :day)
+              AND NOT (recurrence IS NOT NULL AND EXISTS (
+                       SELECT 1 FROM task_skips s WHERE s.task_id = tasks.id AND s.date = :day))
               AND (recurrence IS NOT NULL
                    OR scheduled_for = :day
                    OR (:day = :today AND status = 'pending'

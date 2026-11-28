@@ -122,6 +122,8 @@ def apply_completion(task_id, expected_day, *, complete):
         first_day = date.fromisoformat(start_date).strftime("%a %b %-d")
         raise TaskError(409, f"{task['text']} starts {first_day}.",
                         code="not_started", start_date=start_date)
+    if result == "skipped":
+        raise TaskError(409, "That task was skipped today", code="skipped")
     if result == "not_done":
         detail = "That task is not done today" if task["recurrence"] is not None else "That task is not done"
         raise TaskError(409, detail, code="not_done")

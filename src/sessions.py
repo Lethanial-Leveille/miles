@@ -20,6 +20,7 @@ closed. The server adds done or error at the end.
 """
 
 import json
+import os
 import re
 import threading
 import time
@@ -598,6 +599,37 @@ def _push_data(session):
             "url": f"nova://session/{session['id']}"}
 
 
+def _receipts_marker():
+    return os.path.join(os.path.dirname(os.path.abspath(database.DB_PATH)), "chat_receipts_cleaned_on")
+
+
+def expire_chat_receipts_daily(now):
+    """Expire old chat request receipts once per task day.
+
+    This tick is the one scheduled job that already runs often, so the cleanup
+    rides on it instead of adding a timer or service. A marker file beside the
+    database remembers the last task day it ran, which keeps it to one run a day
+    and still catches up after a night the Pi was off. A failure is logged and
+    never stops the sessions work that follows."""
+    day = task_day(now)
+    marker = _receipts_marker()
+    try:
+        with open(marker) as handle:
+            if handle.read().strip() == day:
+                return
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return
+    try:
+        erased, failed, deleted = database.expire_chat_requests(now)
+        with open(marker, "w") as handle:
+            handle.write(day)
+        print(f"chat receipts: {erased} erased, {failed} failed, {deleted} deleted", flush=True)
+    except Exception as exc:
+        print(f"chat receipt cleanup failed: {exc}", flush=True)
+
+
 def tick(now=None, notify=None):
     """One run of miles-sessions.timer: create tonight's sessions, push, remind
     and settle, each as session_schedule decides. Returns what it did, as
@@ -608,6 +640,7 @@ def tick(now=None, notify=None):
     now = now or datetime.now()
     notify = notify or push.notify
     done = []
+    expire_chat_receipts_daily(now)
     for session_type in all_types():
         schedule = session_type.schedule
         if schedule is None:
