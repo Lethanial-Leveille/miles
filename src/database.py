@@ -2793,11 +2793,15 @@ class TaskNotStarted(ValueError):
         self.start_date = start_date
 
 
-def complete_task(task_id, now=None):
-    """Mark an eligible task done. An inactive task returns False."""
+def complete_task(task_id, now=None, day=None):
+    """Mark an eligible task done. An inactive task returns False.
+
+    `day` is the task day the caller validated. Voice passes it so a completion
+    spoken before the 4am rollover and written after it still lands on the day
+    he spoke about, never on whatever day the clock shows at write time."""
     captured = now or datetime.now()
     result, task = apply_task_completion(
-        task_id, complete=True, now=captured, today=task_day(captured), expected_day=None)
+        task_id, complete=True, now=captured, today=day or task_day(captured), expected_day=None)
     if result == "not_started":
         raise TaskNotStarted(task["start_date"])
     if result == "skipped":

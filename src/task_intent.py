@@ -323,7 +323,8 @@ def _task_add(intent, utterance, today):
                 and args.get("recurrence") == plan.recurrence
                 and args.get("start_date") == plan.start_date)
     return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok,
-                                          plan=dict(recurrence=plan.recurrence, start_date=plan.start_date)))
+                                          plan=dict(recurrence=plan.recurrence, start_date=plan.start_date,
+                                                    day=today.isoformat())))
 
 
 # ── What each write is bound to ──

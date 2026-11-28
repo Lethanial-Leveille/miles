@@ -182,20 +182,73 @@ def test_a_task_whose_title_names_a_day_is_not_mistaken_for_another_day(turn, db
     assert db.task_completed_on(task, db.task_day())
 
 
-def test_the_validated_day_is_carried_to_the_write(db, monkeypatch):
+def test_the_validated_day_is_carried_to_the_write(db):
     task = db.add_task("reading", "daily")
     verdict = task_intent.validate(Intent("task_skip_today", "reading"), "skip reading today", WEDNESDAY)
     assert verdict.kind == "act" and verdict.gate.plan == {"day": "2026-11-25"}
     import lists_tasks
-    from tools import AUTHORIZED_DAY, AUTHORIZED_TASK, ToolNotice
-    tokens = (AUTHORIZED_TASK.set(task), AUTHORIZED_DAY.set("2026-11-25"))  # the clock says another day
+    from tools import AUTHORIZED_DAY, AUTHORIZED_TASK
+    tokens = (AUTHORIZED_TASK.set(task), AUTHORIZED_DAY.set("2026-11-25"))
     try:
-        with pytest.raises(ToolNotice, match="day changed"):
-            lists_tasks.task_skip_today_tool("reading")
+        lists_tasks.task_skip_today_tool("reading")  # the clock may say another day by now
     finally:
         AUTHORIZED_DAY.reset(tokens[1])
         AUTHORIZED_TASK.reset(tokens[0])
-    assert not db.task_skipped_on(task, "2026-11-25")
+    assert db.task_skipped_on(task, "2026-11-25")
+    assert not db.task_skipped_on(task, db.task_day()) or db.task_day() == "2026-11-25"
+
+
+def test_a_completion_across_the_rollover_lands_on_the_validated_day(turn, db, monkeypatch):
+    # He spoke on the 25th. By the time the write runs the clock says the 26th (past 04:00).
+    task = db.add_task("reading", "daily")
+    verdict = task_intent.validate(Intent("task_complete", "reading"), "I finished reading", WEDNESDAY)
+    assert verdict.gate.plan["day"] == "2026-11-25"
+    import lists_tasks
+    from tools import AUTHORIZED_DAY, AUTHORIZED_TASK
+    monkeypatch.setattr(lists_tasks, "task_day", lambda now=None: "2026-11-26")
+    tokens = (AUTHORIZED_TASK.set(task), AUTHORIZED_DAY.set(verdict.gate.plan["day"]))
+    try:
+        lists_tasks.task_complete_tool("reading")
+    finally:
+        AUTHORIZED_DAY.reset(tokens[1])
+        AUTHORIZED_TASK.reset(tokens[0])
+    assert db.task_completed_on(task, "2026-11-25") and not db.task_completed_on(task, "2026-11-26")
+
+
+def test_a_skip_across_the_rollover_lands_on_the_validated_day(db, monkeypatch):
+    task = db.add_task("reading", "daily")
+    import lists_tasks
+    from tools import AUTHORIZED_DAY, AUTHORIZED_TASK
+    monkeypatch.setattr(lists_tasks, "task_day", lambda now=None: "2026-11-26")
+    tokens = (AUTHORIZED_TASK.set(task), AUTHORIZED_DAY.set("2026-11-25"))
+    try:
+        lists_tasks.task_skip_today_tool("reading")
+    finally:
+        AUTHORIZED_DAY.reset(tokens[1])
+        AUTHORIZED_TASK.reset(tokens[0])
+    assert db.task_skipped_on(task, "2026-11-25") and not db.task_skipped_on(task, "2026-11-26")
+
+
+def test_an_untimed_one_time_add_keeps_the_validated_day(db, monkeypatch):
+    import lists_tasks
+    from tools import AUTHORIZED_DAY
+    monkeypatch.setattr(lists_tasks, "task_day", lambda now=None: "2026-11-26")
+    token = AUTHORIZED_DAY.set("2026-11-25")
+    try:
+        lists_tasks.task_add_tool("call the bank")
+    finally:
+        AUTHORIZED_DAY.reset(token)
+    [row] = db.active_tasks_matching("call the bank")
+    assert db.get_task(row[0])["scheduled_for"] == "2026-11-25"
+
+
+def test_the_dispatch_hands_the_validated_day_to_every_covered_write(turn, db, monkeypatch):
+    seen = []
+    from tools import AUTHORIZED_DAY
+    monkeypatch.setattr(brain.registry, "call", lambda name, args: seen.append(AUTHORIZED_DAY.get()) or "ok")
+    asyncio.run(turn.run("set a timer for ten minutes", [block("set_timer", {"amount": 10, "unit": "minutes"})]))
+    asyncio.run(turn.run("add call the bank", [block("task_add", {"task": "call the bank"})]))
+    assert seen[1] == task_intent.validate(Intent("task_add", "call the bank"), "add call the bank").gate.plan["day"]
 
 
 # ── F9: the permission floor comes before any lookup ──

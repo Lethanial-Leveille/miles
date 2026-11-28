@@ -563,7 +563,7 @@ def test_prestart_completion_explains_the_actual_first_day(voice, db, monkeypatc
 
     captured = datetime(2026, 11, 25, 12)
     task = db.add_task("Reading", "daily", now=captured, start_date="2026-11-26")
-    monkeypatch.setattr(lists_tasks, "complete_task", lambda task_id: db.complete_task(task_id, captured))
+    monkeypatch.setattr(lists_tasks, "complete_task", lambda task_id, day=None: db.complete_task(task_id, captured))
     result = asyncio.run(voice.run("Complete reading", [block("task_complete", {"task": "reading"})]))
     assert result.text == "Reading starts 2026-11-26. Nothing was marked done."
     assert voice.audio == [result.text]

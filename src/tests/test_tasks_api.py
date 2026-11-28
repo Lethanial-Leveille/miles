@@ -701,7 +701,7 @@ def test_existing_voice_and_review_completion_cannot_confirm_a_prestart_write(db
     from tools import ToolNotice
 
     task = db.add_task("Reading", "daily", now=NOW, start_date="2026-11-26")
-    monkeypatch.setattr(lists_tasks, "complete_task", lambda task_id: db.complete_task(task_id, NOW))
+    monkeypatch.setattr(lists_tasks, "complete_task", lambda task_id, day=None: db.complete_task(task_id, NOW))
     before = _task_state(db)
     with pytest.raises(ToolNotice, match="Nothing was marked done"):
         lists_tasks.task_complete_tool("Reading")

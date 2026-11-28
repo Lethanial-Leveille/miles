@@ -1141,7 +1141,10 @@ async def _dispatch_tools(blocks, model, tier, safety):
         gate = safety.gate
         authorized = (gate.target_id if gate is not None and block.name == gate.tool else None)
         token = AUTHORIZED_TASK.set(authorized)
-        day_token = AUTHORIZED_DAY.set(gate.plan.get("day") if authorized is not None else None)
+        # The validated day goes to every covered write, not only the ones on an
+        # existing task, so no write reads the clock again.
+        validated_day = gate.plan.get("day") if gate is not None and block.name == gate.tool else None
+        day_token = AUTHORIZED_DAY.set(validated_day)
         try:
             [result] = await asyncio.to_thread(_run_tools, [block], model, tier, safety=safety)
         finally:

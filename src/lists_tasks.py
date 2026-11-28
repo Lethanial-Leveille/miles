@@ -84,14 +84,11 @@ def _the_task(words):
     return task["id"], task["text"], task["recurrence"]
 
 
-def _same_day():
-    """The task day for a write: the one that was validated, and an error if the
-    clock has since moved to another."""
-    now_day = task_day(datetime.now())
-    validated = AUTHORIZED_DAY.get()
-    if validated is not None and validated != now_day:
-        raise ToolNotice("The day changed before that was done. Nothing was changed.")
-    return now_day
+def _write_day():
+    """The task day for a write: the one the intent step validated, so a
+    request spoken before the 4am rollover is recorded for the day he meant,
+    even when the clock has moved on. Without a validated day, today."""
+    return AUTHORIZED_DAY.get() or task_day(datetime.now())
 
 
 def written_form(words):
@@ -274,7 +271,7 @@ def task_add_tool(task, recurrence=None, start_date=None):
     # day it would be in the backlog, which is not on today's list.
     captured = datetime.now()
     add_task(task, recurrence, now=captured,
-             scheduled_for=task_day(captured) if recurrence is None else None)
+             scheduled_for=_write_day() if recurrence is None else None)
     if recurrence == "daily":
         return f"Added the daily task: {task}."
     return f"Added the task: {task}."
@@ -302,9 +299,8 @@ class TaskEligibilityNotice(ToolNotice):
 )
 def task_complete_tool(task):
     task_id, text, _ = _the_task(task)
-    _same_day()
     try:
-        if not complete_task(task_id):
+        if not complete_task(task_id, day=_write_day()):
             raise ToolNotice("That task is no longer active. Nothing was changed.")
     except TaskNotStarted as exc:
         raise TaskEligibilityNotice(f"{text} starts {exc.start_date}. Nothing was marked done.") from None
@@ -359,7 +355,7 @@ def task_skip_today_tool(task):
         raise ToolNotice(f"{text} is a one time task, so there is no day to skip. Nothing was changed.")
     # One writer transaction checks that it is active, started, not done and not
     # already skipped, then writes, so a completion cannot slip in between.
-    outcome = skip_task_if_due(task_id, _same_day())
+    outcome = skip_task_if_due(task_id, _write_day())
     if outcome == "ok":
         return f"Skipped {text} for today."
     reasons = {
