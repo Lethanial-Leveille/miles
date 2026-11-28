@@ -310,7 +310,7 @@ def _uncaptured_timing(intent, utterance):
 
 
 def _task_add(intent, utterance, today):
-    from voice_action_safety import _ADD_REQUEST, _OTHER_ADD, _normalized
+    from voice_action_safety import _ADD_REQUEST, _OTHER_ADD
     text = " ".join(utterance.split()).strip(" .!?,")
     text = re.sub(r"^please ", "", text, flags=re.I)
     text = re.sub(r" please$", "", text, flags=re.I)
@@ -352,10 +352,10 @@ def _task_add(intent, utterance, today):
         return Verdict("refuse",
                        f"Nothing was changed. I can't tell whether '{title}' includes a time or a date. "
                        f"Do you want it added for today with no timing? If so, say 'add' and just the task.")
-    wanted = _normalized(title)
 
     def args_ok(args):
-        return (_normalized(str(args.get("task", ""))) == wanted
+        # By meaning, so "Water the cactus" is the call for "add water to the cactus".
+        return (task_scheduling.same_title(title, str(args.get("task", "")))
                 and args.get("recurrence") == plan.recurrence
                 and args.get("start_date") == plan.start_date)
     return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok,
@@ -732,7 +732,9 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     # need not appear in the words, and it must be exactly the pending task.
     answering = (choice is not None and intent.action in ("task_archive", "task_skip_today")
                  and _words(intent.target) == _words(choice[1]))
-    if (intent.action not in ("timer", "reminder") and intent.target and not answering
+    # An added task's title is checked by meaning against the words after the
+    # command in _task_add, because the model may tidy it ("Water the cactus").
+    if (intent.action not in ("timer", "reminder", "task_add") and intent.target and not answering
             and _words(intent.target) not in heard):
         return _refuse("I could not match that to what you said. Please say it again.")
 

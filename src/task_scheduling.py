@@ -64,6 +64,42 @@ class SchedulingResult:
     start_date: str | None = None
 
 
+# Words that say nothing about which task is meant. Short on purpose: "up",
+# "out", "off" and "on" can flip a meaning ("turn on" and "turn off"), so they stay.
+_FILLER = frozenset({"a", "an", "the", "to", "for", "my", "of", "our", "your", "some"})
+
+
+def _stem(word):
+    """A light stem so plural and tense endings do not matter. Both sides of a
+    comparison go through it, so it only has to be consistent, not correct."""
+    word = word.removesuffix("'s")
+    if len(word) > 4 and word.endswith("ies"):
+        word = word[:-3] + "y"
+    elif len(word) > 5 and word.endswith("ing"):
+        word = word[:-3]
+    elif len(word) > 4 and word.endswith("ed"):
+        word = word[:-2]
+    elif len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        word = word[:-1]
+    if len(word) > 3 and word[-1] == word[-2] and word[-1] not in "sl":
+        word = word[:-1]
+    return word.removesuffix("e") if len(word) > 3 else word
+
+
+def content_words(text):
+    """The words that carry a task's meaning, in order."""
+    words = re.sub(r"[^a-z0-9' ]+", " ", (text or "").casefold().replace("\u2019", "'")).split()
+    return [_stem(word) for word in words if word not in _FILLER]
+
+
+def same_title(said, written):
+    """True when `written` clearly means what was `said`: the same content words
+    in the same order, ignoring case, punctuation, small filler words and plural
+    or tense endings. Any added or dropped content word makes them differ."""
+    words = content_words(said)
+    return bool(words) and words == content_words(written)
+
+
 def _normalize(text):
     return " ".join(text.split()).strip(" ,.;!?").casefold()
 
@@ -181,7 +217,7 @@ def resolve_task_schedule(utterance, *, title, today, recurrence=None, starts=No
     original_title = _normalize(body[:title_end]).removesuffix(" please")
     if original_title.startswith(('"', "“")) and original_title.endswith(('"', "”")):
         original_title = _normalize(original_title[1:-1])
-    if original_title != _normalize(title):
-        return SchedulingResult("clarify", "Restate the complete task title and timing.")
+    if not same_title(original_title, title):
+        return SchedulingResult("clarify", "I could not tell what the task is called. Say just the task, and then the timing if you have any.")
     return SchedulingResult("supported", recurrence="daily" if is_daily else None,
                             start_date=first.isoformat() if first and first != today else None)

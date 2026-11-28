@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from threading import Event
 
+from task_scheduling import same_title
 from tools import Permission, ToolError, permits
 
 GUARDED = {"task_add", "task_complete", "archive_task", "task_skip_today", "list_add", "list_check"}
@@ -77,7 +78,7 @@ def _intent_matches(name, args, utterance):
             title = title[1:-1].strip()
         return (args.get("start_date") is None
                 and bool(count or match[1]) == (args.get("recurrence") == "daily")
-                and title == _normalized(args["task"])
+                and same_title(title, str(args["task"]))
                 and (quoted or not _NO_TIME.search(title) or _MEDIA_TITLE.fullmatch(title)))
     target = _normalized(args["task"] if "task" in args else args["item"])
     if not target:

@@ -642,3 +642,45 @@ def test_the_everyday_phrases_still_work(turn, db, monkeypatch):
     task = db.add_task("walking", "daily")
     asyncio.run(turn.run("cancel walking today", [block("task_skip_today", {"task": "walking"})]))
     assert ("task_skip_today", {"task": "walking"}) in [(n, a) for n, a in ran]
+
+
+# ── Title matching by meaning ──
+
+@pytest.mark.parametrize("said, title", [
+    ("add water to the cactus", "Water the cactus"),
+    ("add pick up the dry cleaning", "Pick up dry cleaning"),
+    ("add call mom", "Call Mom"),
+    ("add take out the trash", "Take out trash"),
+    ("add buy a gift for Jordan", "Buy gift for Jordan"),
+    ("add email the professor about the project", "Email professor about project"),
+    ("add walk the dogs", "Walk the dog"),
+    ("add reading every day", "reading"),
+])
+def test_a_title_that_means_what_he_said_is_accepted(db, said, title):
+    verdict = task_intent.validate(Intent("task_add", title, "every day" if "every day" in said else ""),
+                                   said, date(2026, 11, 25))
+    assert verdict.kind == "act", verdict.text
+    recurrence = "daily" if "every day" in said else None
+    assert verdict.gate.permits("task_add", {"task": title, **({"recurrence": "daily"} if recurrence else {})})
+
+
+@pytest.mark.parametrize("said, title", [
+    ("add water the cactus", "Water the garden"),
+    ("add call mom", "Call dad"),
+    ("add buy milk", "Buy milk and eggs"),
+    ("add reading", "Reading every day"),
+    ("add call mom", "Call"),
+])
+def test_a_title_that_adds_or_drops_a_word_is_refused(db, said, title):
+    verdict = task_intent.validate(Intent("task_add", title), said, date(2026, 11, 25))
+    assert verdict.kind != "act"
+    assert verdict.text.startswith("Nothing was changed.")
+
+
+def test_the_models_call_title_is_held_to_the_same_rule(db):
+    verdict = task_intent.validate(Intent("task_add", "water the cactus"), "add water to the cactus",
+                                   date(2026, 11, 25))
+    assert verdict.kind == "act"
+    assert verdict.gate.permits("task_add", {"task": "Water the Cactus"})
+    assert not verdict.gate.permits("task_add", {"task": "Water the garden"})
+    assert not verdict.gate.permits("task_add", {"task": "Water the cactus", "recurrence": "daily"})
