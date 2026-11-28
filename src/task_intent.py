@@ -346,6 +346,8 @@ def _task_add(intent, utterance, today):
     plan = task_scheduling.resolve_task_schedule(f"add {intro}{rest}", title=title, today=today,
                                                  starts=starts)
     if plan.outcome != "supported":
+        if not plan.about_timing:
+            return Verdict("refuse", f"Nothing was changed. {plan.reason}")
         return Verdict("refuse",
                        f"Nothing was changed. {plan.reason} When do you want that? I can add it for today, "
                        f"or as a daily task starting today or on a day you name.")

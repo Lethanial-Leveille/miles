@@ -62,6 +62,7 @@ class SchedulingResult:
     reason: str = ""
     recurrence: str | None = None
     start_date: str | None = None
+    about_timing: bool = True  # False when the reason is not about when the task runs
 
 
 # Words that say nothing about which task is meant. Short on purpose: "up",
@@ -152,10 +153,10 @@ def resolve_task_schedule(utterance, *, title, today, recurrence=None, starts=No
     """Return a supported plan or an explicit no-write result from one utterance."""
     original = " ".join((utterance or "").split()).strip(" ,.;!?")
     if _EDIT.match(original):
-        return SchedulingResult("reject", "I can't change when an existing task repeats or starts by voice.")
+        return SchedulingResult("reject", "I can't change when an existing task repeats or starts by voice.", about_timing=False)
     command = _ADD.match(original)
     if not command or not title or not title.strip():
-        return SchedulingResult("clarify", "I didn't catch the task. Say it again, like 'add call the bank'.")
+        return SchedulingResult("clarify", "I didn't catch the task. Say it again, like 'add call the bank'.", about_timing=False)
 
     # Mask quoted names and recognized media titles before examining clauses.
     body = original[command.end():]
@@ -164,7 +165,7 @@ def resolve_task_schedule(utterance, *, title, today, recurrence=None, starts=No
         body = body[intro.end():]
     quoted = _QUOTE.sub(lambda m: " " * len(m[0]), body)
     if any(mark in quoted for mark in ('"', "“", "”")):
-        return SchedulingResult("clarify", "I couldn't read the quote marks. Say the task again without them.")
+        return SchedulingResult("clarify", "I couldn't read the quote marks. Say the task again without them.", about_timing=False)
     masked = _MEDIA.sub(
         lambda m: m[0][:-len(m[1])] + " " * len(m[1]), quoted)
     if _DEADLINE.search(masked):
@@ -218,6 +219,6 @@ def resolve_task_schedule(utterance, *, title, today, recurrence=None, starts=No
     if original_title.startswith(('"', "“")) and original_title.endswith(('"', "”")):
         original_title = _normalize(original_title[1:-1])
     if not same_title(original_title, title):
-        return SchedulingResult("clarify", "I'm not sure of the task name. Say just the task, then any timing.")
+        return SchedulingResult("clarify", "I'm not sure of the task name. Say just the task, then any timing.", about_timing=False)
     return SchedulingResult("supported", recurrence="daily" if is_daily else None,
                             start_date=first.isoformat() if first and first != today else None)

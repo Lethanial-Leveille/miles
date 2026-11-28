@@ -684,3 +684,25 @@ def test_the_models_call_title_is_held_to_the_same_rule(db):
     assert verdict.gate.permits("task_add", {"task": "Water the Cactus"})
     assert not verdict.gate.permits("task_add", {"task": "Water the garden"})
     assert not verdict.gate.permits("task_add", {"task": "Water the cactus", "recurrence": "daily"})
+
+
+# ── F3: only timing rejections get the "When do you want that?" offer ──
+
+def test_non_timing_scheduler_reasons_are_not_timing():
+    import task_scheduling
+    from datetime import date
+    today = date(2026, 11, 27)
+    for said, title in [("change water plants to start on Monday", "water plants"),
+                        ('add "water plants', "water plants"),
+                        ("add water plants", "")]:
+        plan = task_scheduling.resolve_task_schedule(said, title=title, today=today)
+        assert plan.outcome != "supported" and plan.about_timing is False
+    plan = task_scheduling.resolve_task_schedule("add water plants at 5pm", title="water plants", today=today)
+    assert plan.about_timing is True
+
+
+def test_quote_mark_refusal_has_no_timing_question(turn, db):
+    result = asyncio.run(turn.run('add "water plants', [block("task_add", {"task": "water plants"})],
+                                  intent=Intent("task_add", "water plants")))
+    assert "Nothing was changed" in result.text and "When do you want that?" not in result.text
+    assert not db.active_tasks_matching("water plants")
