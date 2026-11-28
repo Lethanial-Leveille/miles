@@ -1423,10 +1423,10 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     # though the words alone would not (see _followup_for). A pending skip or
     # stop choice, a pending confirmation and a message the wide check already
     # flags keep their own paths.
-    followup = None
+    answer_ctx = None
     if choice is None and not safety.expected_confirmation and not wide:
-        followup = _followup_for(safety.exchange_key, user_text, tier)
-    needs_intent = choice is not None or (not safety.expected_confirmation and wide) or followup is not None
+        answer_ctx = _followup_for(safety.exchange_key, user_text, tier)
+    needs_intent = choice is not None or (not safety.expected_confirmation and wide) or answer_ctx is not None
     plain_on_text = on_text
     # A yes or no to a pending proposal can run an external change, so its
     # model text is held just like a new request's: "Done" is never shown
@@ -1438,20 +1438,20 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     if needs_intent:
         safety.flagged = True
         intent_started = time.monotonic()
-        if followup is not None:
-            intent = await task_intent.request_intent(_claude(), user_text, None, followup=followup)
+        if answer_ctx is not None:
+            intent = await task_intent.request_intent(_claude(), user_text, None, followup=answer_ctx)
         else:
             intent = await task_intent.request_intent(_claude(), user_text, choice[1] if choice else None)
         intent_ms = (time.monotonic() - intent_started) * 1000.0
-        verdict = task_intent.validate(intent, user_text, choice=choice, tier=tier, followup=followup)
+        verdict = task_intent.validate(intent, user_text, choice=choice, tier=tier, followup=answer_ctx)
         timing.note_verdict(verdict.kind)
-        if followup is not None and verdict.kind == "none":
+        if answer_ctx is not None and verdict.kind == "none":
             # Not about the change after all: an ordinary turn, as fast as one
             # the wide check never flagged, with no mutating tool offered.
             held, on_text, safety.flagged = None, plain_on_text, False
             needs_intent = False
     if device == "app":
-        _log_app_turn(channel, intent, verdict, intent_ms, followup=followup is not None)
+        _log_app_turn(channel, intent, verdict, intent_ms, followup=answer_ctx is not None)
     possible = wide or (verdict is not None and verdict.kind != "none")
     safety.possible_change = possible
     if needs_intent:
