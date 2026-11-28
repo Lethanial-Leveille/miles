@@ -26,6 +26,7 @@ import os
 import requests
 
 import hevy_tools
+from runtime_profile import refuse_live
 from database import hevy_held_weights, hevy_workouts_seen, record_hevy_progression
 
 _BACKUP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -130,6 +131,7 @@ def _backup(routine):
 
 
 def _put(routine, body):
+    refuse_live("Hevy")
     response = requests.put(f"{hevy_tools._API}/routines/{routine['id']}",
                             headers={"api-key": os.environ["HEVY_API_KEY"]},
                             json=body, timeout=hevy_tools._TIMEOUT_S)

@@ -21,6 +21,9 @@ import threading
 
 import anthropic
 
+from dev_providers import Claude
+from runtime_profile import headless
+
 import embeddings
 import memory_tool
 import prompts
@@ -29,7 +32,7 @@ from database import (get_seed_memories, get_episodic_memories,
                       get_pending_memories, get_recent_messages, log_tool_call)
 from tools import registry
 
-client = anthropic.Anthropic()
+client = Claude(summary="[]") if headless() else anthropic.Anthropic()
 
 # Past this, a message is being mined rather than remembered. The replay's
 # worst case wrote four memories from one message, one of them from an earlier

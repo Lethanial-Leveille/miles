@@ -27,6 +27,7 @@ import time
 from datetime import datetime
 
 import timing
+from runtime_profile import headless
 import tts
 from config import PHRASE_DIR
 from parsing import words_for_number
@@ -296,6 +297,8 @@ def play(key, hour=None, thanked=False, bridge=False):
     before the mic opens, where Nova's own voice in the capture buffer corrupts
     both the transcript and the verification score, or is the entire response to
     a turn. Neither wants a timer alert talking over it."""
+    if headless() and tts.SPEAKER_DEVICE is None:
+        return None
     started = time.monotonic()
     choices = rendered(key, hour, thanked)
     if not choices:

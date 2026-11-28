@@ -31,6 +31,8 @@ import wave
 
 import requests
 
+from runtime_profile import refuse_live
+
 from config import (DEEPGRAM_STT, DEEPGRAM_API_KEY, DEEPGRAM_MODEL,
                     DEEPGRAM_TIMEOUT_S, DEEPGRAM_KEYTERMS, RATE, CHANNELS)
 
@@ -80,6 +82,11 @@ def _wav_bytes(frames):
     return buf.getvalue()
 
 
+def _live_session():
+    refuse_live("Deepgram")
+    return requests.Session()
+
+
 def _session_for(fresh=False):
     """The shared connection when it is recent enough to trust, else a new one.
 
@@ -91,7 +98,7 @@ def _session_for(fresh=False):
         if _session is None or fresh or stale:
             if _session is not None:
                 _session.close()
-            _session = requests.Session()
+            _session = _live_session()
         return _session
 
 

@@ -27,6 +27,7 @@ import sqlite3
 import numpy as np
 
 import database
+from runtime_profile import headless, refuse_live
 from config import EMBEDDING_MODEL
 
 _model = None
@@ -45,6 +46,7 @@ def get_model():
     Import time matters here: database.py is imported by the CLI tools and the
     test suite, and neither should pay a multi second model load to list a
     memory or assert on prompt assembly."""
+    refuse_live("Model download")
     global _model
     if _model is None:
         from sentence_transformers import SentenceTransformer
@@ -57,6 +59,10 @@ def encode(texts):
 
     Normalising here means cosine similarity is a plain dot product later, so
     nothing downstream has to remember to divide by magnitudes."""
+    if headless():
+        from dev_providers import encode as fake_encode
+
+        return fake_encode(texts)
     vectors = get_model().encode(list(texts), normalize_embeddings=True,
                                 batch_size=32, show_progress_bar=False)
     return np.asarray(vectors, dtype=np.float32)

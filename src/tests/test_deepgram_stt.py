@@ -47,7 +47,7 @@ class _FakeSession:
 def key(monkeypatch):
     monkeypatch.setattr(dg, "DEEPGRAM_STT", True)
     monkeypatch.setattr(dg, "DEEPGRAM_API_KEY", "test-key-not-a-real-one")
-    monkeypatch.setattr(dg.requests, "Session", _FakeSession)
+    monkeypatch.setattr(dg, "_live_session", _FakeSession)
     monkeypatch.setattr(dg, "_session", None)
     monkeypatch.setattr(dg, "_last_answer", 0.0)
     monkeypatch.setattr(dg, "_warming", False)

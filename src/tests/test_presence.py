@@ -118,7 +118,9 @@ def test_log_presence_writes_the_reading(db):
 
 def test_log_presence_never_raises(monkeypatch, tmp_path):
     import database
-    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "missing" / "no.db"))
+    unreadable = tmp_path / "invalid.sqlite"
+    unreadable.write_bytes(b"synthetic invalid SQLite file")
+    monkeypatch.setattr(database, "DB_PATH", str(unreadable))
     database.log_presence(PRESENT, SOMEONE)
 
 

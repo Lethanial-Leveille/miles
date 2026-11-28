@@ -27,6 +27,8 @@ import re
 
 import requests
 
+from runtime_profile import refuse_live
+
 import config  # noqa: F401  loads .env, which holds HEVY_API_KEY
 from database import hevy_raises_after
 from tools import Permission, tool
@@ -52,6 +54,7 @@ _KG_PER_LB = 0.45359237
 
 
 def _get(path, **params):
+    refuse_live("Hevy")
     # Read at call time, so a rotated key in .env takes effect on restart.
     key = os.environ.get("HEVY_API_KEY")
     if not key:

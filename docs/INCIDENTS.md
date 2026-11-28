@@ -7,13 +7,9 @@
 > Each entry is dated. Every one was reconstructed from logs, the database, or
 > captured audio at the time, and the evidence is kept inline.
 >
-> **Live config values are declared in [CLAUDE.md](../CLAUDE.md), not here.**
-> This file carries the reasoning and the measurements behind them. A number
-> quoted inside a measurement is what was recorded on the date given and is
-> left exactly as measured, so it may differ from what is live now. The config
-> table in CLAUDE.md is the one that tracks the present.
+> Verify current settings in source using the [repository map](REPOSITORY_MAP.md). Dated values here describe the evidence available at the time.
 
-Up: [CLAUDE.md](../CLAUDE.md) · [SESSION_START.md](SESSION_START.md) ·
+Up: [Repository map](REPOSITORY_MAP.md) · [Engineering sessions](SESSION_START.md) ·
 [BACKEND_TODO.md](BACKEND_TODO.md) · [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md) ·
 [LATENCY.md](LATENCY.md) · [VOICE_OUTPUT.md](VOICE_OUTPUT.md) ·
 [BRAIN.md](BRAIN.md) · [INFRASTRUCTURE.md](INFRASTRUCTURE.md) ·
@@ -23,7 +19,7 @@ Up: [CLAUDE.md](../CLAUDE.md) · [SESSION_START.md](SESSION_START.md) ·
 
 Production failures and their root causes, newest first. This file is for
 things that **broke**. Deliberate design choices go in the decision log in
-[SESSION_START.md](SESSION_START.md) instead, and the two should not duplicate
+[engineering decision log](ENGINEERING_HISTORY.md#decision-log) instead, and the two should not duplicate
 each other: if an incident forced a decision, the incident is written here and
 the decision is recorded there with a link back.
 

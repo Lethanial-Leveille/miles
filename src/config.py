@@ -3,6 +3,8 @@ import re
 import threading
 from pathlib import Path
 
+from runtime_profile import current, headless
+
 from dotenv import load_dotenv
 from elevenlabs import VoiceSettings
 
@@ -14,7 +16,9 @@ from elevenlabs import VoiceSettings
 #
 # load_dotenv does not override variables that are already set, so under systemd
 # this is a no op and EnvironmentFile still wins.
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+_runtime = current()
+if not headless():
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ── Audio hardware ──
 CHUNK = 1280          # 80ms frames, required by openWakeWord
@@ -727,6 +731,8 @@ PRODUCTION_DB_PATH = os.path.expanduser("~/miles/data/miles.db")
 
 
 def db_path():
+    if headless():
+        return os.environ.get("MILES_DB_PATH") or str(_runtime.db_path)
     return os.environ.get("MILES_DB_PATH") or PRODUCTION_DB_PATH
 
 
@@ -1203,12 +1209,17 @@ CALENDAR_ROLES = {
 # The real calendar ids are private: they live in an untracked file (mode 600), never in this repo.
 # When it exists it replaces the placeholder ids above. Format: {"<calendar id>": "blocking|club|holiday"}.
 CALENDAR_ROLES_FILE = os.environ.get("MILES_CALENDAR_ROLES_FILE") or os.path.expanduser("~/miles/data/calendar_roles.json")
-try:
-    import json as _json
-    with open(CALENDAR_ROLES_FILE, encoding="utf-8") as _roles_file:
-        CALENDAR_ROLES = _json.load(_roles_file)
-except FileNotFoundError:
-    pass
+if headless():
+    from fake_calendar import HOLIDAYS as _fake_holidays
+
+    CALENDAR_ROLES[_fake_holidays] = "holiday"
+else:
+    try:
+        import json as _json
+        with open(CALENDAR_ROLES_FILE, encoding="utf-8") as _roles_file:
+            CALENDAR_ROLES = _json.load(_roles_file)
+    except FileNotFoundError:
+        pass
 
 # Public holidays on which UF has no classes, by their title on the "Holidays in
 # United States" calendar. A holidays calendar day is a break day only when its

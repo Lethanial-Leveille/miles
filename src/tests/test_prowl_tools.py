@@ -204,7 +204,7 @@ def test_each_failure_says_where_to_look(monkeypatch, status, words):
     monkeypatch.setenv("PROWL_TOKEN", "t")
     monkeypatch.setattr(prowl.requests, "request", lambda *a, **k: _Response(status))
     with pytest.raises(prowl.ProwlError, match=words):
-        prowl._request("GET", "summary")
+        prowl._request_with(prowl.requests.request, "GET", "summary")
 
 
 def test_the_token_goes_in_its_own_header(monkeypatch):
@@ -217,7 +217,7 @@ def test_the_token_goes_in_its_own_header(monkeypatch):
         return _Response(200)
 
     monkeypatch.setattr(prowl.requests, "request", request)
-    prowl._request("GET", "summary")
+    prowl._request_with(prowl.requests.request, "GET", "summary")
     assert seen == {"method": "GET", "url": "https://prowl.test/api/integrations/miles/summary",
                     "headers": {"X-Miles-Token": "t"}}
 
@@ -226,4 +226,4 @@ def test_a_missing_token_fails_without_a_call(monkeypatch):
     monkeypatch.delenv("PROWL_TOKEN", raising=False)
     monkeypatch.setattr(prowl.requests, "request", lambda *a, **k: pytest.fail("called"))
     with pytest.raises(prowl.ProwlError, match="missing"):
-        prowl._request("GET", "summary")
+        prowl._request_with(prowl.requests.request, "GET", "summary")

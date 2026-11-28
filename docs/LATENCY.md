@@ -7,17 +7,15 @@
 > Measurements taken Aug 10 to Aug 13 2026 and read out of `timing_log`. Re
 > run `scripts/analyze_timing.py` before quoting any of it.
 >
-> **Live config values are declared in [CLAUDE.md](../CLAUDE.md), not here.**
-> This file carries the reasoning and the measurements behind them. A number
-> quoted inside a measurement is what was recorded on the date given and is
-> left exactly as measured, so it may differ from what is live now. The config
-> table in CLAUDE.md is the one that tracks the present.
+> Verify current settings in source using the [repository map](REPOSITORY_MAP.md). Dated values here describe the evidence available at the time.
 
-Up: [CLAUDE.md](../CLAUDE.md) · [SESSION_START.md](SESSION_START.md) ·
+Up: [Repository map](REPOSITORY_MAP.md) · [Engineering sessions](SESSION_START.md) ·
 [BACKEND_TODO.md](BACKEND_TODO.md) · [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md) ·
 [LATENCY.md](LATENCY.md) · [VOICE_OUTPUT.md](VOICE_OUTPUT.md) ·
 [BRAIN.md](BRAIN.md) · [INFRASTRUCTURE.md](INFRASTRUCTURE.md) ·
 [INCIDENTS.md](INCIDENTS.md)
+
+For the architecture assessment and proposed benchmarks, see [Conversational latency research](CONVERSATIONAL_LATENCY_RESEARCH.md).
 
 ---
 

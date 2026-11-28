@@ -25,6 +25,9 @@ import threading
 import time
 from datetime import datetime
 
+from dev_providers import Claude
+from runtime_profile import headless
+
 import anthropic
 
 import database
@@ -139,7 +142,7 @@ def _client():
     loop would be machinery with no job. Tests replace this function."""
     global _client_instance
     if _client_instance is None:
-        _client_instance = anthropic.Anthropic()
+        _client_instance = Claude() if headless() else anthropic.Anthropic()
     return _client_instance
 
 

@@ -1,8 +1,6 @@
 """No test run can reach the production database.
 
-conftest.py sets MILES_DB_PATH before any import and wraps sqlite3.connect so
-the production file cannot be opened; pytest_sessionfinish fails the run if
-anything even tried. These tests prove each layer, so removing one is caught."""
+The launcher installs the SQLite boundary before app and pytest imports. These tests prove each layer, so removing one is caught."""
 
 import os
 import sqlite3
@@ -11,7 +9,7 @@ import pytest
 
 import actions
 import config
-import conftest
+from runtime_profile import current
 import database
 import system_state
 
@@ -42,13 +40,14 @@ def test_the_db_fixture_moves_every_reader_together(db):
     f"file:{PRODUCTION}?mode=ro",
 ])
 def test_opening_production_raises_and_is_recorded(target, monkeypatch):
-    before = len(conftest.PRODUCTION_DB_ATTEMPTS)
-    with pytest.raises(RuntimeError, match="production database"):
+    violations = current().violations
+    before = len(violations)
+    with pytest.raises(RuntimeError, match="SQLite"):
         sqlite3.connect(target, uri=target.startswith("file:"))
-    assert len(conftest.PRODUCTION_DB_ATTEMPTS) == before + 1
+    assert len(violations) == before + 1
     # These attempts are the test's own; take them back so the run's final
     # check only fails on attempts nobody meant to make.
-    del conftest.PRODUCTION_DB_ATTEMPTS[before:]
+    del violations[before:]
 
 
 def test_other_databases_still_open(tmp_path):

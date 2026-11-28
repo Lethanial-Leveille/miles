@@ -1,6 +1,7 @@
 """The listening page labels replies, and hands out nothing but replies.
-Runs a real server on a free port on 127.0.0.1, over files under tmp_path."""
+Uses the assigned loopback port and synthetic files under tmp_path."""
 
+import errno
 import importlib.util
 import json
 import os
@@ -11,6 +12,7 @@ import urllib.request
 import pytest
 
 import spoken_archive
+from runtime_profile import current
 
 _PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "scripts", "label_spoken.py")
@@ -26,11 +28,35 @@ def served(tmp_path, monkeypatch):
     (tmp_path.parent / "secret.txt").write_text("not yours")
     path = spoken_archive.save_reply([("Got it.", b"\x01\x00" * 2205, 0)],
                                      directory=str(tmp_path))
-    server = ls.make_server(0)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_address[1]}", os.path.basename(path)[:-4]
-    server.shutdown()
-    server.server_close()
+    try:
+        server = ls.make_server(current().port)
+    except OSError as exc:
+        if exc.errno in {errno.EPERM, errno.EACCES}:
+            pytest.skip("Runner denies designated loopback binds")
+        raise
+    with server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_address[1]}", os.path.basename(path)[:-4]
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+@pytest.mark.parametrize("error", [errno.EPERM, errno.EACCES])
+def test_fixture_checks_permission_on_the_server_bind(request, monkeypatch, error):
+    addresses = []
+
+    def denied(server):
+        addresses.append(server.server_address)
+        raise OSError(error, "Synthetic bind denial")
+
+    monkeypatch.setattr(ls.ThreadingHTTPServer, "server_bind", denied)
+    with pytest.raises(pytest.skip.Exception, match="Runner denies"):
+        request.getfixturevalue("served")
+    assert addresses == [("127.0.0.1", current().port)]
+    assert ls.ThreadingHTTPServer.allow_reuse_address
 
 
 def _get(url):

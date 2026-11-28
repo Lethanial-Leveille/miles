@@ -7,13 +7,9 @@
 > Voice settings tuned by ear through Aug 12 2026. Phrase bank timings
 > measured Aug 12 2026. Pronunciation model comparison measured Aug 11 2026.
 >
-> **Live config values are declared in [CLAUDE.md](../CLAUDE.md), not here.**
-> This file carries the reasoning and the measurements behind them. A number
-> quoted inside a measurement is what was recorded on the date given and is
-> left exactly as measured, so it may differ from what is live now. The config
-> table in CLAUDE.md is the one that tracks the present.
+> Verify current settings in source using the [repository map](REPOSITORY_MAP.md). Dated values here describe the evidence available at the time.
 
-Up: [CLAUDE.md](../CLAUDE.md) · [SESSION_START.md](SESSION_START.md) ·
+Up: [Repository map](REPOSITORY_MAP.md) · [Engineering sessions](SESSION_START.md) ·
 [BACKEND_TODO.md](BACKEND_TODO.md) · [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md) ·
 [LATENCY.md](LATENCY.md) · [VOICE_OUTPUT.md](VOICE_OUTPUT.md) ·
 [BRAIN.md](BRAIN.md) · [INFRASTRUCTURE.md](INFRASTRUCTURE.md) ·
@@ -26,7 +22,7 @@ ElevenLabs synthesis, the pre rendered phrase bank, and the wake chime.
 
 ## Voice settings
 
-The live model and settings are declared in CLAUDE.md. This section is why.
+Current model and settings are defined in [config.py](../src/config.py). This section is why.
 
 ### Moved to eleven_v3, Sep 13 2026
 
@@ -139,7 +135,7 @@ actually said "Talk soon."
 filter rather than a separate key so a variant already auditioned and committed
 keeps its file.
 
-**Pinning the render seed freezes bad draws.** CLAUDE.md already notes that at
+**Pinning the render seed freezes bad draws.** The [earlier tuning notes](ENGINEERING_HISTORY.md#key-config-values) record that at
 `stability = 0.80` the name is the unstable part: 0.75 "occasionally missed the
 name", 0.90 "held the name but read flatter". Live, a bad reading of it passes
 in one turn. Rendered, it is permanent. Use `render_phrases.py audition <key>
@@ -309,7 +305,7 @@ the app cannot start playing until the reply is finished being written.
 
 **Format.** `TTS_APP_OUTPUT_FORMAT` is mp3, where the room speaker gets raw PCM.
 PCM is free down a local pipe and wasteful down a Cloudflare Tunnel at roughly
-44KB a second. The value is declared in [CLAUDE.md](../CLAUDE.md). `play()`
+44KB a second. The format is defined in [config.py](../src/config.py). `play()`
 opens `aplay` with S16_LE at 22050 hardcoded, so the room format is not a
 preference and a test pins both.
 
@@ -338,12 +334,12 @@ ElevenLabs specific:
   out, and counts what was heard as wall time since the first write
   (`synthesis.heard_s`, Oct 2 2026), since what is queued was never heard
 - v3 stability above 0.7 makes it ignore audio tags
-- v3 has no WebSocket support. It accepts `use_speaker_boost` and any stability; whether it honors them is unmeasured (checked Sep 13 2026)
+- MILES uses v3 over HTTP. ElevenLabs documents v3 on its Text to Dialogue WebSocket, which is separate from the standard TTS WebSocket. The HTTP API accepts `use_speaker_boost` and any stability. Whether it honors them was unmeasured as of Sep 13 2026. [ElevenLabs WebSocket guides](https://elevenlabs.io/docs/eleven-api/guides/how-to/websockets/tts-vs-ttd-websockets)
 - v3 ignores `speed`: 1.0 and 1.1 rendered to identical lengths
 - `optimize_streaming_latency` is deprecated in 2026, do not use
 
 ## Related
 
-- Changing `stability` invalidates the rendered phrase bank. The render and trim workflow is above; the voice id and model are declared in [CLAUDE.md](../CLAUDE.md).
+- Changing `stability` invalidates the rendered phrase bank. The render and trim workflow is above; the voice id and model are defined in [config.py](../src/config.py).
 - An ack blocks and the chime does not, which is a latency decision as much as a voice one: [LATENCY.md](LATENCY.md)
 - Why an ack cannot overlap capture: [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md#endpointing)

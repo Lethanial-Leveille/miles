@@ -40,6 +40,7 @@ import httpx
 from jose import jwt
 
 import config
+from runtime_profile import refuse_live
 from database import active_push_devices, deactivate_push_device
 
 _HOSTS = {
@@ -129,6 +130,7 @@ def _reason(response):
 def _make_client():
     # http2=True needs the h2 package; without it httpx raises here, and notify
     # logs that rather than sending nothing in silence.
+    refuse_live("APNs")
     return httpx.Client(http2=True, timeout=config.APNS_TIMEOUT_S)
 
 

@@ -1,13 +1,35 @@
-# M.I.L.E.S. Backend TODO
+# Backend backlog and research
 
-Deferred work from the speaker verification investigation, Aug 10 2026.
+## Approved roadmap
 
-Written to be picked up cold. If you are a fresh session reading this, start
-with "State of the investigation" below, then check "Blocked on hardware"
-before proposing anything, because most of what is left is gated on hardware
-that did not exist when this was written.
+Use the [roadmap and its amendments](ROADMAP.md#amendments-agreed-nov-24-and-25-2026) for active phase order, approvals and dependencies. This document records deferred engineering work and investigation evidence.
 
----
+## Deferred infrastructure follow ups
+
+The accepted macOS setup left the following follow ups open. Schedule them through the normal approval process.
+
+### Production WebSocket chat repair
+
+The production `/ws` route calls the synchronous chat entry point on the
+ASGI event loop. That entry point calls `run_until_complete` on its thread's
+chat loop, which raises while the ASGI loop is already running in that thread. The headless development
+profile can dispatch its synthetic chat on a worker thread. Production needs
+a separate change to decide how chat shares application state and lifecycle
+with the other production routes, and to cover full login authorization,
+dispatch, disconnects, and concurrent turns. The development phase preserves
+the existing production dispatch and tests that boundary.
+
+### Headless development dependency warnings
+
+The owner's macOS Terminal run of the development environment and label server
+tests passed all 34 tests and reported three dependency deprecation warnings.
+During dependency maintenance, capture the exact warning messages, identify the
+affected packages, and verify compatible upgrades with the focused tests.
+The warnings are deferred from development environment acceptance.
+
+# Historical research and follow ups
+
+These notes started with the August 2026 speaker verification investigation and grew as the system changed. Sections reflect their dates and may contain completed work, superseded assumptions or proposals that still merit investigation. Check the roadmap and relevant source before using a note to start work. Read only the investigation relevant to the task.
 
 ## State of the investigation
 
@@ -197,7 +219,7 @@ when it had only been installed on the MacBook. Now real on the Pi: tailscale
 `100.99.248.127` on the tailnet.
 
 Full reasoning is in the decision log in
-[SESSION_START.md](SESSION_START.md). Kept here only as a pointer, because the
+[engineering decision log](ENGINEERING_HISTORY.md#decision-log). Kept here only as a pointer, because the
 same item was listed as deferred and a future session searching this file for
 Tailscale should not find a stale "not done".
 
@@ -1048,7 +1070,7 @@ Pi at all, and a "go on" is wanted anyway.
 
 **Built:** the unsaid part of a cut reply is kept for two minutes in `resume.py`.
 The rule for what it holds and what lets go of it is in the
-[decision log](SESSION_START.md#what-a-cut-reply-had-left-to-say-is-kept-oct-30-2026-done).
+[decision log](ENGINEERING_HISTORY.md#what-a-cut-reply-had-left-to-say-is-kept-oct-30-2026-done).
 
 **Also built:** what to say, and saying it after a stop that came to nothing.
 `resume.plan()` restarts the sentence she was cut in (past twenty words, its last
@@ -1299,7 +1321,7 @@ not technical. The eval was 58 clips uploaded once, with consent asked for. Live
 **every recording goes out, including the 45 percent of wakes that are false**,
 which is how the neighbours and anyone visiting end up transcribed by a company
 they have never heard of. The recordings are already treated as sensitive in this
-repo and that line in CLAUDE.md exists for a reason. Options worth weighing
+repo, as recorded in the earlier Claude guide. Options worth weighing
 before wiring it up: gate the remote call behind `verify_voice` so only confirmed
 speech from him leaves the Pi, which costs the speculation overlap; or accept it
 and say so explicitly here.
@@ -2037,7 +2059,7 @@ embedded by different encoders must never be averaged into one centroid, which
 is the same class of mistake that poisoned the April voiceprint.
 
 **4. `verification_log` history becomes incomparable across the switch.** Every
-tuning argument in CLAUDE.md that quotes a similarity number is about
+tuning argument in the earlier Claude guide that quotes a similarity number is about
 Resemblyzer and stops applying the moment this lands.
 
 ### What this evidence is and is not
@@ -2123,7 +2145,7 @@ his voice from the room, and that is the harder half:
 
 The backend half is done: a text turn is silent, answers in numerals, and can be
 streamed over `/chat/stream`. See
-[SESSION_START.md](SESSION_START.md#a-typed-message-is-read-not-spoken-sep-15-2026-done).
+[engineering decision log](ENGINEERING_HISTORY.md#a-typed-message-is-read-not-spoken-sep-15-2026-done).
 What is left, and why each was left.
 
 ### The app has to send `channel: "text"`

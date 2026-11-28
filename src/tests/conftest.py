@@ -1,49 +1,10 @@
-import os as _os_roles
-_os_roles.environ["MILES_CALENDAR_ROLES_FILE"] = "/nonexistent/calendar_roles.json"  # tests never read the real ids
-import os
-import sqlite3
-import sys
-import tempfile
-
-# Before anything from src/ is imported, so config.db_path() can never answer
-# with the production file inside a test run. server.py and modules it pulls in
-# call init_db() at import; without this the suite once applied a branch's new
-# migrations to the live ~/miles/data/miles.db (Nov 24 2026).
-_IMPORT_TIME_DIR = tempfile.mkdtemp(prefix="miles_tests_")
-os.environ["MILES_DB_PATH"] = os.path.join(_IMPORT_TIME_DIR, "import_time.db")
-
-# The guard behind that rule: any sqlite3.connect to the production file, from
-# any module, raises and is recorded. Recorded as well as raised because some
-# code swallows exceptions on purpose (a voiceprint sample "never raises"), and
-# a swallowed attempt must still fail the run. pytest_sessionfinish fails the
-# whole run if the list is not empty.
-PRODUCTION_DB = os.path.realpath(os.path.expanduser("~/miles/data/miles.db"))
-PRODUCTION_DB_ATTEMPTS = []
-_real_connect = sqlite3.connect
-
-
-def _target(database):
-    path = os.fspath(database) if not isinstance(database, str) else database
-    if path.startswith("file:"):
-        path = path[len("file:"):].split("?", 1)[0]
-    return os.path.realpath(os.path.expanduser(path))
-
-
-def _guarded_connect(database, *args, **kwargs):
-    if database != ":memory:" and _target(database) == PRODUCTION_DB:
-        import traceback
-        PRODUCTION_DB_ATTEMPTS.append("".join(traceback.format_stack(limit=8)))
-        raise RuntimeError(f"a test tried to open the production database {PRODUCTION_DB}")
-    return _real_connect(database, *args, **kwargs)
-
-
-sqlite3.connect = _guarded_connect
-
-# Test files live in src/tests/; the modules under test live in src/, one
-# directory up. Insert it so plain `import database` etc. resolve.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import pytest
+
+from runtime_profile import current
+
+if current() is None:
+    raise RuntimeError("Use ./scripts/dev test")
+
 import database
 
 
@@ -94,18 +55,8 @@ def db(tmp_path, monkeypatch):
 def fake_embeddings(monkeypatch):
     """Words hashed into 64 buckets stand in for the sentence model: sentences
     sharing words point the same way, and nothing loads 80MB of weights."""
-    import zlib
-    import numpy as np
     import embeddings
-
-    def encode(texts):
-        out = []
-        for text in texts:
-            v = np.zeros(64, dtype=np.float32)
-            for word in text.lower().replace(".", "").split():
-                v[zlib.crc32(word.encode()) % 64] += 1.0
-            out.append(v / (np.linalg.norm(v) or 1.0))
-        return np.stack(out)
+    from dev_providers import encode
 
     monkeypatch.setattr(embeddings, "encode", encode)
     return encode
@@ -190,12 +141,3 @@ def fake_claude(monkeypatch):
         return fake
 
     return install
-
-
-def pytest_sessionfinish(session, exitstatus):
-    """Fail the run if anything tried to open the production database, even
-    an attempt some code caught and ignored."""
-    if PRODUCTION_DB_ATTEMPTS:
-        print(f"\n{len(PRODUCTION_DB_ATTEMPTS)} attempt(s) to open {PRODUCTION_DB} "
-              f"during the test run. First one:\n{PRODUCTION_DB_ATTEMPTS[0]}")
-        session.exitstatus = 1

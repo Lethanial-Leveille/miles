@@ -25,6 +25,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import anthropic
 
+from dev_providers import Claude
+from runtime_profile import headless
+
 import alerts
 import calendar_tools
 import hevy_tools
@@ -363,7 +366,7 @@ _PROMPT = (
     "No dashes of any kind. Use his name at most once. Plain text only."
 )
 
-_client = anthropic.Anthropic(timeout=10.0, max_retries=1)
+_client = Claude() if headless() else anthropic.Anthropic(timeout=10.0, max_retries=1)
 
 # One worker: a check in is one job a night, and a second can only be a
 # duplicate.

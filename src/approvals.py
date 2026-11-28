@@ -27,6 +27,8 @@ import json
 import os
 import re
 import sqlite3
+
+from runtime_profile import headless
 from datetime import datetime, timedelta, timezone
 
 import database
@@ -65,7 +67,9 @@ def _conn():
 _URL = re.compile(r"https?://\S+|\b[\w.-]+\.(?:com|org|net|io|me|ly|us|edu)/\S*", re.I)
 # His fixed UF Zoom meeting, pasted by hand into data/zoom.json as {"link": "..."}.
 # The Mac has its own copy; the two must match exactly or the Pi refuses the text.
-ZOOM_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "zoom.json")
+ZOOM_PATH = None if headless() else os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "data", "zoom.json"
+)
 # Query: pwd and/or omn (Zoom's meeting-instance number), nothing else.
 _Q = r"(pwd=[A-Za-z0-9_-]+(\.\d+)?|omn=\d+)"
 _ZOOM = re.compile(r"^https://([a-z0-9-]+\.)?zoom\.us/(j/\d{9,11}|my/[A-Za-z0-9_-]+)"
@@ -74,7 +78,9 @@ _ZOOM = re.compile(r"^https://([a-z0-9-]+\.)?zoom\.us/(j/\d{9,11}|my/[A-Za-z0-9_
 
 def zoom_link():
     """The one link a text may carry, or None (then no link is allowed at all).
-    Read on every check, so a changed file needs no restart."""
+    Read on every check when configured, so a changed file needs no restart."""
+    if ZOOM_PATH is None:
+        return None
     try:
         with open(ZOOM_PATH) as f:
             link = (json.load(f).get("link") or "").strip()

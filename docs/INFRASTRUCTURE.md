@@ -7,13 +7,9 @@
 > Service and tunnel layout verified Aug 11 2026. The reminder poller was
 > changed Sep 6 2026.
 >
-> **Live config values are declared in [CLAUDE.md](../CLAUDE.md), not here.**
-> This file carries the reasoning and the measurements behind them. A number
-> quoted inside a measurement is what was recorded on the date given and is
-> left exactly as measured, so it may differ from what is live now. The config
-> table in CLAUDE.md is the one that tracks the present.
+> Verify current settings in source using the [repository map](REPOSITORY_MAP.md). Dated values here describe the evidence available at the time.
 
-Up: [CLAUDE.md](../CLAUDE.md) · [SESSION_START.md](SESSION_START.md) ·
+Up: [Repository map](REPOSITORY_MAP.md) · [Engineering sessions](SESSION_START.md) ·
 [BACKEND_TODO.md](BACKEND_TODO.md) · [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md) ·
 [LATENCY.md](LATENCY.md) · [VOICE_OUTPUT.md](VOICE_OUTPUT.md) ·
 [BRAIN.md](BRAIN.md) · [INFRASTRUCTURE.md](INFRASTRUCTURE.md) ·
@@ -112,8 +108,7 @@ journalctl -u miles-voice -f
 journalctl -u miles-voice -n 50
 ```
 
-The everyday commands live in [CLAUDE.md](../CLAUDE.md) so they are in front
-of you without opening this file.
+Use these operator commands only within separately approved production scope. See [Engineering sessions](SESSION_START.md#authorized-pi-sessions).
 
 ## Cloudflare tunnel
 

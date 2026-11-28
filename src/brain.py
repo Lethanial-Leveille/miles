@@ -7,6 +7,9 @@ import time
 from datetime import datetime
 from typing import NamedTuple
 
+from dev_providers import Claude
+from runtime_profile import headless
+
 import anthropic
 import httpx
 import timing
@@ -51,7 +54,7 @@ from config import (MODEL_AB_TEST, MODEL_A, MODEL_B, PROMPT_CACHING,
                     HISTORY_ASSISTANT_WORDS, RECALL_LIMIT, BARGE_IN,
                     BRIDGE_DELAY_MS, HISTORY_GAP_NOTE_MINUTES)
 
-claude = anthropic.AsyncAnthropic()
+claude = Claude(asynchronous=True) if headless() else anthropic.AsyncAnthropic()
 
 # One event loop per thread, kept for the life of the process, with its own
 # client. ask_nova used to call asyncio.run, which builds a loop and throws it
@@ -75,10 +78,15 @@ _KEEPALIVE_S = 240
 
 def _new_client():
     """A client for one long lived loop, keeping idle connections _KEEPALIVE_S."""
+    if headless():
+        return Claude(asynchronous=True)
     return anthropic.AsyncAnthropic(
-        http_client=anthropic.DefaultAsyncHttpxClient(
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20,
-                                keepalive_expiry=_KEEPALIVE_S)))
+        http_client=anthropic.DefaultAsyncHttpxClient(limits=_client_limits()))
+
+
+def _client_limits():
+    return httpx.Limits(max_connections=100, max_keepalive_connections=20,
+                        keepalive_expiry=_KEEPALIVE_S)
 
 
 def _thread_loop():

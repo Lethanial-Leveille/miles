@@ -203,9 +203,11 @@ def test_no_status_row_keeps_everything(db):
     assert ef.keep(ev(), s, NOW)
 
 
-def test_state_read_failure_keeps_everything_and_says_unreadable(db, monkeypatch):
+def test_state_read_failure_keeps_everything_and_says_unreadable(db, monkeypatch, tmp_path):
     push(db)
-    monkeypatch.setattr(database, "DB_PATH", os.path.join(tempfile.mkdtemp(), "missing", "x.db"))
+    unreadable = tmp_path / "invalid.sqlite"
+    unreadable.write_bytes(b"synthetic invalid SQLite file")
+    monkeypatch.setattr(database, "DB_PATH", str(unreadable))
     s = ef.load_state()
     assert not s.readable
     assert ef.status(s, NOW)["outcome"] == "unreadable"
