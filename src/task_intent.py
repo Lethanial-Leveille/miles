@@ -652,10 +652,12 @@ def validate(intent, utterance, today=None, choice=None, tier="hokage"):
         return Verdict("none")
     if intent is None:
         return _refuse("I could not tell what you wanted to change. Please say it again.")
-    if intent.more or _COMPOUND.search(utterance):
-        return _refuse("Please ask for one change at a time.")
+    # Before the one change check: "show my list and check whether milk is on
+    # it" holds two verbs but asks for no change, and the model said so.
     if intent.action == "no_change":
         return Verdict("none")
+    if intent.more or _COMPOUND.search(utterance):
+        return _refuse("Please ask for one change at a time.")
     if intent.action not in ACTION_TOOL:
         return _refuse("I could not tell what you wanted to change. Please say it again.")
     # The permission floor comes before any lookup, so a speaker below the
