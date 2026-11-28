@@ -8,6 +8,14 @@ Labels compare this branch with production (`main` at 51676b9), measured by runn
 
 - **W1, a false "Done" on a misclassified no_change turn.** REGRESSION, the original false success bug, now rarer but not gone. The intent model picks `no_change` for a request that really was a change, the covered tools are hidden, and the model's own text ("Done, I added milk") is spoken although nothing ran. Production would have run the action, so on this scenario the branch is worse. A safety net that replaced such replies with "Nothing was changed." was built and then removed before this deploy, because Codex showed it could also replace a correct answer to "did you add milk?" with a false denial. The next fix has to tell the two cases apart without a word list on the reply, for example by checking this turn's actual tool results, or by making the intent call itself harder to misclassify. Decided by the owner, Nov 27 2026.
 
+## Left after the intent follow up
+
+- **Known limit** `src/brain.py`. The forced tool round covers every validated single tool gate, but only a validated add is replaced by the plan's own call when the model's call is missing or wrong. A wrong call for a stop, skip or completion, or for a list, timer or reminder, is still refused with "Nothing was changed", because replacing a destructive or time dependent call from the plan was not approved. Forcing the tool makes a missing call rare, not impossible.
+- **Known limit** `src/lists_tasks.py`. A second spoken "add reading every day" in a later turn adds a second row. A validated add never duplicates within one turn, but the task table has never refused a repeat title, and refusing one would change behavior he would notice.
+- **Known limit** `src/task_intent.py`. List item names are still compared as exact words (case and a leading "the" or "my" aside). Only task titles are compared by meaning, because the observed failure was a rewritten task title.
+- **Known limit** `src/task_scheduling.py`. A title is compared by content words in order, so a model title that reorders words ("Dog walk" for "walk the dog") is refused.
+- **Known limit** `conversation_history.channel`. Rows written before migration 050 stay NULL. Only turns that go through `brain.ask_nova_async` and the Pi local intent paths write a channel.
+
 ## Other open items
 
 - **Should fix** `src/task_intent.py` PRE EXISTING. Permanent-stop keywords take priority even when explicitly negated ("don't stop reading for good, just skip it today" is refused as unclear). Production archives the task for good on that sentence, so the branch is safer. (found by the review loop at 13424b1)
