@@ -30,9 +30,10 @@ _CLOCK_TIME = re.compile(
     r"at\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
     r"(?:\s+o'clock)?|(?:at )?(?:half|quarter) (?:past|to) \w+|"
     r"at (?:lunchtime|bedtime|dawn|dusk|sunrise|sunset|daybreak|nightfall|night|dinner|breakfast|lunch))\b", re.I)
-# Any count a person says, so "in four days" is as visible as "in 4 days".
-_COUNT = (r"\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|"
-          r"a|an|few|a few|several|couple|a couple of")
+# Any count a person says, so "in four days" is as visible as "in 4 days". The
+# quantity is any single word, not a list of number words, so "in thirteen days"
+# is seen without anyone having to list thirteen.
+_COUNT = r"\d+|\w+|a few|a couple of"
 _TIMING_HINT = re.compile(
     rf"\b(?:{_DAY}|(?:next|this)\s+(?:week|month|year)|soon|later|tonight|yesterday|"
     rf"morning|afternoon|evening|weekend|by|before|after|from\s+now|"

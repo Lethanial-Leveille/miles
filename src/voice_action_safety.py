@@ -24,6 +24,7 @@ _NO_TIME = re.compile(
     r"morning|evening|afternoon|lunchtime|bedtime|noon|midnight|eod|cob|end of (?:day|business)|"
     r"daily|biweekly|fortnight\w*|week\w*|month\w*|year\w*|quarterly|annual\w*|alternate|everyday|recurr\w*|repeat\w*|"
     r"every|each|at|on|from|when|once|later|soon|next|twice|"
+    r"in (?:\d+|\w+) (?:days?|weeks?|months?|years?|hours?|minutes?)|"
     r"in (?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|a few|several|a couple)|"
     r"(?:\d+|one|two|three|four|five|several) times? (?:a|per) (?:day|week|month))\b|\d{1,4}[-/:]\d", re.I)
 _ADD_REQUEST = re.compile(
@@ -74,7 +75,8 @@ def _intent_matches(name, args, utterance):
                   or title.startswith("“") and title.endswith("”"))
         if quoted:
             title = title[1:-1].strip()
-        return (bool(count or match[1]) == (args.get("recurrence") == "daily")
+        return (args.get("start_date") is None
+                and bool(count or match[1]) == (args.get("recurrence") == "daily")
                 and title == _normalized(args["task"])
                 and (quoted or not _NO_TIME.search(title) or _MEDIA_TITLE.fullmatch(title)))
     target = _normalized(args["task"] if "task" in args else args["item"])
@@ -219,6 +221,9 @@ class TurnSafety:
             else:
                 seen[key] = index
         distinct = [index for index in candidates if index not in refusals]
+        # A gated turn was validated as one change, so two distinct mutations in
+        # a batch are refused whole, including two calls to the same external tool.
+        gated = self.gate is not None and self.gate.requires_action
         # An invalid sibling must stop all writes, while vetted independent reads may proceed.
         blocked = any(index in refusals and index not in candidates for index in mutations)
         common = REFUSED if blocked else None
@@ -228,11 +233,14 @@ class TurnSafety:
                 registry.get(blocks[index].name).permission is not Permission.CONTROL
                 for index in distinct):
             common = "Update Nova to send this change safely."
-        elif (len(distinct) > 1 and self.guarded) or (self.guarded and _COMPOUND.search(self.utterance)):
+        elif (len(distinct) > 1 and (self.guarded or gated)) or (self.guarded and _COMPOUND.search(self.utterance)):
             common = ONE_CHANGE
         elif self.guarded and distinct:
             block = blocks[distinct[0]]
-            if block.name not in GUARDED and block.name != CONFIRM:
+            # A tool the gate offers was already vetted, with its arguments, in the
+            # first loop. Anything else on a guarded turn must be a guarded name.
+            if (block.name not in GUARDED and block.name != CONFIRM
+                    and not (self.gate is not None and self.gate.offers(block.name))):
                 common = REFUSED
             elif (self.gate is None and block.name in GUARDED
                   and not _intent_matches(block.name, block.input, self.utterance)):

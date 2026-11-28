@@ -219,7 +219,8 @@ def _app_chat_turn(body, user, **transport):
             if previous_fingerprint != fingerprint:
                 raise HTTPException(status_code=409, detail="That request identifier was already used.")
             if state == "failed":
-                raise HTTPException(status_code=409, detail="That request never finished and has expired. Ask again as a new request.")
+                raise HTTPException(status_code=409, detail=("That request did not record a reply, and its outcome is unknown. It may "
+                                "have been carried out. Check the affected task, calendar or list before asking again."))
             if reply is None and state == "done":
                 raise HTTPException(status_code=409, detail="That reply has expired. Check the app for the outcome before asking again.")
             if reply is None:
@@ -1269,12 +1270,9 @@ async def websocket_chat(ws: WebSocket):
             if channel not in ("voice", "text"):
                 channel = "voice"
             turn = ChatRequest(message=message, channel=channel)
-            # Production keeps the direct call; only the headless profile moves
-            # the turn to a worker thread (dev environment contract).
-            if headless():
-                result = await asyncio.to_thread(_app_chat_turn, turn, user)
-            else:
-                result = _app_chat_turn(turn, user)
+            # ask_nova runs its own event loop, which cannot nest inside this
+            # one, so the synchronous turn runs on a worker thread in every profile.
+            result = await asyncio.to_thread(_app_chat_turn, turn, user)
             response = result.text
             await ws.send_json({"response": response})
     except WebSocketDisconnect:

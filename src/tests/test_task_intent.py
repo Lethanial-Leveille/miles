@@ -321,7 +321,9 @@ def test_timer_reminder_and_list_requests_still_work(turn, db, monkeypatch):
     monkeypatch.setattr(brain.registry, "call", lambda name, args: ran.append(name) or "ok")
     asyncio.run(turn.run("set a timer for 10 minutes",
                          [block("set_timer", {"amount": 10, "unit": "minutes"})], draft="Timer set."))
-    asyncio.run(turn.run("remind me at 5", [block("set_reminder", {"content": "x"})], draft="Okay."))
+    five = datetime.now().replace(hour=17, minute=0, second=0, microsecond=0).isoformat()
+    asyncio.run(turn.run("remind me to call the bank at 5",
+                         [block("set_reminder", {"content": "call the bank", "due": five})], draft="Okay."))
     result = asyncio.run(turn.run("add eggs to my grocery list",
                                   [block("list_add", {"item": "eggs", "list_name": "grocery"})]))
     assert ran == ["set_timer", "set_reminder", "list_add"]

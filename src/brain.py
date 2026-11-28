@@ -22,7 +22,7 @@ from parsing import extract_memories, strip_leading_bracket_cue
 import screen_text
 from stream_router import StreamRouter
 import interrupt_speech
-from tools import registry, Permission, ToolNotice, permits
+from tools import AUTHORIZED_DAY, AUTHORIZED_TASK, registry, Permission, ToolNotice, permits
 from database import log_tool_call
 import alerts
 import memory_pass
@@ -1136,7 +1136,17 @@ async def _dispatch_tools(blocks, model, tier, safety):
     mutating = _has_mutation(blocks)
 
     async def run(index, block):
-        [result] = await asyncio.to_thread(_run_tools, [block], model, tier, safety=safety)
+        # The validated task id travels with the call, so the task tools write
+        # to that row and never resolve the words a second time.
+        gate = safety.gate
+        authorized = (gate.target_id if gate is not None and block.name == gate.tool else None)
+        token = AUTHORIZED_TASK.set(authorized)
+        day_token = AUTHORIZED_DAY.set(gate.plan.get("day") if authorized is not None else None)
+        try:
+            [result] = await asyncio.to_thread(_run_tools, [block], model, tier, safety=safety)
+        finally:
+            AUTHORIZED_TASK.reset(token)
+            AUTHORIZED_DAY.reset(day_token)
         results[index] = result
         if _tool_permission(block) is not Permission.READ:
             safety.finished[block.id] = result
@@ -1224,7 +1234,8 @@ async def _deliver_tool_reply(text, channel, device, on_text, safety, heard, lea
             pending_action.mark_presented(pending_action.staged_question())
 
 
-async def _answer_in_code(text, user_text, device, channel, tier, on_text, held, safety):
+async def _answer_in_code(text, user_text, device, channel, tier, on_text, held, safety,
+                          asked_choice=False):
     """End a turn with words written by code, no model call. Used when the intent
     step refused a request or asked a question: nothing ran, so nothing but the
     plain refusal or question may be said."""
@@ -1233,6 +1244,9 @@ async def _answer_in_code(text, user_text, device, channel, tier, on_text, held,
     final_text = "" if safety.cancelled.is_set() else screen_text.for_display(text, channel)
     if held is not None and not safety.cancelled.is_set():
         held.flush(final_text)
+    if asked_choice and final_text and not heard.cut and not safety.cancelled.is_set():
+        # Only a question that was delivered in full can be answered next turn.
+        pending_action.present_choice()
     if final_text:
         save_message("assistant", heard.text() if heard.cut else final_text, device=device)
     if tier == "hokage" and not safety.cancelled.is_set():
@@ -1309,18 +1323,22 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     choice = pending_action.take_choice()
     safety.gate = task_intent.closed_gate(confirm=safety.expected_confirmation)
     held = None
-    if choice is not None or (not safety.expected_confirmation
-                              and task_intent.could_change(user_text)):
+    needs_intent = choice is not None or (not safety.expected_confirmation
+                                          and task_intent.could_change(user_text))
+    # A yes or no to a pending proposal can run an external change, so its
+    # model text is held just like a new request's: "Done" is never shown
+    # before the confirmation tool has run, or after it was refused.
+    if (needs_intent or safety.expected_confirmation) and on_text is not None:
+        held = on_text = _HeldText(on_text)
+    if needs_intent:
         safety.flagged = True
-        if on_text is not None:
-            held = on_text = _HeldText(on_text)
         intent = await task_intent.request_intent(_claude(), user_text, choice[1] if choice else None)
-        verdict = task_intent.validate(intent, user_text, choice=choice)
+        verdict = task_intent.validate(intent, user_text, choice=choice, tier=tier)
         if verdict.kind in ("refuse", "ask"):
             if verdict.choice:
                 pending_action.ask_choice(*verdict.choice)
             return await _answer_in_code(verdict.text, user_text, device, channel, tier,
-                                         on_text, held, safety)
+                                         on_text, held, safety, asked_choice=bool(verdict.choice))
         if verdict.kind == "act":
             safety.gate = verdict.gate
     # Taken here, not inside build_request: consuming the alerts is a side

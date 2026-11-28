@@ -16,11 +16,22 @@ it can be tested without a network call or an event loop.
 """
 
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
 
 from database import TIERS
+
+
+# The one task id the intent step validated for the call about to run. The task
+# tools use it instead of resolving their words again, so a task that changed
+# between the check and the write is not the one that gets written.
+AUTHORIZED_TASK: ContextVar = ContextVar("authorized_task", default=None)
+
+
+# The task day the intent step validated, so a write cannot land on a different day.
+AUTHORIZED_DAY: ContextVar = ContextVar("authorized_day", default=None)
 
 
 class Permission(Enum):

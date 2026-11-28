@@ -30,9 +30,9 @@ def _run(path):
         database._run_migrations(conn)
 
 
-def test_head_is_48_and_registered_after_047():
+def test_head_is_49_and_registered_after_048():
     versions = [version for version, _ in database.MIGRATIONS]
-    assert versions[-2:] == [47, 48]
+    assert versions[-3:] == [47, 48, 49]
 
 
 def test_048_at_47_keeps_every_seeded_row_and_adds_only_the_table(tmp_path, monkeypatch):
@@ -50,7 +50,7 @@ def test_048_at_47_keeps_every_seeded_row_and_adds_only_the_table(tmp_path, monk
     _run(path)
     _run(path)
     with closing(sqlite3.connect(path)) as conn:
-        assert _version(conn) == 48
+        assert _version(conn) == 49
         after = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         assert after - tables == {"task_skips"}
         for table, rows in before.items():
@@ -69,7 +69,8 @@ def test_048_rolls_back_on_injected_failure_and_retries(tmp_path, monkeypatch):
         raise sqlite3.OperationalError("synthetic failure before version stamp")
 
     with monkeypatch.context() as patch:
-        patch.setattr(database, "MIGRATIONS", database.MIGRATIONS[:-1] + [(48, fail_after_ddl)])
+        patch.setattr(database, "MIGRATIONS",
+                      [e for e in database.MIGRATIONS if e[0] < 48] + [(48, fail_after_ddl)])
         with pytest.raises(sqlite3.OperationalError, match="synthetic failure"):
             _run(path)
     with closing(sqlite3.connect(path)) as conn:
@@ -77,7 +78,75 @@ def test_048_rolls_back_on_injected_failure_and_retries(tmp_path, monkeypatch):
         assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'task_skips'").fetchone() is None
     _run(path)
     with closing(sqlite3.connect(path)) as conn:
-        assert _version(conn) == 48
+        assert _version(conn) == 49
+
+
+# ── the receipt table as the earlier 047 created it ──
+
+OLD_047 = """CREATE TABLE chat_request_receipts (
+    actor TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+    reply TEXT, PRIMARY KEY (actor, request_id))"""
+
+
+def test_049_repairs_a_database_that_applied_the_original_047(tmp_path, monkeypatch):
+    path = _at(tmp_path, monkeypatch, 48)
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.execute("DROP TABLE chat_request_receipts")
+        conn.execute(OLD_047)
+        conn.execute("INSERT INTO chat_request_receipts VALUES ('jordan', 'old-done', 'f', 'ok')")
+        conn.execute("INSERT INTO chat_request_receipts VALUES ('jordan', 'old-open', 'f', NULL)")
+        conn.execute("UPDATE schema_version SET version = 48")
+    _run(path)
+    _run(path)
+    monkeypatch.setattr(database, "DB_PATH", path)
+    with closing(sqlite3.connect(path)) as conn:
+        assert _version(conn) == 49
+        rows = {r[0]: r[1:] for r in conn.execute(
+            "SELECT request_id, reply, state, created_at FROM chat_request_receipts")}
+    # Identities are kept, and unknown times read as old.
+    assert set(rows) == {"old-done", "old-open"}
+    assert rows["old-done"][1] == "done" and rows["old-open"][1] == "pending"
+    # Identified chat now works on that database, and the old ids are still refused.
+    now = datetime.now()
+    assert database.reserve_chat_request("jordan", "new", "f", now) is None
+    assert database.reserve_chat_request("jordan", "old-done", "f", now) == ("f", None, "done")
+    assert database.reserve_chat_request("jordan", "old-open", "f", now) == ("f", None, "failed")
+    database.finish_chat_request("jordan", "new", "reply")
+    assert database.reserve_chat_request("jordan", "new", "f", now) == ("f", "reply", "done")
+
+
+# ── receipt deadlines apply at retry time, before any cleanup ──
+
+def test_replay_honours_the_deadlines_without_running_cleanup(db):
+    _receipt(db, "fresh", NOON - timedelta(hours=1), "kept", "done")
+    _receipt(db, "stale-reply", NOON - timedelta(hours=25), "old", "done")
+    _receipt(db, "stale-open", NOON - timedelta(hours=25), None, "pending")
+    _receipt(db, "week-old", NOON - timedelta(days=7, seconds=1), "older", "done")
+    assert db.reserve_chat_request("jordan", "fresh", "f", NOON) == ("f", "kept", "done")
+    assert db.reserve_chat_request("jordan", "stale-reply", "f", NOON) == ("f", None, "done")
+    assert db.reserve_chat_request("jordan", "stale-open", "f", NOON) == ("f", None, "failed")
+    # Past seven days the id is free again, so a new reservation is made.
+    assert db.reserve_chat_request("jordan", "week-old", "f", NOON) is None
+
+
+# ── skip and completion cannot both succeed ──
+
+def test_skip_checks_everything_in_one_transaction(db):
+    daily = db.add_task("Reading", "daily", now=NOON)
+    once = db.add_task("Call the bank", None, now=NOON)
+    future = db.add_task("Stretch", "daily", now=NOON, start_date="2026-11-30")
+    assert db.skip_task_if_due(once, "2026-11-25") == "not_daily"
+    assert db.skip_task_if_due(future, "2026-11-25") == "not_started"
+    assert db.skip_task_if_due(999, "2026-11-25") == "inactive"
+    assert db.skip_task_if_due(daily, "2026-11-25") == "ok"
+    assert db.skip_task_if_due(daily, "2026-11-25") == "already"
+    other = db.add_task("Vitamins", "daily", now=NOON)
+    db.complete_task(other, NOON)
+    assert db.skip_task_if_due(other, "2026-11-25") == "done"
+    assert not db.task_skipped_on(other, "2026-11-25")
+    # The other order: a skipped day refuses completion.
+    with pytest.raises(db.TaskSkipped):
+        db.complete_task(daily, NOON)
 
 
 # ── a skipped day is not shown and not due ──
@@ -203,4 +272,33 @@ def test_a_retry_of_an_expired_or_failed_request_is_told_so_and_never_rerun(db, 
     db.reserve_chat_request("fake-actor", other_id, other_fp, now=NOON - timedelta(days=2))
     db.expire_chat_requests(NOON)
     failed = client.post("/chat", json=other)
-    assert failed.status_code == 409 and "never finished" in failed.json()["detail"]
+    assert failed.status_code == 409 and "outcome is unknown" in failed.json()["detail"]
+    # It must not invite a blind retry of something that may have been done.
+    assert "Check" in failed.json()["detail"] and "Ask again" not in failed.json()["detail"]
+
+
+def test_production_websocket_runs_the_turn_off_the_event_loop(db, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    import server
+    from auth import create_token
+
+    monkeypatch.setattr(server, "headless", lambda: False)
+    seen = {}
+
+    def turn(body, user, **transport):
+        try:
+            asyncio.get_running_loop()
+            seen["on_loop"] = True
+        except RuntimeError:
+            seen["on_loop"] = False
+        return SimpleNamespace(text="fake reply")
+
+    monkeypatch.setattr(server, "_app_chat_turn", turn)
+    with TestClient(server.app) as client, client.websocket_connect("/ws") as ws:
+        ws.send_json({"token": create_token("Alex")})
+        assert ws.receive_json() == {"status": "authenticated"}
+        ws.send_json({"message": "hello", "channel": "text"})
+        assert ws.receive_json() == {"response": "fake reply"}
+    assert seen == {"on_loop": False}

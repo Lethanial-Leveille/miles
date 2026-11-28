@@ -13,7 +13,7 @@ ToolNotice instead of returned. It goes back to her like an error, so she says
 it rather than "Done.", and is logged as a notice rather than an error.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from database import (
     TaskNotStarted,
     TaskSkipped,
@@ -24,15 +24,15 @@ from database import (
     check_list_item,
     complete_task,
     find_list,
-    skip_task_day,
     get_or_create_list,
+    get_task,
+    skip_task_if_due,
     list_items,
-    task_completed_on,
     task_day,
     tasks_today,
     unchecked_items_matching,
 )
-from tools import Permission, ToolNotice, tool
+from tools import AUTHORIZED_DAY, AUTHORIZED_TASK, Permission, ToolNotice, tool
 
 
 def stored_list_name(spoken):
@@ -69,6 +69,29 @@ def _one(matches, what, words):
         raise ToolNotice(f"More than one {what} matches '{words}': {names}. "
                           f"Ask which one.")
     return matches[0]
+
+
+def _the_task(words):
+    """(id, text, recurrence) of the task to write to. When the intent step
+    validated one task id for this call, that row is used and nothing is
+    resolved again; if it is no longer active, nothing is changed."""
+    authorized = AUTHORIZED_TASK.get()
+    if authorized is None:
+        return _one(active_tasks_matching(words), "task", words)
+    task = get_task(authorized)
+    if task is None or task["archived_at"] is not None:
+        raise ToolNotice("That task is no longer active. Nothing was changed.")
+    return task["id"], task["text"], task["recurrence"]
+
+
+def _same_day():
+    """The task day for a write: the one that was validated, and an error if the
+    clock has since moved to another."""
+    now_day = task_day(datetime.now())
+    validated = AUTHORIZED_DAY.get()
+    if validated is not None and validated != now_day:
+        raise ToolNotice("The day changed before that was done. Nothing was changed.")
+    return now_day
 
 
 def written_form(words):
@@ -225,6 +248,9 @@ _TASK_WORDS = {"type": "string",
             "recurrence": {"type": "string", "enum": ["daily"],
                            "description": "daily when it repeats every day; "
                                           "omit for a one time task"},
+            "start_date": {"type": "string",
+                           "description": "YYYY-MM-DD first day of a daily task, only when he "
+                                          "said one, like 'starting Monday'; omit otherwise"},
         },
         "required": ["task"],
     },
@@ -232,8 +258,18 @@ _TASK_WORDS = {"type": "string",
     returns_to_model=False,
     min_tier="hokage",
 )
-def task_add_tool(task, recurrence=None):
+def task_add_tool(task, recurrence=None, start_date=None):
     task = written_form(task)
+    if start_date is not None:
+        try:
+            first = date.fromisoformat(start_date)
+        except ValueError:
+            raise ToolNotice("That first day is not a real date. Nothing was changed.") from None
+        if recurrence != "daily" or first < date.fromisoformat(task_day(datetime.now())):
+            raise ToolNotice("A first day needs a daily task and cannot be in the past. "
+                             "Nothing was changed.")
+        add_task(task, recurrence, now=datetime.now(), start_date=start_date)
+        return f"Added the daily task: {task}, starting {first.strftime('%A, %B')} {first.day}."
     # A one time task said aloud is for today, so it gets today's day. With no
     # day it would be in the backlog, which is not on today's list.
     captured = datetime.now()
@@ -265,7 +301,8 @@ class TaskEligibilityNotice(ToolNotice):
     min_tier="hokage",
 )
 def task_complete_tool(task):
-    task_id, text, _ = _one(active_tasks_matching(task), "task", task)
+    task_id, text, _ = _the_task(task)
+    _same_day()
     try:
         if not complete_task(task_id):
             raise ToolNotice("That task is no longer active. Nothing was changed.")
@@ -294,7 +331,7 @@ def task_complete_tool(task):
     min_tier="hokage",
 )
 def archive_task_tool(task):
-    task_id, text, _ = _one(active_tasks_matching(task), "task", task)
+    task_id, text, _ = _the_task(task)
     if not archive_task(task_id):
         raise ToolNotice("That task is no longer active. Nothing was changed.")
     return f"Stopped tracking: {text}."
@@ -317,16 +354,22 @@ def archive_task_tool(task):
     min_tier="hokage",
 )
 def task_skip_today_tool(task):
-    task_id, text, recurrence = _one(active_tasks_matching(task), "task", task)
+    task_id, text, recurrence = _the_task(task)
     if recurrence is None:
         raise ToolNotice(f"{text} is a one time task, so there is no day to skip. Nothing was changed.")
-    captured = datetime.now()
-    day = task_day(captured)
-    if task_completed_on(task_id, day):
-        raise ToolNotice(f"{text} is already done today. Nothing was changed.")
-    if not skip_task_day(task_id, day):
-        raise ToolNotice(f"{text} was already skipped today. Nothing was changed.")
-    return f"Skipped {text} for today."
+    # One writer transaction checks that it is active, started, not done and not
+    # already skipped, then writes, so a completion cannot slip in between.
+    outcome = skip_task_if_due(task_id, _same_day())
+    if outcome == "ok":
+        return f"Skipped {text} for today."
+    reasons = {
+        "inactive": "That task is no longer active.",
+        "not_daily": f"{text} is a one time task, so there is no day to skip.",
+        "not_started": f"{text} has not started yet, so it is not due today.",
+        "done": f"{text} is already done today.",
+        "already": f"{text} was already skipped today.",
+    }
+    raise ToolNotice(f"{reasons[outcome]} Nothing was changed.")
 
 
 @tool(

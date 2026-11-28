@@ -62,6 +62,7 @@ def voice(db, monkeypatch):
     monkeypatch.setattr(brain, "speak", audio.append)
 
     async def run(utterance, blocks, *, tier="hokage", draft="Done. I saved the task.", extra=()):
+        rounds.clear()  # a turn the intent step refused never reads its stream
         rounds.extend([Stream(blocks, draft), *extra])
         return await brain.ask_nova_async(utterance, tier=tier, on_text=lambda *e: events.append(e))
 

@@ -138,28 +138,45 @@ def _matches(context, proposal, approved, now):
 
 
 def ask_choice(task_id, title, now=None):
-    """Remember that this turn asked whether to skip a daily task today or stop
-    it for good. Held on the conversation like a proposal, so only the next turn
-    of the same conversation can answer it."""
+    """Stage the question of whether to skip a daily task today or stop it for
+    good. It is held on the conversation like a proposal, but is not live until
+    present_choice says the question was delivered, so a question he never saw
+    or heard cannot be answered by a later short phrase."""
     context = _turn_context.get()
     if context is None:
         return
     with _lock:
         if context.index == context.conversation.index and not context.cancelled.is_set():
-            context.conversation.choice = (
-                task_id, title, context.index, time.monotonic() if now is None else now)
+            context.conversation.choice = [
+                task_id, title, context.index, time.monotonic() if now is None else now,
+                context.tier, False]
+
+
+def present_choice():
+    """The staged question was delivered in full. A cancelled or superseded turn
+    leaves it staged, and take_choice then discards it."""
+    context = _turn_context.get()
+    if context is None:
+        return
+    with _lock:
+        choice = context.conversation.choice
+        if (choice is not None and not context.cancelled.is_set()
+                and choice[2] == context.index and context.index == context.conversation.index):
+            choice[5] = True
 
 
 def take_choice(now=None):
-    """The (task id, title) asked about on the previous turn, if still fresh.
-    Always cleared, so an answer is used once and an unrelated turn drops it."""
+    """The (task id, title) asked about on the previous turn, if it was
+    presented, is still fresh and the same tier is answering. Always cleared,
+    so an answer is used once and an unrelated turn drops it."""
     context = _turn_context.get()
     if context is None:
         return None
     now = time.monotonic() if now is None else now
     with _lock:
         choice, context.conversation.choice = context.conversation.choice, None
-    if (choice is None or choice[2] != context.index - 1
+    if (choice is None or not choice[5] or choice[2] != context.index - 1
+            or choice[4] != context.tier
             or not 0 <= now - choice[3] <= CONFIRM_WINDOW_S):
         return None
     return choice[0], choice[1]

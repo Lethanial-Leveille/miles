@@ -22,7 +22,7 @@ import database
 import task_scheduling
 import timing
 from config import MODEL_A
-from tools import Permission, registry
+from tools import Permission, permits, registry
 
 # ── Which turns could change something ──
 
@@ -60,7 +60,9 @@ ACTION_TOOL = {
 }
 TASK_ACTIONS = {"task_add", "task_complete", "task_archive", "task_skip_today"}
 # Actions whose outcome is spoken by code from the tool result, not by the model.
-AUTHORITATIVE = TASK_ACTIONS | {"list_add", "list_check"}
+# Every flagged change is in it, timers, reminders and other tools included, so
+# no model sentence about a stored change is ever spoken in place of the result.
+AUTHORITATIVE = TASK_ACTIONS | {"list_add", "list_check", "timer", "reminder", "other"}
 
 INTENT_TOOL = {
     "name": "record_intent",
@@ -112,19 +114,28 @@ def _mutating_tool_summaries():
     return "; ".join(f"{name} ({registry.get(name).summary})" for name in names)
 
 
+_REQUIRED = {"action": str, "target": str, "timing": str, "more_than_one_change": bool}
+
+
 def parse_intent(message):
-    """The Intent in a forced tool call reply, or None when it is missing or malformed."""
-    for block in getattr(message, "content", None) or []:
-        if getattr(block, "type", None) == "tool_use" and block.name == "record_intent":
-            data = block.input
-            if (isinstance(data, dict) and data.get("action") in ACTIONS
-                    and isinstance(data.get("target", ""), str)
-                    and isinstance(data.get("timing", ""), str)
-                    and isinstance(data.get("tool", ""), str)
-                    and type(data.get("more_than_one_change", False)) is bool):
-                return Intent(data["action"], data.get("target", "").strip(), data.get("timing", "").strip(),
-                              data.get("tool", "").strip(), data.get("more_than_one_change", False))
-    return None
+    """The Intent in a forced tool call reply, or None when it is missing,
+    malformed or conflicting. There must be exactly one record_intent block with
+    every required field present and of the right type; a second record, even an
+    identical one, is a reply that cannot be trusted."""
+    records = [block for block in getattr(message, "content", None) or []
+               if getattr(block, "type", None) == "tool_use" and block.name == "record_intent"]
+    if len(records) != 1:
+        return None
+    data = records[0].input
+    if not isinstance(data, dict) or data.get("action") not in ACTIONS:
+        return None
+    for key, kind in _REQUIRED.items():
+        if key not in data or type(data[key]) is not kind:
+            return None
+    if not isinstance(data.get("tool", ""), str):
+        return None
+    return Intent(data["action"], data["target"].strip(), data["timing"].strip(),
+                  data.get("tool", "").strip(), data["more_than_one_change"])
 
 
 async def request_intent(client, utterance, pending_title=None):
@@ -189,6 +200,11 @@ class IntentGate:
 
     @property
     def authoritative(self):
+        if self.action == "other":
+            # An external change is spoken from its result or staged question.
+            # A remembered fact keeps the model's own conversational reply.
+            return (self.tool in registry
+                    and registry.get(self.tool).permission is Permission.EXTERNAL_WRITE)
         return self.action in AUTHORITATIVE
 
     @property
@@ -231,17 +247,33 @@ def _task_resolves_to(task_id):
     return check
 
 
-def _cancel_scope(utterance, recurrence):
+_NOT_FOR_GOOD = re.compile(
+    r"\b(?:not|never|n't|don't|do not|just not|no)\s+(?:\w+\s+){0,2}?"
+    r"(?:for good|forever|permanently|anymore|any more|no longer)\b", re.I)
+
+
+def _cancel_scope(utterance, recurrence, title=""):
     """archive, skip or ask, from the words he used and the kind of task.
 
     A clear stop request archives. Today or tonight skips only today. A bare
     cancel is ambiguous for a daily task, so it asks, and for a one time task
-    its only occurrence is the task, so it archives."""
-    if _STOP_FOR_GOOD.search(utterance):
+    its only occurrence is the task, so it archives. The task's own title is
+    left out, so a task called "Stop smoking" says nothing about scope, and a
+    negated phrase such as "not for good" is read as the opposite of "for good".
+    Words that ask for both today only and for good conflict, so they ask."""
+    text = re.sub(re.escape(title), " ", utterance, flags=re.I) if title else utterance
+    only_today = bool(_NOT_FOR_GOOD.search(text))
+    text = _NOT_FOR_GOOD.sub(" ", text)
+    good = bool(_STOP_FOR_GOOD.search(text))
+    today = only_today or bool(_TODAY.search(text))
+    if good and today:
+        # "skip" alone is a today word; a stop word beside it is a real conflict.
+        return "ask" if recurrence else "archive"
+    if good:
         return "archive"
-    if _TODAY.search(utterance):
+    if today:
         return "skip" if recurrence else "archive"
-    if re.search(r"\b(?:stop|quit|drop|scrap)\b", utterance, re.I):
+    if re.search(r"\b(?:stop|quit|drop|scrap)\b", text, re.I):
         return "archive"
     return "ask" if recurrence else "archive"
 
@@ -263,18 +295,23 @@ def _task_add(intent, utterance, today):
     intro = "a daily task to " if match[1] else ""
     # "to my tasks" says where, not what, so it is not part of the title or timing.
     rest = re.sub(r" (?:to|on) (?:my|the) (?:tasks|to do list)$", "", match[2], flags=re.I)
-    plan = task_scheduling.resolve_task_schedule(f"add {intro}{rest}", title=title, today=today)
+    # The start clause he said, copied by the intent step, is what the resolver
+    # checks the first day against.
+    starts = None
+    if task_scheduling._START.search(intent.timing or ""):
+        starts = task_scheduling._DAILY.sub(" ", intent.timing).strip()
+    plan = task_scheduling.resolve_task_schedule(f"add {intro}{rest}", title=title, today=today,
+                                                 starts=starts)
     if plan.outcome != "supported":
         said = intent.timing or "that timing"
         return Verdict("refuse",
                        f"Nothing was changed. I can't schedule '{said}' by voice. {plan.reason} "
                        f"Do you want it added for today with no timing? If so, say 'add {title}' on its own.")
-    if plan.start_date is not None:
-        return _refuse("I can't set a first day by voice yet. Add it without one, or use the Tasks tab.")
     # The long standing title check: the title is exactly the words after the
     # command, with no timing word left in it, quotes and media titles aside.
     from voice_action_safety import _intent_matches
-    if not _intent_matches("task_add", {"task": title, "recurrence": plan.recurrence}, utterance):
+    if not _intent_matches("task_add", {"task": title, "recurrence": plan.recurrence},
+                           _without_start(utterance)):
         return Verdict("refuse",
                        f"Nothing was changed. I can't tell whether '{title}' includes a time or a date. "
                        f"Do you want it added for today with no timing? If so, say 'add' and just the task.")
@@ -282,11 +319,203 @@ def _task_add(intent, utterance, today):
 
     def args_ok(args):
         return (_normalized(str(args.get("task", ""))) == wanted
-                and args.get("recurrence") == plan.recurrence)
-    return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok, plan={"recurrence": plan.recurrence}))
+                and args.get("recurrence") == plan.recurrence
+                and args.get("start_date") == plan.start_date)
+    return Verdict("act", gate=IntentGate("task_add", "task_add", args_ok,
+                                          plan=dict(recurrence=plan.recurrence, start_date=plan.start_date)))
 
 
-def validate(intent, utterance, today=None, choice=None):
+# ── What each write is bound to ──
+# The tool name alone is not a permission. Each gate also holds the words the
+# intent was validated against, and a call whose arguments say something else
+# is refused before anything runs.
+
+_UNITS = {"second": 1, "seconds": 1, "sec": 1, "secs": 1, "minute": 60, "minutes": 60, "min": 60,
+          "mins": 60, "hour": 3600, "hours": 3600, "hr": 3600, "hrs": 3600}
+_ONES = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate(
+    "zero ten twenty thirty forty fifty sixty seventy eighty ninety".split()) if i >= 2}
+
+
+def _number(words):
+    """An integer from one to ninety nine said in digits or words, else None."""
+    words = words.replace("-", " ").split()
+    if len(words) == 1:
+        word = words[0]
+        if word.isdigit():
+            return int(word)
+        if word in ("a", "an"):
+            return 1
+        return _ONES.get(word) or _TENS.get(word)
+    if len(words) == 2 and words[0] in _TENS and words[1] in _ONES and 0 < _ONES[words[1]] < 10:
+        return _TENS[words[0]] + _ONES[words[1]]
+    return None
+
+
+def spoken_seconds(timing):
+    """The length in seconds of "ten minutes", "an hour", "half an hour" or
+    "ninety seconds". None when the words are anything else."""
+    text = _words(timing)
+    text = re.sub(r"^(?:for|in|after)\s+", "", text)
+    if text in ("half an hour", "half hour", "a half hour"):
+        return 1800
+    match = re.fullmatch(r"(.+?)\s+(seconds?|secs?|minutes?|mins?|hours?|hrs?)", text)
+    if not match:
+        return None
+    count = _number(match[1])
+    return count * _UNITS[match[2]] if count else None
+
+
+def _timer_args(seconds):
+    def check(args):
+        unit = _UNITS.get(str(args.get("unit", "")))
+        amount = args.get("amount")
+        return bool(unit) and type(amount) is int and amount * unit == seconds
+    return check
+
+
+_CLOCK = re.compile(
+    r"^(?:(?:tomorrow|today|tonight)\s+)?(?:(?:at|by)\s+)?([a-z0-9-]+)(?::(\d{2}))?\s*(?:([ap])\.?m\.?)?$")
+
+
+def _due_matches(due, timing, now):
+    """Whether an ISO due time is the one the timing words say. Only a length
+    from now or a clock time is understood; any other wording is not accepted."""
+    try:
+        when = datetime.fromisoformat(due)
+    except (TypeError, ValueError):
+        return False
+    seconds = spoken_seconds(timing)
+    if seconds is not None:
+        return abs((when - now).total_seconds() - seconds) <= 120
+    clock = _CLOCK.match(" ".join(timing.lower().split()).replace("o'clock", "").strip())
+    hour = _number(clock[1]) if clock else None
+    if hour is None or hour > 24:
+        return False
+    minute, meridiem = int(clock[2] or 0), clock[3]
+    if meridiem:
+        hour = hour % 12 + (12 if meridiem == "p" else 0)
+        return (when.hour, when.minute) == (hour, minute)
+    return (when.hour % 12, when.minute) == (hour % 12, minute)
+
+
+def _reminder_args(intent, utterance):
+    spoken = _words(utterance)
+    timing = intent.timing
+
+    def check(args):
+        content = _words(re.sub(r"^to\s+", "", _words(str(args.get("content", "")))))
+        if not content or content not in spoken:
+            return False
+        due = args.get("due")
+        if due is None:
+            return not timing
+        return bool(timing) and _due_matches(due, timing, datetime.now())
+    return check
+
+
+def _list_args(intent, utterance):
+    from lists_tasks import stored_list_name
+    spoken = _words(utterance)
+    item = _words(re.sub(r"^(?:the|my)\s+", "", _words(intent.target)))
+    named = re.search(r"\b(?:to|on|from|off|in)\s+(?:my\s+|the\s+)?([a-z0-9']+)\s+list\b", spoken)
+    wanted = stored_list_name(named[1]) if named and named[1] not in ("my", "the") else "grocery"
+
+    def check(args):
+        got = _words(re.sub(r"^(?:the|my)\s+", "", _words(str(args.get("item", "")))))
+        if got != item:
+            return False
+        try:
+            listed = stored_list_name(args["list_name"]) if args.get("list_name") else "grocery"
+        except ValueError:
+            return False
+        return listed == wanted
+    return check
+
+
+_IDENTIFYING = ("title",)
+
+
+def _other_args(intent, utterance):
+    """For a tool outside the Tasks set: the title that picks out an existing
+    thing must be words he said and agree with the target the intent named, and
+    a day given in words must be a day he said. A new thing's own title is his
+    to word, so it is not bound. Which event is meant is then settled by the
+    tool, which refuses an ambiguous one."""
+    spoken = _words(utterance)
+    target = _words(intent.target)
+
+    def check(args):
+        for key in _IDENTIFYING:
+            value = args.get(key)
+            if value is None:
+                continue
+            words = _words(str(value))
+            if not words or words not in spoken:
+                return False
+            if target and target not in words and words not in target:
+                return False
+        day = args.get("day")
+        if isinstance(day, str) and re.fullmatch(r"[A-Za-z ']+", day.strip()):
+            return _words(day) in spoken
+        return True
+    return check
+
+
+_NEGATION = re.compile(r"\b(?:not|never|no|nothing|neither|nor|unfinished|incomplete)\b|n't\b", re.I)
+_HYPOTHETICAL = re.compile(
+    r"\?|\b(?:if|when|once|whether|should|would|could|might|maybe|going to|gonna|plan to|plans to|"
+    r"supposed to|about to|will)\b|'ll\b", re.I)
+_QUESTION_START = re.compile(r"^(?:did|do|does|have|has|am|is|was|were|what|when|how|why|who|which)\b", re.I)
+_POLITE_OPEN = re.compile(r"^(?:please\s+)?(?:(?:can|could|would|will) you\s+(?:please\s+)?)?", re.I)
+
+
+def _affirmative(utterance):
+    """True for a plain statement or command. Negation, a question and a
+    hypothetical clause all fail, so "I didn't finish reading" never completes it."""
+    text = " ".join(utterance.split()).strip(" .!")
+    asked = bool(re.search(r"\b(?:can|could|would|will) you\b", text, re.I))
+    text = _POLITE_OPEN.sub("", text.rstrip("?")) if asked else text
+    if _QUESTION_START.match(text.strip()) or _NEGATION.search(text):
+        return False
+    return not _HYPOTHETICAL.search(text)
+
+
+_TODAY_ONLY = re.compile(
+    r"^(?:today|tonight|right now|now|this (?:morning|afternoon|evening)|for good|forever|permanently|"
+    r"from now on|anymore|any more|for today|for tonight)$", re.I)
+_OTHER_DAY = re.compile(
+    r"\b(?:yesterday|tomorrow|last (?:night|week|month|year|\w+day)|next \w+|day after|day before|"
+    r"(?:days?|weeks?|months?) ago|in \w+ (?:days?|weeks?|months?)|"
+    r"(?:mon|tues?|wednes|thurs?|fri|satur|sun)day|"
+    r"(?:january|february|march|april|may|june|july|august|september|october|november|december) \d|"
+    r"\d{1,2}[/-]\d{1,2}|the \d{1,2}(?:st|nd|rd|th)|this (?:week|weekend)|the day before)\b", re.I)
+
+
+def _only_today(intent, utterance, title):
+    """True when nothing says a day other than today. The task title is left
+    out first, so a task called "Monday review" is not a day. The timing
+    words he gave, if any, must be today words too."""
+    if intent.timing and not _TODAY_ONLY.match(" ".join(intent.timing.split()).strip(" .!,")):
+        return False
+    rest = re.sub(re.escape(title), " ", utterance, flags=re.I) if title else utterance
+    rest = re.sub(re.escape(intent.target), " ", rest, flags=re.I) if intent.target else rest
+    return not _OTHER_DAY.search(rest)
+
+
+def _without_start(text):
+    """The request with its first day clause cut out, for the title check."""
+    marker = task_scheduling._START.search(text)
+    if not marker:
+        return text
+    daily = task_scheduling._DAILY.search(text, marker.end())
+    end = daily.start() if daily else len(text)
+    return " ".join(f"{text[:marker.start()]} {text[end:]}".split())
+
+
+def validate(intent, utterance, today=None, choice=None, tier="hokage"):
     """Turn a recorded Intent into a Verdict. Every failure is a refusal or a
     question with no write; only a verdict of "act" carries a gate."""
     if intent is None:
@@ -295,6 +524,11 @@ def validate(intent, utterance, today=None, choice=None):
         return _refuse("Please ask for one change at a time.")
     if intent.action == "none":
         return Verdict("none")
+    # The permission floor comes before any lookup, so a speaker below the
+    # tool's tier learns nothing about which tasks exist or what they are called.
+    floor = ACTION_TOOL.get(intent.action)
+    if floor and floor in registry and not permits(registry.get(floor), tier):
+        return _refuse("That needs more clearance than you have.")
     today = today or date.fromisoformat(database.task_day(datetime.now()))
     heard = _words(utterance)
     # An answer to a pending skip or stop question names no task, so the model
@@ -302,22 +536,34 @@ def validate(intent, utterance, today=None, choice=None):
     # need not appear in the words, and it must be exactly the pending task.
     answering = (choice is not None and intent.action in ("task_archive", "task_skip_today")
                  and _words(intent.target) == _words(choice[1]))
-    if (intent.action not in ("timer", "reminder", "other") and intent.target and not answering
+    if (intent.action not in ("timer", "reminder") and intent.target and not answering
             and _words(intent.target) not in heard):
         return _refuse("I could not match that to what you said. Please say it again.")
 
-    if intent.action in ("timer", "reminder"):
-        return Verdict("act", gate=IntentGate(ACTION_TOOL[intent.action], intent.action))
+    if intent.action == "timer":
+        seconds = spoken_seconds(intent.timing)
+        if not seconds or _words(intent.timing) not in heard:
+            return _refuse("How long should the timer run? Say it like 'ten minutes'.")
+        return Verdict("act", gate=IntentGate("set_timer", "timer", _timer_args(seconds)))
+    if intent.action == "reminder":
+        if not intent.target or _words(intent.target) not in heard:
+            return _refuse("What should I remind you about?")
+        if intent.timing and _words(intent.timing) not in heard:
+            return _refuse("I could not match the time to what you said. Please say it again.")
+        return Verdict("act", gate=IntentGate("set_reminder", "reminder", _reminder_args(intent, utterance)))
     if intent.action in ("list_add", "list_check"):
         if not intent.target:
             return _refuse("Which item do you mean?")
-        return Verdict("act", gate=IntentGate(ACTION_TOOL[intent.action], intent.action))
+        return Verdict("act", gate=IntentGate(ACTION_TOOL[intent.action], intent.action,
+                                              _list_args(intent, utterance)))
     if intent.action == "other":
         name = intent.tool
         if (name not in registry or name in ACTION_TOOL.values() or name == "confirm_pending_action"
                 or registry.get(name).permission not in (Permission.WRITE, Permission.EXTERNAL_WRITE)):
             return _refuse("I could not tell which change you meant. Please say it again.")
-        return Verdict("act", gate=IntentGate(name, "other"))
+        if not permits(registry.get(name), tier):
+            return _refuse("That needs more clearance than you have.")
+        return Verdict("act", gate=IntentGate(name, "other", _other_args(intent, utterance)))
 
     if intent.action == "task_add":
         return _task_add(intent, utterance, today)
@@ -336,19 +582,29 @@ def validate(intent, utterance, today=None, choice=None):
         return _refuse(problem)
     task_id, title, recurrence = row
     check = _task_resolves_to(task_id)
+    plan = dict(day=today.isoformat())
+    # Only today can be written by voice, so another day is refused, never moved to today.
+    if not _only_today(intent, utterance, title):
+        return _refuse("I can only do that for today by voice. Use the Tasks tab for another day.")
     if intent.action == "task_complete":
+        if not _affirmative(utterance):
+            return _refuse(f"I was not sure you finished {title}. Say it as a plain statement, "
+                           f"like 'I finished {title}'.")
         if not _FINISHED.search(utterance):
             return _refuse(f"I was not sure you finished {title}. Please say it again.")
-        return Verdict("act", gate=IntentGate("task_complete", "task_complete", check, target_id=task_id))
+        return Verdict("act", gate=IntentGate("task_complete", "task_complete", check,
+                                              target_id=task_id, plan=plan))
     if not answering and not _REMOVAL.search(utterance):
         return _refuse(f"I was not sure you wanted to stop or skip {title}. Please say it again.")
-    scope = _cancel_scope(utterance, recurrence)
+    scope = _cancel_scope(utterance, recurrence, title)
     if scope == "ask":
         return Verdict("ask", f"Nothing was changed. {title} is a daily task. Skip today or stop it for good?",
                        choice=(task_id, title))
     if scope == "skip":
-        return Verdict("act", gate=IntentGate("task_skip_today", "task_skip_today", check, target_id=task_id))
-    return Verdict("act", gate=IntentGate("archive_task", "task_archive", check, target_id=task_id))
+        return Verdict("act", gate=IntentGate("task_skip_today", "task_skip_today", check,
+                                              target_id=task_id, plan=plan))
+    return Verdict("act", gate=IntentGate("archive_task", "task_archive", check,
+                                              target_id=task_id, plan=plan))
 
 
 # A reply that claims a change when none ran. Applied only when no mutating tool

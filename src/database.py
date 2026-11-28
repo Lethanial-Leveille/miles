@@ -1230,6 +1230,25 @@ def _migration_048_task_skips(conn):
     """)
 
 
+def _migration_049_receipt_expiry_columns(conn):
+    """047 was edited in place to add created_at and state, so a database that
+    applied the earlier 047 has a receipt table without them. Add them there.
+    Rows that predate the columns have no known time, so they are stamped two
+    days before the migration: no old reply is replayed, an unfinished one is
+    read as expired, and the id stays refused for the rest of its week. A table
+    that already has the columns is left alone."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(chat_request_receipts)")}
+    if "created_at" not in columns:
+        conn.execute("ALTER TABLE chat_request_receipts ADD COLUMN created_at TEXT NOT NULL "
+                     "DEFAULT ''")
+        conn.execute("UPDATE chat_request_receipts SET created_at = ?",
+                     ((datetime.now() - timedelta(days=2)).isoformat(),))
+    if "state" not in columns:
+        conn.execute("ALTER TABLE chat_request_receipts ADD COLUMN state TEXT NOT NULL "
+                     "DEFAULT 'pending' CHECK (state IN ('pending', 'done', 'failed'))")
+        conn.execute("UPDATE chat_request_receipts SET state = 'done' WHERE reply IS NOT NULL")
+
+
 # The reply text of a finished request is kept a day, so a lost response can be
 # replayed, then erased. The row stays a week as proof the id was used, then goes.
 RECEIPT_REPLY_HOURS = 24
@@ -1239,19 +1258,34 @@ RECEIPT_ROW_DAYS = 7
 def reserve_chat_request(actor, request_id, fingerprint, now=None):
     """Reserve before processing. A reservation without a reply is never retried.
 
-    Returns None for a new reservation, else (fingerprint, reply, state)."""
-    stamp = (now or datetime.now()).isoformat()
+    Returns None for a new reservation, else (fingerprint, reply, state). The
+    age limits are applied here as well as in expire_chat_requests, so a retry
+    between two cleanups sees the same thing it would see after one: a row past
+    seven days is gone and its id is free, a reply past a day is not replayed,
+    and an unfinished row past a day has failed."""
+    now = now or datetime.now()
+    stamp = now.isoformat()
+    day_ago = (now - timedelta(hours=RECEIPT_REPLY_HOURS)).isoformat()
+    week_ago = (now - timedelta(days=RECEIPT_ROW_DAYS)).isoformat()
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("DELETE FROM chat_request_receipts WHERE actor = ? AND request_id = ? "
+                     "AND created_at < ?", (actor, request_id, week_ago))
         cursor = conn.execute("""
             INSERT INTO chat_request_receipts (actor, request_id, fingerprint, created_at)
             VALUES (?, ?, ?, ?) ON CONFLICT (actor, request_id) DO NOTHING
         """, (actor, request_id, fingerprint, stamp))
         if cursor.rowcount:
             return None
-        return conn.execute("""
-            SELECT fingerprint, reply, state FROM chat_request_receipts
+        row = conn.execute("""
+            SELECT fingerprint, reply, state, created_at FROM chat_request_receipts
             WHERE actor = ? AND request_id = ?
         """, (actor, request_id)).fetchone()
+    previous, reply, state, created = row
+    if created < day_ago:
+        reply = None
+        if state == "pending":
+            state = "failed"
+    return previous, reply, state
 
 
 def finish_chat_request(actor, request_id, reply):
@@ -1289,6 +1323,30 @@ def skip_task_day(task_id, day):
         return conn.execute(
             "INSERT OR IGNORE INTO task_skips (task_id, date) VALUES (?, ?)",
             (task_id, day)).rowcount > 0
+
+
+def skip_task_if_due(task_id, day):
+    """Skip a daily task for `day` if it is due then, in one writer transaction.
+
+    Returns "ok", "inactive", "not_daily", "not_started", "done" (completed that
+    day) or "already" (skipped before). Only "ok" writes."""
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            task = _task_row(conn, task_id)
+            if task is None or task["archived_at"] is not None:
+                return "inactive"
+            if task["recurrence"] is None:
+                return "not_daily"
+            if task["start_date"] and task["start_date"] > day:
+                return "not_started"
+            if conn.execute("SELECT 1 FROM task_completions WHERE task_id = ? AND date = ?",
+                            (task_id, day)).fetchone():
+                return "done"
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO task_skips (task_id, date) VALUES (?, ?)", (task_id, day))
+            return "ok" if cursor.rowcount else "already"
 
 
 def task_skipped_on(task_id, day):
@@ -1346,6 +1404,7 @@ MIGRATIONS = [
     (46, _migration_046_task_start_date),
     (47, _migration_047_chat_request_receipts),
     (48, _migration_048_task_skips),
+    (49, _migration_049_receipt_expiry_columns),
 ]
 
 # Migrations from this one on run inside one transaction with their version update.

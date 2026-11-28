@@ -36,9 +36,11 @@ def fake_intent(text):
     if "calendar" in lowered:
         return Intent("other", tool="create_calendar_event")
     if re.search(r"\btimer\b", lowered):
-        return Intent("timer", "timer")
-    if re.match(r"remind me", lowered):
-        return Intent("reminder", "reminder")
+        length = re.search(r"\b(?:for|of|in)\s+(.+)$", lowered)
+        return Intent("timer", "timer", length[1] if length else "")
+    remind = re.match(r"remind me (?:to )?(.+?)(?: ((?:at|in|by) .+|tomorrow.*|tonight))?$", lowered)
+    if remind:
+        return Intent("reminder", remind[1], remind[2] or "")
     on_list = re.match(r"(?:add|put) (.+?) (?:to|on) (?:my |the )?(\w+ )?list$", lowered)
     if on_list:
         return Intent("list_add", on_list[1])

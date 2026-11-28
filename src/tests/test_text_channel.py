@@ -107,11 +107,12 @@ def test_the_same_reply_on_voice_is_played(turn):
     assert played == ["Twelve credits is full time."]
 
 
-def test_a_silent_tool_turn_shows_done_without_saying_it(turn):
+def test_a_silent_tool_turn_shows_the_tool_result_without_saying_it(turn):
     timer = SimpleNamespace(type="tool_use", name="set_timer", id="toolu_1",
                             input={"amount": 5, "unit": "minutes"})
     result, played = turn("text", _FakeStream([], [timer]), said="set a timer for five minutes")
-    assert result.text == "Done."
+    # The stored timer is reported from its own result, never from a model sentence.
+    assert result.text == "ran"
     assert played == []
 
 
