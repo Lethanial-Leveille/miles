@@ -62,6 +62,7 @@ FIX_PROMPT = """Fix ONLY the findings in the JSON below, in this repository. Rul
 - Run the tests with: {tests}
 - Commit locally with a clear message. Do not push. Do not deploy. Do not touch production.
 - Never print secrets. Use fake names and emails only.
+- Do not add a Co-Authored-By line or any Claude attribution to commit messages.
 - If a finding cannot be fixed safely, leave it and say why in your final message.
 
 Findings:
