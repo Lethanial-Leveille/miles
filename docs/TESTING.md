@@ -83,8 +83,9 @@ main. That includes cloud sessions. The room test runs on the branch:
 cd ~/miles && git checkout feature/<name> && sudo systemctl restart miles-voice miles-server
 ```
 
-`miles-deploy.timer` skips any branch but main, so it stays out of the way. When
-rung 4 passes, the branch is merged to main, and the timer deploys it.
+The auto deploy timer is not installed, so nothing deploys on its own. When
+rung 4 passes, the branch is merged to main, and he deploys it by hand with
+`scripts/deploy.sh`.
 
 `scripts/replay_resume.py` is the rung 3 replay for resume. "Hey Nova, read the
 test paragraph" (`TEST_PARAGRAPH` in `local_intent.py`) is the fixed reply for

@@ -51,16 +51,22 @@ Timer driven, not long running:
 - `miles-hevy.timer` runs scripts/hevy_progress.py every fifteen minutes: a
   workout from a routine that earned a jump raises that lift's weight in the
   routine (src/hevy_progress.py). Needs HEVY_API_KEY from .env
-- `miles-deploy.timer` runs scripts/auto_deploy.sh every two minutes, counted
-  from the end of the last run (**in the repo, not installed yet**, Oct 30
-  2026). When origin/main is not the commit in `data/deployed_commit`, it tests
-  that commit in a temporary worktree and runs scripts/deploy.sh only if the
-  suite passes. It skips a dirty tree, a branch other than main, unpushed local
-  commits, and a turn that ended under two minutes ago. A commit that failed is
-  kept in `data/deploy_failed_commit` and never retried; there is no rollback
-  yet ([BACKEND_TODO.md](BACKEND_TODO.md)). Runs as him, not root, so git
-  accepts the repo; deploy.sh's sudo needs no password. Silent when there is
-  nothing new. `scripts/auto_deploy.sh --dry-run` decides without restarting
+
+Not installed, on purpose: `miles-deploy.timer`. The unit files sit in the repo
+(`systemd/miles-deploy.timer` and `.service`) and would run scripts/auto_deploy.sh
+every two minutes, but nothing runs them. Checked on the Pi Nov 27 2026: the timer
+is absent from `systemctl list-timers`, from his crontab and from root's. So
+**pushing to main deploys nothing**. A deploy happens only when he runs
+`scripts/deploy.sh` by hand on the Pi, after a fresh backup.
+
+Keep it uninstalled. If it were installed, anyone who could push to main would get
+code running on the Pi within minutes, so install it only after branch protection
+and signed commits are in place. For reference, auto_deploy.sh tests origin/main in
+a temporary worktree and calls deploy.sh only if the suite passes. It skips a dirty
+tree, a branch other than main, unpushed local commits and a turn that ended under
+two minutes ago. A failed commit is kept in `data/deploy_failed_commit` and never
+retried; there is no rollback ([BACKEND_TODO.md](BACKEND_TODO.md)).
+`scripts/auto_deploy.sh --dry-run` decides without restarting.
 
 `miles-wifi` checks whether wlan0 has a carrier and a global scope IPv4
 address, and runs `nmcli connection up Alsander` when either is missing. It
