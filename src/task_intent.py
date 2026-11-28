@@ -155,13 +155,33 @@ _FOLLOWUP_SYSTEM = (
     "both options, set more_than_one_change.")
 
 
+_TASKS_HINT = (" A task name can also be an everyday word, like reading, stretching or running. When the "
+               "message is a command (stop, cancel, skip, remove, finish, mark) and what follows matches "
+               "one of his tasks, it is a change to that task: record the action and copy the task name "
+               "into target. The same words as a plain topic of conversation are no_change.")
+
+
+def _tasks_context(limit=40):
+    """His active task titles for the intent call, so "stop reading for good" reads
+    as a change to the task Reading and not as the activity of reading. Any
+    failure leaves the call as it was: the context only helps, it never decides."""
+    try:
+        rows = database.active_tasks_matching("")[:limit]
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    names = "; ".join(f"{text} ({'daily' if recurrence else 'one time'})" for _id, text, recurrence in rows)
+    return f" His active tasks: {names}.{_TASKS_HINT}"
+
+
 async def request_intent(client, utterance, pending_title=None, followup=None):
     """One forced schema call with no mutating tool offered. Its time is recorded
     in the turn's timing record as intent_ms, so the cost on task turns shows up.
 
     Returns None when the call fails or answers outside the schema. The caller
     treats that as a refusal, because nothing may run on a guess."""
-    system = _SYSTEM
+    system = _SYSTEM + _tasks_context()
     if pending_title:
         system += (f" The assistant just asked whether to skip {pending_title} for today or stop "
                    f"it for good. A reply like that is about {pending_title}: put it in target.")
