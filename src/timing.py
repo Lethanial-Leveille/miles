@@ -155,6 +155,15 @@ def note_intent(intent_ms):
         _turn["stages"].setdefault("intent_ms", intent_ms)
 
 
+def note_verdict(kind):
+    """What the code decided about the intent: act, ask, refuse or none. Printed
+    beside the intent call time, so a slow or refused turn reads in one place."""
+    with _lock:
+        if _turn is None:
+            return
+        _turn.setdefault("verdict", kind)
+
+
 def last_intent_ms():
     """The intent call time of the open turn, or None. For tests and reports."""
     with _lock:
@@ -268,7 +277,7 @@ def end_turn(transcript=None, response=None):
     )
 
     if stages.get("intent_ms") is not None:
-        print(f"  intent call {stages['intent_ms']:.0f}ms", flush=True)
+        print(f"  intent call {stages['intent_ms']:.0f}ms, verdict {turn.get('verdict', 'n/a')}", flush=True)
 
     total = stages.get("total_perceived_ms")
     if total is None:

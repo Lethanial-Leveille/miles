@@ -120,3 +120,68 @@ def test_an_app_turn_writes_its_channel_on_both_rows(turn, db, channel):
     with closing(sqlite3.connect(db.DB_PATH)) as conn:
         rows = conn.execute("SELECT role, channel FROM conversation_history ORDER BY id").fetchall()
     assert rows == [("user", channel), ("assistant", channel)]
+
+
+# ── the one journal line per app turn ──
+
+def _app_turn(turn, text, channel, blocks, draft=""):
+    import asyncio
+    import brain
+    from test_task_intent import Stream
+
+    turn.rounds.clear()
+    turn.rounds.append(Stream(list(blocks), draft))
+    return asyncio.run(brain.ask_nova_async(text, device="app", channel=channel, tier="hokage"))
+
+
+def _lines(capsys):
+    return [line for line in capsys.readouterr().out.splitlines() if line.startswith("App turn: ")]
+
+
+def test_an_app_turn_prints_one_line_with_intent_verdict_and_cost(turn, db, capsys):
+    from test_task_intent import block
+    _app_turn(turn, "Add reading every day", "voice", [block("task_add", {"task": "reading", "recurrence": "daily"})])
+    [line] = _lines(capsys)
+    assert 'channel="voice"' in line and 'action="task_add"' in line and 'target="reading"' in line
+    assert 'timing="every day"' in line and 'verdict="act"' in line and "intent_ms=" in line
+
+
+def test_a_refused_turn_logs_the_refusal_text(turn, db, capsys):
+    _app_turn(turn, "add call the bank at dawn", "text", [])
+    [line] = _lines(capsys)
+    assert 'channel="text"' in line and 'verdict="refuse"' in line
+    assert "Nothing was changed." in line and "When do you want that?" in line
+
+
+def test_an_unflagged_turn_logs_a_skipped_step_with_zero_cost(turn, db, capsys):
+    _app_turn(turn, "good morning", "text", [], "Good morning.")
+    [line] = _lines(capsys)
+    assert 'verdict="skipped"' in line and "intent_ms=0" in line and 'action=""' in line
+    assert "good morning" not in line.casefold()
+
+
+def test_a_pi_turn_prints_no_app_line(turn, db, capsys):
+    import asyncio
+    import brain
+    from test_task_intent import Stream
+    turn.rounds.clear()
+    turn.rounds.append(Stream([], "Hi."))
+    asyncio.run(brain.ask_nova_async("good morning", device="pi", channel="voice", tier="hokage"))
+    assert _lines(capsys) == []
+
+
+def test_the_chat_route_passes_the_requested_channel_through(turn, db, monkeypatch, capsys):
+    from fastapi.testclient import TestClient
+    import server
+    from test_task_intent import Stream
+
+    monkeypatch.setitem(server.app.dependency_overrides, server.get_current_user, lambda: "fake-actor")
+    turn.rounds.clear()
+    turn.rounds.append(Stream([], "Good morning."))
+    reply = TestClient(server.app).post("/chat", json={"message": "good morning", "channel": "text"})
+    assert reply.status_code == 200
+    with closing(sqlite3.connect(db.DB_PATH)) as conn:
+        assert conn.execute("SELECT role, channel FROM conversation_history ORDER BY id").fetchall() == [
+            ("user", "text"), ("assistant", "text")]
+    [line] = _lines(capsys)
+    assert 'channel="text"' in line

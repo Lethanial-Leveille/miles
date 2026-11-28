@@ -1262,6 +1262,25 @@ async def _deliver_tool_reply(text, channel, device, on_text, safety, heard, lea
             pending_action.mark_presented(pending_action.staged_question())
 
 
+def _log_app_turn(channel, intent, verdict, intent_ms):
+    """One journal line for an app chat turn: how it was said, what the intent
+    step read, what the code decided and what it cost. The target and timing are
+    the few words the intent step copied, never the whole message, and a
+    refusal is the fixed text code wrote. verdict is "skipped" when the wide
+    check did not flag the turn, and then intent_ms is 0."""
+    fields = {
+        "channel": channel,
+        "action": intent.action if intent else "",
+        "target": intent.target if intent else "",
+        "timing": intent.timing if intent else "",
+        "verdict": verdict.kind if verdict else "skipped",
+        "text": (verdict.text if verdict else "")[:200],
+        "intent_ms": round(intent_ms),
+    }
+    print("App turn: " + " ".join(f"{key}={json.dumps(value)}" for key, value in fields.items()),
+          flush=True)
+
+
 async def _answer_in_code(text, user_text, device, channel, tier, on_text, held, safety,
                           asked_choice=False):
     """End a turn with words written by code, no model call. Used when the intent
@@ -1359,10 +1378,18 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     # before the confirmation tool has run, or after it was refused.
     if (needs_intent or safety.expected_confirmation) and on_text is not None:
         held = on_text = _HeldText(on_text)
+    intent = verdict = None
+    intent_ms = 0.0
     if needs_intent:
         safety.flagged = True
+        intent_started = time.monotonic()
         intent = await task_intent.request_intent(_claude(), user_text, choice[1] if choice else None)
+        intent_ms = (time.monotonic() - intent_started) * 1000.0
         verdict = task_intent.validate(intent, user_text, choice=choice, tier=tier)
+        timing.note_verdict(verdict.kind)
+    if device == "app":
+        _log_app_turn(channel, intent, verdict, intent_ms)
+    if needs_intent:
         if verdict.kind in ("refuse", "ask"):
             if verdict.choice:
                 pending_action.ask_choice(*verdict.choice)
