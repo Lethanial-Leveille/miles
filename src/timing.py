@@ -144,6 +144,23 @@ def note_action(action_ms):
         _turn["stages"].setdefault("action_ms", action_ms)
 
 
+def note_intent(intent_ms):
+    """Time of the intent call that runs before a turn that could change
+    something. Kept in the turn record and printed with the latency line, so the
+    added wait on task turns can be read from the journal. It has no column in
+    timing_log, because the owner approved no new migration for it."""
+    with _lock:
+        if _turn is None:
+            return
+        _turn["stages"].setdefault("intent_ms", intent_ms)
+
+
+def last_intent_ms():
+    """The intent call time of the open turn, or None. For tests and reports."""
+    with _lock:
+        return None if _turn is None else _turn["stages"].get("intent_ms")
+
+
 @contextmanager
 def stopwatch(stage):
     """Time a synchronous block and record it under `stage`."""
@@ -249,6 +266,9 @@ def end_turn(transcript=None, response=None):
         bridge_ms=stages.get("bridge_ms"),
         claude_head_start_ms=stages.get("claude_head_start_ms"),
     )
+
+    if stages.get("intent_ms") is not None:
+        print(f"  intent call {stages['intent_ms']:.0f}ms", flush=True)
 
     total = stages.get("total_perceived_ms")
     if total is None:

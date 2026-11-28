@@ -9,7 +9,7 @@ import pytest
 import brain
 import pending_action as pa
 from tools import Permission
-from voice_action_safety import TurnSafety
+from voice_action_safety import NO_ACTION, TurnSafety
 
 
 def block(name, args=None, id=None):
@@ -80,7 +80,9 @@ def test_refused_schedule_cannot_speak_success_or_let_archive_escape(voice, db, 
     assert not db.active_tasks_matching("reading")
     assert "Nothing was changed" in result.text
     assert all("Done" not in line and "saved the task" not in line for line in voice.audio)
-    assert ("reset", "") in voice.events
+    # The refusal is the only text the client ever sees: no provisional success.
+    assert ("reset", "") not in voice.events
+    assert [e for e in voice.events if e[0] == "delta"] == [("delta", result.text)]
 
 
 def test_valid_guarded_outcome_is_only_spoken_after_write(voice, db, monkeypatch):
@@ -129,8 +131,11 @@ def test_clearance_and_invalid_sibling_preflight_precede_any_mutation(voice, db)
 
 def test_mixed_batch_preserves_vetted_read_but_not_a_refused_write(voice, db):
     existing = db.add_task("ordinary", scheduled_for=db.task_day())
-    result = asyncio.run(voice.run("Add reading after Monday", [
-        block("tasks_today"), block("task_add", {"task": "reading"})]))
+    # The intent is a plain add, so the read may run, but the timer riding along
+    # is refused and the add is refused with it, before either runs.
+    result = asyncio.run(voice.run("Add reading", [
+        block("tasks_today"), block("set_timer", {"amount": 4, "unit": "minutes"}),
+        block("task_add", {"task": "reading"})]))
     assert state(db, existing) == (None, "pending")
     assert "ordinary" in result.text.casefold() and "Nothing was changed" in result.text
     assert not db.active_tasks_matching("reading")
@@ -272,8 +277,9 @@ def test_unusable_proposals_do_not_mutate(monkeypatch, mode):
 
 def test_model_without_a_tool_result_cannot_announce_completion(voice):
     result = asyncio.run(voice.run("Add reading", []))
-    assert result.text == "I could not confirm that action."
-    assert voice.audio == [result.text] and ("reset", "") in voice.events
+    assert result.text == NO_ACTION
+    assert " ".join(voice.audio) == result.text
+    assert [e for e in voice.events if e[0] == "delta"] == [("delta", result.text)]
 
 
 def test_clear_task_request_cannot_be_diverted_into_unrelated_mutation(voice, monkeypatch):
@@ -314,7 +320,7 @@ def test_only_a_delivered_question_can_authorize_the_confirmed_result(voice, mon
     monkeypatch.setattr(brain.registry, "call", call)
     propose = block("create_calendar_event", {
         "summary": "Synthetic", "start_time": "Tomorrow at two", "duration_minutes": 60})
-    result = asyncio.run(voice.run("Propose the synthetic event", [propose]))
+    result = asyncio.run(voice.run("Add the synthetic event to my calendar", [propose]))
     assert result.text == "Create the synthetic event?"
     assert changes == [] and voice.audio == [result.text]
     result = asyncio.run(voice.run("Yes, go ahead", [
@@ -409,7 +415,7 @@ def test_confirmation_reports_absent_results_by_action(voice, monkeypatch):
         return actual(name, args)
 
     monkeypatch.setattr(brain.registry, "call", call)
-    asyncio.run(voice.run("Propose synthetic changes", [block("create_calendar_event", {
+    asyncio.run(voice.run("Add synthetic changes to my calendar", [block("create_calendar_event", {
         "summary": "Synthetic", "start_time": "Tomorrow at two", "duration_minutes": 60})]))
     result = asyncio.run(voice.run("Yes", [block("confirm_pending_action", {"approved": True})]))
     assert result.text == ("Could not confirm the result of: Create synthetic first. "
@@ -501,7 +507,7 @@ def test_app_approval_binds_exact_delivery_and_conversation(app_chat, monkeypatc
         Stream([block("confirm_pending_action", {"approved": True})], ""),
     ])
     conversation = str(uuid4())
-    proposal = {"message": "Propose the synthetic event", "channel": "text",
+    proposal = {"message": "Add the synthetic event to my calendar", "channel": "text",
                 "conversation_id": conversation, "request_id": str(uuid4())}
     receipt = None
     if confirmation == "lost body":
@@ -568,11 +574,11 @@ def test_confirmation_without_tool_result_cannot_speak_success(voice, monkeypatc
         return pa.propose("Create the synthetic event", lambda: pytest.fail("Ran without confirmation"))
 
     monkeypatch.setattr(brain.registry, "call", propose)
-    asyncio.run(voice.run("Propose a synthetic event", [block("create_calendar_event", {
+    asyncio.run(voice.run("Add a synthetic event to my calendar", [block("create_calendar_event", {
         "summary": "Synthetic", "start_time": "Tomorrow at two", "duration_minutes": 60})]))
     result = asyncio.run(voice.run("Yes", [], draft="Done. I created the event."))
-    assert result.text == "I could not confirm that action."
-    assert voice.audio[-1] == result.text
+    assert result.text == NO_ACTION
+    assert voice.audio[-1] in result.text
 
 
 def test_cancelled_app_worker_leaves_an_uncertain_reservation(app_chat, db, monkeypatch):

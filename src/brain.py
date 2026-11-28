@@ -29,7 +29,8 @@ import memory_pass
 import phrasebank
 import resume
 import spoken_archive
-from voice_action_safety import CONFIRM, PARALLEL_READS, TurnSafety
+import task_intent
+from voice_action_safety import CONFIRM, NO_ACTION, PARALLEL_READS, TurnSafety
 
 # Imported for its side effect: registering the tools. Without it the registry
 # is empty, the capability block is blank, and Nova silently has no
@@ -485,6 +486,7 @@ async def _say(text, channel, device):
 # state changes, not work.
 _STAGE_WORDS = {
     "archive_task":            "Retiring the task",
+    "task_skip_today":         "Skipping the task for today",
     "cancel_reminder":         "Cancelling a reminder",
     "check_calendar_freebusy": "Checking when you're free",
     "confirm_pending_action":  "Checking the confirmation",
@@ -632,6 +634,26 @@ def _emit(on_text, kind, text):
         on_text(kind, text)
     except Exception as exc:
         print(f"Streaming callback failed: {exc}", flush=True)
+
+
+class _HeldText:
+    """Wraps a streaming callback for a turn that could change something.
+
+    Model text on such a turn is provisional: it can say "Done" before any
+    action ran, and a stream that drops would leave that on the screen. So
+    deltas and resets are swallowed while the turn works, and the one final
+    reply, built after the actions finish, is sent by flush. Stage updates are
+    not text and pass through."""
+
+    def __init__(self, on_text):
+        self.on_text = on_text
+
+    def __call__(self, kind, text):
+        if kind not in ("delta", "reset"):
+            self.on_text(kind, text)
+
+    def flush(self, final_text):
+        _emit(self.on_text, "delta", final_text)
 
 
 def _trim_history(messages: list) -> list:
@@ -1202,6 +1224,22 @@ async def _deliver_tool_reply(text, channel, device, on_text, safety, heard, lea
             pending_action.mark_presented(pending_action.staged_question())
 
 
+async def _answer_in_code(text, user_text, device, channel, tier, on_text, held, safety):
+    """End a turn with words written by code, no model call. Used when the intent
+    step refused a request or asked a question: nothing ran, so nothing but the
+    plain refusal or question may be said."""
+    heard = _Heard()
+    await _deliver_tool_reply(text, channel, device, on_text, safety, heard, set())
+    final_text = "" if safety.cancelled.is_set() else screen_text.for_display(text, channel)
+    if held is not None and not safety.cancelled.is_set():
+        held.flush(final_text)
+    if final_text:
+        save_message("assistant", heard.text() if heard.cut else final_text, device=device)
+    if tier == "hokage" and not safety.cancelled.is_set():
+        memory_pass.notice_later(user_text, datetime.now(), [])
+    return TurnResult(text=final_text)
+
+
 def _track(safety, coroutine):
     task = asyncio.create_task(coroutine)
     safety.workers.append(task)
@@ -1265,6 +1303,26 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     model = _select_model()
     timing.note_model(model)
     user_message_id = save_message("user", user_text, device=device)
+
+    # Decide what this turn may change before the model sees any tool. A turn
+    # that fails the cheap check gets no mutating tool at all.
+    choice = pending_action.take_choice()
+    safety.gate = task_intent.closed_gate(confirm=safety.expected_confirmation)
+    held = None
+    if choice is not None or (not safety.expected_confirmation
+                              and task_intent.could_change(user_text)):
+        safety.flagged = True
+        if on_text is not None:
+            held = on_text = _HeldText(on_text)
+        intent = await task_intent.request_intent(_claude(), user_text, choice[1] if choice else None)
+        verdict = task_intent.validate(intent, user_text, choice=choice)
+        if verdict.kind in ("refuse", "ask"):
+            if verdict.choice:
+                pending_action.ask_choice(*verdict.choice)
+            return await _answer_in_code(verdict.text, user_text, device, channel, tier,
+                                         on_text, held, safety)
+        if verdict.kind == "act":
+            safety.gate = verdict.gate
     # Taken here, not inside build_request: consuming the alerts is a side
     # effect, and a speculative turn has to be able to build the same request
     # without one.
@@ -1316,8 +1374,12 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     sentence_seen = False
     hold = bool(registry.api_schemas())
     hold_speech = hold or safety.expects_action
-    stream_source = replay if replay is not None else _claude().messages.stream(
-        **first_call_kwargs(request))
+    first_kwargs = first_call_kwargs(request)
+    if "tools" in first_kwargs:
+        first_kwargs["tools"] = safety.tool_schemas(first_kwargs["tools"], registry)
+        if not first_kwargs["tools"]:
+            del first_kwargs["tools"]
+    stream_source = replay if replay is not None else _claude().messages.stream(**first_kwargs)
     async with stream_source as stream:
         # Iterating raw events rather than stream.text_stream. text_stream
         # yields only text, which is safe, but it also hides block boundaries,
@@ -1527,6 +1589,7 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
             for round_index in range(MAX_TOOL_ROUNDS):
                 last_round = round_index == MAX_TOOL_ROUNDS - 1
                 schemas = [] if last_round or only_stored else registry.api_schemas()
+                schemas = safety.tool_schemas(schemas, registry)
                 if safety.used:
                     schemas = [schema for schema in schemas if schema["name"] not in registry
                                or registry.get(schema["name"]).permission is Permission.READ]
@@ -1673,7 +1736,13 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
         ignored   = False
         if safety.expects_action and not safety.cancelled.is_set():
             _emit(on_text, "reset", "")
-            accumulated = "I could not confirm that action."
+            accumulated = NO_ACTION
+            _emit(on_text, "delta", accumulated)
+        elif (safety.flagged or safety.expected_confirmation) and task_intent.claims_a_change(accumulated) \
+                and not safety.cancelled.is_set():
+            # No action ran, so words that say one did are not true.
+            _emit(on_text, "reset", "")
+            accumulated = "Nothing was changed."
             _emit(on_text, "delta", accumulated)
         if hold_speech and not safety.cancelled.is_set():
             await router.feed(accumulated)
@@ -1687,6 +1756,8 @@ async def _committed_turn(user_text, device, channel, tier, on_text, speculation
     # returned is what the app shows, and the done event replaces the streamed
     # deltas with it, so the screen ends on the tidied reply.
     final_text = "" if safety.cancelled.is_set() else screen_text.for_display(final_text, channel)
+    if held is not None and not safety.cancelled.is_set():
+        held.flush(final_text)
 
     # An empty response is a turn Nova deliberately stayed silent through, and
     # writing it down puts a blank assistant message into the history that the

@@ -16,6 +16,7 @@ it rather than "Done.", and is logged as a notice rather than an error.
 from datetime import datetime
 from database import (
     TaskNotStarted,
+    TaskSkipped,
     active_tasks_matching,
     add_list_item,
     add_task,
@@ -23,8 +24,10 @@ from database import (
     check_list_item,
     complete_task,
     find_list,
+    skip_task_day,
     get_or_create_list,
     list_items,
+    task_completed_on,
     task_day,
     tasks_today,
     unchecked_items_matching,
@@ -268,6 +271,8 @@ def task_complete_tool(task):
             raise ToolNotice("That task is no longer active. Nothing was changed.")
     except TaskNotStarted as exc:
         raise TaskEligibilityNotice(f"{text} starts {exc.start_date}. Nothing was marked done.") from None
+    except TaskSkipped:
+        raise TaskEligibilityNotice(f"{text} was skipped today, so it is not due. Nothing was marked done.") from None
     return f"Marked done: {text}."
 
 
@@ -293,6 +298,35 @@ def archive_task_tool(task):
     if not archive_task(task_id):
         raise ToolNotice("That task is no longer active. Nothing was changed.")
     return f"Stopped tracking: {text}."
+
+
+@tool(
+    name="task_skip_today",
+    description=(
+        "Skip today's occurrence of a daily task and nothing else: it stays "
+        "active and is due again tomorrow. Call this for 'skip reading today' "
+        "or 'cancel the bank task tonight'."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"task": _TASK_WORDS},
+        "required": ["task"],
+    },
+    permission=Permission.WRITE,
+    returns_to_model=False,
+    min_tier="hokage",
+)
+def task_skip_today_tool(task):
+    task_id, text, recurrence = _one(active_tasks_matching(task), "task", task)
+    if recurrence is None:
+        raise ToolNotice(f"{text} is a one time task, so there is no day to skip. Nothing was changed.")
+    captured = datetime.now()
+    day = task_day(captured)
+    if task_completed_on(task_id, day):
+        raise ToolNotice(f"{text} is already done today. Nothing was changed.")
+    if not skip_task_day(task_id, day):
+        raise ToolNotice(f"{text} was already skipped today. Nothing was changed.")
+    return f"Skipped {text} for today."
 
 
 @tool(

@@ -8,11 +8,13 @@ from threading import Event
 
 from tools import Permission, ToolError, permits
 
-GUARDED = {"task_add", "task_complete", "archive_task", "list_add", "list_check"}
+GUARDED = {"task_add", "task_complete", "archive_task", "task_skip_today", "list_add", "list_check"}
 CONFIRM = "confirm_pending_action"
 PARALLEL_READS = {"get_weather", "tasks_today", "list_show"}
 REFUSED = "Nothing was changed. I could not validate that request."
 ONE_CHANGE = "Nothing was changed. Please ask for one change at a time."
+NOT_ASKED = "Nothing was changed. That is not the change you asked for."
+NO_ACTION = "Nothing was changed. I could not carry out that request."
 _NO_TIME = re.compile(
     r"\b(?:start\w*|begin\w*|deadline|due|by|until|through|before|after|"
     r"tomorrow|todays?|tonight|yesterday|"
@@ -22,7 +24,7 @@ _NO_TIME = re.compile(
     r"morning|evening|afternoon|lunchtime|bedtime|noon|midnight|eod|cob|end of (?:day|business)|"
     r"daily|biweekly|fortnight\w*|week\w*|month\w*|year\w*|quarterly|annual\w*|alternate|everyday|recurr\w*|repeat\w*|"
     r"every|each|at|on|from|when|once|later|soon|next|twice|"
-    r"in (?:\d+|one|two|three|a few|several)|"
+    r"in (?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|a few|several|a couple)|"
     r"(?:\d+|one|two|three|four|five|several) times? (?:a|per) (?:day|week|month))\b|\d{1,4}[-/:]\d", re.I)
 _ADD_REQUEST = re.compile(
     r"^(?:(?:add|create) (?:(a daily task) (?:to |for )?|a task(?: to| for)? )?|"
@@ -149,13 +151,34 @@ class TurnSafety:
     allow_writes: bool = True
     expected_confirmation: bool = False
     guarded: bool = False
+    # What the intent step let this turn run (task_intent.IntentGate). None only
+    # for code that builds a TurnSafety without the step, as older tests do.
+    gate: object = None
+    flagged: bool = False
     used: bool = False
     finished: dict = field(default_factory=dict)
     workers: list = field(default_factory=list)
 
     @property
     def expects_action(self):
+        if self.gate is not None:
+            return self.gate.requires_action
         return self.expected_confirmation or _task_request(self.utterance)
+
+    def tool_schemas(self, schemas, registry):
+        """The tool definitions this turn may be offered. A mutating tool the
+        gate does not offer is never shown to the model, so a turn the cheap
+        check missed has no way to change anything."""
+        if self.gate is None:
+            return schemas
+        kept = []
+        for schema in schemas:
+            name = schema["name"]
+            if (name not in registry
+                    or registry.get(name).permission in (Permission.READ, Permission.CONTROL)
+                    or self.gate.offers(name)):
+                kept.append(schema)
+        return kept
 
     def preflight(self, blocks, registry, tier, can_confirm):
         """Decide the complete batch before any executor submission."""
@@ -180,9 +203,14 @@ class TurnSafety:
                 refusals[index] = "Nothing was changed by that action. It requires more clearance."
             elif not _valid_args(spec, block.input):
                 refusals[index] = REFUSED
+            elif (self.gate is not None and spec.permission in (Permission.WRITE, Permission.EXTERNAL_WRITE)
+                  and not self.gate.permits(block.name, block.input)):
+                # Checked in every round, before any call in the batch runs.
+                refusals[index] = NOT_ASKED
         candidates = [index for index in mutations if index not in refusals]
         covered = any(blocks[index].name in GUARDED or blocks[index].name == CONFIRM for index in mutations)
-        self.guarded = self.guarded or covered or self.expects_action
+        authoritative = self.gate.authoritative if self.gate is not None else self.expects_action
+        self.guarded = self.guarded or covered or authoritative
         for index in candidates:
             block = blocks[index]
             key = (block.name, json.dumps(block.input, sort_keys=True))
@@ -206,7 +234,8 @@ class TurnSafety:
             block = blocks[distinct[0]]
             if block.name not in GUARDED and block.name != CONFIRM:
                 common = REFUSED
-            elif block.name in GUARDED and not _intent_matches(block.name, block.input, self.utterance):
+            elif (self.gate is None and block.name in GUARDED
+                  and not _intent_matches(block.name, block.input, self.utterance)):
                 common = REFUSED
             elif block.name == CONFIRM and not can_confirm(block.input["approved"]):
                 common = "Nothing was changed. There is no matching confirmation to apply."

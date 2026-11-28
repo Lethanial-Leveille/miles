@@ -60,6 +60,8 @@ class _Conversation:
     proposal: _Pending | None = None
     last_active: float = 0
     active: _Turn | None = None
+    # A question that waits for a one word answer: (task id, title, turn, time).
+    choice: tuple | None = None
 
 
 @dataclass
@@ -133,6 +135,34 @@ def _matches(context, proposal, approved, now):
             and context.tier == proposal.tier
             and all(permits(spec, context.tier) for spec in proposal.specs))
 
+
+
+def ask_choice(task_id, title, now=None):
+    """Remember that this turn asked whether to skip a daily task today or stop
+    it for good. Held on the conversation like a proposal, so only the next turn
+    of the same conversation can answer it."""
+    context = _turn_context.get()
+    if context is None:
+        return
+    with _lock:
+        if context.index == context.conversation.index and not context.cancelled.is_set():
+            context.conversation.choice = (
+                task_id, title, context.index, time.monotonic() if now is None else now)
+
+
+def take_choice(now=None):
+    """The (task id, title) asked about on the previous turn, if still fresh.
+    Always cleared, so an answer is used once and an unrelated turn drops it."""
+    context = _turn_context.get()
+    if context is None:
+        return None
+    now = time.monotonic() if now is None else now
+    with _lock:
+        choice, context.conversation.choice = context.conversation.choice, None
+    if (choice is None or choice[2] != context.index - 1
+            or not 0 <= now - choice[3] <= CONFIRM_WINDOW_S):
+        return None
+    return choice[0], choice[1]
 
 
 def expects_confirmation():

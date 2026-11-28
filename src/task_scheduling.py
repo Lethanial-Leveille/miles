@@ -28,12 +28,16 @@ _DEADLINE = re.compile(
 _CLOCK_TIME = re.compile(
     r"\b(?:\d{1,2}:\d{2}|\d{1,2}\s*[ap]\.?m\.?|noon|midnight|"
     r"at\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
-    r"(?:\s+o'clock)?|at (?:half|quarter) (?:past|to) \w+|at (?:lunchtime|bedtime))\b", re.I)
+    r"(?:\s+o'clock)?|(?:at )?(?:half|quarter) (?:past|to) \w+|"
+    r"at (?:lunchtime|bedtime|dawn|dusk|sunrise|sunset|daybreak|nightfall|night|dinner|breakfast|lunch))\b", re.I)
+# Any count a person says, so "in four days" is as visible as "in 4 days".
+_COUNT = (r"\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|"
+          r"a|an|few|a few|several|couple|a couple of")
 _TIMING_HINT = re.compile(
     rf"\b(?:{_DAY}|(?:next|this)\s+(?:week|month|year)|soon|later|tonight|yesterday|"
     rf"morning|afternoon|evening|weekend|by|before|after|from\s+now|"
     rf"(?:when|once|as soon as) (?:i|you|we|they)\b|"
-    rf"(?:in|within)\s+(?:\d+|one|two|three|a|an|few|a few|several)\s+(?:days?|weeks?|months?|years?|hours?)|"
+    rf"(?:in|within)\s+(?:{_COUNT})\s+(?:days?|weeks?|months?|years?|hours?|minutes?)|"
     rf"(?:{_MONTH})\s+\d{{1,2}}|\d{{1,2}}(?:st|nd|rd|th)?\s+(?:{_MONTH}))\b|"
     r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}\b", re.I)
 _ADD = re.compile(r"^(?:please )?(?:add|create)\b\s+(?:(?:a |the )?task(?: to| for)?\s+)?", re.I)
