@@ -1243,9 +1243,9 @@ async def websocket_chat(ws: WebSocket):
         auth_msg = await ws.receive_json()
         token = auth_msg.get("token", "")
         if headless():
-            get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
+            user = get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
         else:
-            _ = decode_token(token)["sub"]
+            user = decode_token(token)["sub"]
     except Exception:
         await ws.send_json({"error": "Unauthorized"})
         await ws.close(code=1008)
@@ -1268,9 +1268,9 @@ async def websocket_chat(ws: WebSocket):
             # Production keeps the direct call; only the headless profile moves
             # the turn to a worker thread (dev environment contract).
             if headless():
-                result = await asyncio.to_thread(_app_chat_turn, turn, payload["sub"])
+                result = await asyncio.to_thread(_app_chat_turn, turn, user)
             else:
-                result = _app_chat_turn(turn, payload["sub"])
+                result = _app_chat_turn(turn, user)
             response = result.text
             await ws.send_json({"response": response})
     except WebSocketDisconnect:
