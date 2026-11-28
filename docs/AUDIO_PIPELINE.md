@@ -8,9 +8,9 @@
 > STT tables were measured Aug 12 and Aug 13 2026; the wake word sections were
 > measured Aug 12, Sep 8 and Sep 13 2026.
 >
-> Verify current settings in source using the [repository map](REPOSITORY_MAP.md). Dated values here describe the evidence available at the time.
+> Verify current settings in source using the [repository map](REPO_MAP.md). Dated values here describe the evidence available at the time.
 
-Up: [Repository map](REPOSITORY_MAP.md) · [Engineering sessions](SESSION_START.md) ·
+Up: [Repository map](REPO_MAP.md) · [Engineering sessions](SESSION_START.md) ·
 [BACKEND_TODO.md](BACKEND_TODO.md) · [AUDIO_PIPELINE.md](AUDIO_PIPELINE.md) ·
 [LATENCY.md](LATENCY.md) · [VOICE_OUTPUT.md](VOICE_OUTPUT.md) ·
 [BRAIN.md](BRAIN.md) · [INFRASTRUCTURE.md](INFRASTRUCTURE.md) ·
@@ -632,7 +632,7 @@ this is not the one to leave skipped on an ordinary run.
 quiet and the array addresses their cause; 9 arrive loud and nearby because they
 are his own voice not addressed to Nova, and no acoustic measure separates
 those. What a new capsule does to the number is in
-[BACKEND_TODO.md](BACKEND_TODO.md#a-level-gate-on-the-wake-window-built-sep-25-2026-at--42).
+[the BACKEND_TODO archive](archive/BACKEND_TODO_ARCHIVE_2026-11-28.md#a-level-gate-on-the-wake-window-built-sep-25-2026-at--42).
 
 ### The false negative rate is not measured, and cannot be
 

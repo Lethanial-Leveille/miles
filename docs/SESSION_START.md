@@ -1,6 +1,6 @@
 # Engineering sessions
 
-Start from [AGENTS.md](../AGENTS.md), the authorized revision and the relevant area of the [repository map](REPOSITORY_MAP.md). The project workflow works in Mac CLI and supported cloud sessions.
+Start from [AGENTS.md](../AGENTS.md), the authorized revision and the relevant area of the [repository map](REPO_MAP.md). The project workflow works in Mac CLI and supported cloud sessions.
 
 | Request | What to do |
 |---|---|

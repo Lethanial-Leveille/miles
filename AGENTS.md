@@ -4,7 +4,7 @@ This file is the shared engineering authority for Claude and Codex. [CLAUDE.md](
 
 ## Start with the assignment
 
-Check the task's scope, authorization, environment, branch, HEAD and working tree before editing. Use the [repository map](docs/REPOSITORY_MAP.md) to open only the relevant contract, implementation and tests. Use [isolated development commands](docs/DEVELOPMENT.md) and the [session workflow](docs/SESSION_START.md) as needed. Source and tests describe current behavior. An approved contract governs intended behavior. Surface any relevant conflict before acting and correct stale descriptive docs within scope.
+Check the task's scope, authorization, environment, branch, HEAD and working tree before editing. Use the [repo map](docs/REPO_MAP.md) to open only the relevant contract, implementation and tests. The area in a branch name (`infra/`, `feature/tasks-...`, and so on) tells you which section of [docs/REPO_MAP.md](docs/REPO_MAP.md) to read first, and you read it before touching code. Use [isolated development commands](docs/DEVELOPMENT.md) and the [session workflow](docs/SESSION_START.md) as needed. Source and tests describe current behavior. An approved contract governs intended behavior. Surface any relevant conflict before acting and correct stale descriptive docs within scope.
 
 ## Tiers
 
@@ -26,9 +26,18 @@ Pick the highest tier that applies and reassess if the scope changes.
 Run it with `scripts/loop --tier small|medium|large` (see `scripts/loop --help`). It does steps 2 to 4 and prints the final report.
 
 - Two review rounds at most. Anything still open goes in [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md), unless it is a Blocker.
-- **Reviewer.** `--reviewer claude` is a fresh Opus session that did not write the code: a new headless session with read only tools, started in a scratch copy. `--reviewer codex` is Codex on Astra High, read only. Without `--reviewer`, the tier picks: Claude for Small and Medium, Codex for Large. With neither flag the loop stops and asks. Lethanial approved Opus as the reviewer on Claude Max; any other Opus use still needs his approval.
+- **Reviewer.** `--reviewer claude` is a fresh Opus session that did not write the code: a new headless session with read only tools, started in a scratch copy. `--reviewer codex` is Codex on Astra High, read only. Without `--reviewer`, the tier picks: Claude for Small and Medium, Codex for Large. With neither flag the loop stops and asks. Opus is approved without asking for Large tier builds, for planning and contracts, and as the reviewer. Small and Medium builds stay on Sonnet. Any other Opus use still needs his approval.
 - Either reviewer reads only the diff, the files it touches and the contract, never the whole repo. Neither deploys or touches production. The fixer is a separate Sonnet session, so the reviewer never reviews its own work.
 - Before a Codex run, check usage with `python3 ~/.codex/usage.py` (the loop does this) and tell Lethanial if it is over its threshold. The Claude reviewer has no usage check.
+
+## Workflow rules
+
+Added by Lethanial on Nov 28 2026. They apply on top of the tiers and the loop.
+
+1. **Who builds.** Large tier builds use Opus as the builder, and the contract for the hardest designs is written by Fable. Small and Medium builds use Sonnet. The fixer in `scripts/loop` stays a separate Sonnet session, and the reviewer never reviews its own work.
+2. **Probe before the contract.** Anything that touches an outside system (Evallo, Google, iMessage, Cloudflare) runs a read only probe of real data before the contract is written, and the contract records what the probe found. No guessed data shapes. A builder works from the recorded shapes, not from assumptions.
+3. **One repo per phase where possible.** Prefer phases that touch one repo. Work that spans the backend, the Mac and Nova is split into separately shippable pieces wherever it can be, each with its own contract section, tests and rollback.
+4. **Review finds design flaws, the harness proves behavior.** The reviewer's job is design flaws. The acceptance harness's job is proving behavior. After the single verification round, the remaining non Blocker findings go to [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md), and the safeguards are approvals, expiry, backups and rollback, not more review rounds.
 
 ## What counts as a Blocker
 
@@ -81,7 +90,7 @@ Either agent can pick up an approved assignment. Use the [continuation procedure
 - Before any deployment or migration against real data, warn the owner, take a fresh backup at `~/miles/data/backups/miles-before-<what>-<YYYYMMDD-HHMMSS>.db` and prepare rollback. Never restart the voice service during a conversation. Follow the [permanent Evallo restart procedure](docs/ROADMAP.md#evallo-rules-permanent) in every deploy plan that restarts the Pi.
 - Codex never deploys, accesses production or starts another Codex run. Push only with explicit authority. Use normal Git hooks and guards. Report a guard failure and follow the authorized workflow.
 - The owner grants standing authorization for routine local Git branch creation, staging and commits within approved development assignments. Check the branch and working tree, and stage only intended paths. If the sandbox blocks an authorized operation, request approval for that exact Git command. Keep Git hooks and guards active. This authorization is limited to the approved development branch and excludes pushes, changes to `main`, history rewrites, and broader filesystem or network access.
-- Work on the authorized branch or worktree. Keep changes within scope. Nova is a separate repository and requires separate scope. Follow the [approved roadmap](docs/ROADMAP.md) and amendments one phase at a time, with a real use checkpoint between phases. Complete the roadmap security review before permitting any Phase 6 errand to run unattended. Leave the owner's resume untouched.
+- Work on the authorized branch or worktree. Keep changes within scope. Nova is a separate repository and requires separate scope. Follow the [approved roadmap](docs/ROADMAP.md) and amendments one phase at a time, with a real use checkpoint between phases. Complete the roadmap security audit before the errand worker uses any real account or runs unattended. Leave the owner's resume untouched.
 
 ## Secrets and private data
 
@@ -95,11 +104,11 @@ Either agent can pick up an approved assignment. Use the [continuation procedure
 - Never store, type or ask for the owner's UF password or bypass Duo or MFA. A 401, `invalid_grant` or a redirect to UF login or Duo stops the job immediately without retries. Mark it as needing login and let the owner log in.
 - Keep Evallo two way sync on. Never delete, move or edit an event with `evalloEvent`, `evalloSessionId` or `orgId` through any code, script or agent. The calendar write boundary must refuse it before calling Google and have a regression test.
 - Use the Mac verified session set and the [permanent Evallo rules](docs/ROADMAP.md#evallo-rules-permanent) for ownership, stale and out of window fallback, and availability flags. Keep the last verified set when stale. The fallback requires the owner's full name in the tutor position. A first name alone is insufficient. Keep unresolved availability conservative and respect the rules for transparent or declined events.
-- The Evallo token stays on the Mac. Only verified session IDs and their date range go to the Pi. The existing temporary mode 600 `~/miles/data/evallo_state.json` on the Pi supports `set_session_status`, the nightly canary and the morning login check. Never print it, copy it again or add readers. See the [retirement plan](docs/ROADMAP.md#login-failsafe-and-the-evallo-token-planned-nov-25-2026).
+- The Evallo token stays on the Mac. Only verified session IDs and their date range go to the Pi. The existing temporary mode 600 `~/miles/data/evallo_state.json` on the Pi supports `set_session_status`, the nightly canary and the morning login check. Never print it, copy it again or add readers. See the [retirement plan](docs/ROADMAP.md#login-failsafe-and-the-evallo-token).
 
 ## Shared contracts and verification
 
-The backend owns shared API contracts. Obtain owner approval for changes and check the relevant roadmap amendments. Keep Nova copies paired with the intended backend revision using the [contract sync instructions](docs/REPOSITORY_MAP.md#shared-api-contracts).
+The backend owns shared API contracts. Obtain owner approval for changes and check the relevant roadmap amendments. Keep Nova copies paired with the intended backend revision using the [contract sync instructions](docs/REPO_MAP.md#shared-api-contracts).
 
 Explain the purpose of code changes and new concepts briefly before building. Keep changes small and logical, favor flat Python, explain the reasons behind code decisions in comments, and keep refactoring within scope. Avoid introducing APScheduler without revisiting the decision. For feature behavior that needs human or hardware validation, use [the testing ladder](docs/TESTING.md) for examples, scripted checks and owner validation. Spell numbers as words in Nova's spoken responses. Use the owner's preferred name by default and reserve the nickname for rare moments of genuine success. Use hyphen free owner facing prose.
 

@@ -37,4 +37,4 @@ The test launcher creates a temporary private root, installs guards before pytes
 
 The production verification stages the checked in Uvicorn application target and a generated dotenv file inside disposable synthetic state. It exercises the default production selector with a repository virtual environment prefix and guards active. It checks migration from 44 to 45, row preservation, startup and shutdown, clearing the Evallo active flag on restart, and existing WebSocket dispatch using a synthetic chat callback. Production operator procedures are in [Infrastructure](INFRASTRUCTURE.md).
 
-See the [navigation map](REPOSITORY_MAP.md) for the relevant sources and tests. See the [development environment contract](DEV_ENVIRONMENT_CONTRACT.md) for the acceptance criteria.
+See the [navigation map](REPO_MAP.md) for the relevant sources and tests. See the [development environment contract](DEV_ENVIRONMENT_CONTRACT.md) for the acceptance criteria.

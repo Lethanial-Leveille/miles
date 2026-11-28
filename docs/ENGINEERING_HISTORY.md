@@ -1454,7 +1454,7 @@ settings, and finally through the production path with a fixed clip: a wake
 Deepgram transcribed clearly scored 0.00. Off rather than left on and unproven,
 with the fixes kept. Reopen with speech detection on channel 0 first, the route
 the recordings support, then a retrained wake model; the evidence is in
-[BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
+[the BACKEND_TODO archive](archive/BACKEND_TODO_ARCHIVE_2026-11-28.md#barge-in-on-the-array-tried-sep-30-2026-off).
 
 ### Speech on channel 0 cannot stop her; the wake model is retrained next (Sep 30 2026) (DECIDED)
 
@@ -1466,7 +1466,7 @@ it would cut her off on nearly every reply. **Chosen, in his order:** retrain
 `hey_nova.onnx` against an evaluation set recorded over her playback, then try a
 lower speaker volume. Reopen speech detection only if a volume or enclosure
 change gets her residual reliably under his speech; the numbers are in
-[BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
+[the BACKEND_TODO archive](archive/BACKEND_TODO_ARCHIVE_2026-11-28.md#barge-in-on-the-array-tried-sep-30-2026-off).
 
 ### The speakers move to the array's jack, on the 48kHz firmware (Oct 1 2026) (DECIDED)
 
@@ -1477,7 +1477,7 @@ canceller removed about 1 dB; on the array's own jack it reached 14 to 15 dB.
 And the 16kHz playback that sounded degraded is gone on `v2.1.1_48k2ch`, which
 he judged by ear to sound like the AB13X. Blocked only on resampling the mic
 from 48kHz, which the firmware forces on capture too. The numbers are in
-[BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
+[the BACKEND_TODO archive](archive/BACKEND_TODO_ARCHIVE_2026-11-28.md#barge-in-on-the-array-tried-sep-30-2026-off).
 
 ### Any speech stops her, his or anyone's, at -37 dBFS on channel 1 (Oct 2 2026) (DONE)
 
@@ -1490,7 +1490,7 @@ costs her the rest of a sentence, and the ignore tool keeps her from answering
 it. The floor came up from -40 to -37 when people talking outside the room
 stopped her 7 times; -37 kept all 29 of his takes and none of the rest, with
 about 1dB of margin each way. Numbers in
-[BACKEND_TODO.md](BACKEND_TODO.md#barge-in-on-the-array-tried-sep-30-2026-off).
+[the BACKEND_TODO archive](archive/BACKEND_TODO_ARCHIVE_2026-11-28.md#barge-in-on-the-array-tried-sep-30-2026-off).
 **DIVERGENCE:** the plan had `watch_for_interrupt` return why it stopped. It
 runs as a thread target, whose return value is discarded, so the reason went to
 the log and the audio to a carrier object instead.
