@@ -69,3 +69,11 @@ def test_a_list_name_with_a_preposition_inside_it_is_read_whole():
 def test_the_list_name_comes_after_the_item(said, item, name):
     assert task_intent._spoken_list(task_intent._words(said), item) == name
 
+
+# ── V2: the stored item is looked up as he said it ──
+
+def test_a_punctuated_item_is_found_by_its_own_words(db):
+    db.add_list_item(db.get_or_create_list("grocery"), "half-and-half")
+    verdict = task_intent.validate(Intent("list_check", "half-and-half"), "check off half-and-half", WEDNESDAY)
+    assert verdict.kind == "act"
+    assert verdict.gate.permits("list_check", {"item": "half-and-half"})

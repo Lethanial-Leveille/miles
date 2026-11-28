@@ -530,7 +530,9 @@ def _list_check(intent, utterance):
         list_id = database.find_list(wanted)
         if list_id is None:
             return _refuse(f"There is no {wanted} list.")
-    item = re.sub(r"^(?:the|my)\s+", "", _words(intent.target))
+    # Looked up as he said it, punctuation kept, because the stored text keeps it
+    # too: "half-and-half" is not found by "half and half".
+    item = re.sub(r"^(?:the|my)\s+", "", " ".join(intent.target.split()), flags=re.I)
     matches = database.unchecked_items_matching(list_id, item)
     if not matches:
         return _refuse(f"No unchecked item matches '{item}'.")
