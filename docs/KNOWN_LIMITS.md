@@ -68,3 +68,15 @@ Labels compare this branch with production (`main` at 51676b9), measured by runn
 - **Decision** `src/task_intent.py` "I need to ..." (owner, Nov 27 2026). The code adds the task itself, when the model's call is missing or wrong, only for an explicit "add" or "create". For "I need to ..." and similar phrasings the model's own valid call still works, and a failed call is a plain refusal ("Nothing was changed. I couldn't do that. Please try again.").
 
 - **Known limit** `src/task_scheduling.py` DUPLICATES BY MEANING. The title match ignores small endings, so "read" and "reading" count as one task: adding "reading every day" while "Read" is a daily task says it is already on the list. The reverse also applies to cancelling: "cancel reading" does not find a task titled "Read".
+
+- **Note** `files/src/task_intent.py:792` _PRONOUN.sub(intent.target, ...) uses text from the model as a regex replacement template, so a target containing a backslash raises re.error and the turn crashes. (found by the review loop at 2d12223)
+
+- **Note** `files/src/task_intent.py:776` _PRONOUN replaces the first of it, this, that or one in the earlier request even when that word doesn't refer to the task. The rebuilt command then fails _says_action and a valid answer is refused. (found by the review loop at 2d12223)
+
+- **Note** `files/src/task_intent.py:715` Adding "actually", "anyway", "then" and "instead" to _REMOVE_AFTER_WORDS widens what counts as an archive or skip phrase for every request, not just follow-ups. KNOWN_LIMITS doesn't mention this. (found by the review loop at 2d12223)
+
+- **Note** `files/src/voice_action_safety.py:38` A reply that opens with '[' but has no closing ']' keeps the gate in wait for the whole stream, so on voice nothing is spoken or shown until the reply ends. This undoes sentence streaming for that turn. (found by the review loop at 2d12223)
+
+- **Note** `files/src/tests/test_answers_to_questions.py:578` test_an_unrelated_answer_is_answered_normally passes if the reply is either the normal answer or any "Nothing was changed" text, so it can't catch the regression described in F4. (found by the review loop at 2d12223)
+
+- **Should fix** `files/src/voice_action_safety.py:59` A streamed chunk that ends right after 'Done ' (rest is only whitespace and final is False) now returns 'claim' instead of 'wait', so a harmless 'Done with ...' reply is swallowed. (found by the review loop at 2d12223)
