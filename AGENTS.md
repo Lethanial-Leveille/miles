@@ -26,7 +26,7 @@ Pick the highest tier that applies and reassess if the scope changes.
 Run it with `scripts/loop --tier small|medium|large` (see `scripts/loop --help`). It does steps 2 to 4 and prints the final report.
 
 - Two review rounds at most. Anything still open goes in [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md), unless it is a Blocker.
-- **Reviewer.** `--reviewer claude` is a fresh Opus session that did not write the code: a new headless session with read only tools, started in a scratch copy. `--reviewer codex` is Codex on Astra High, read only. Without `--reviewer`, the tier picks: Claude for Small and Medium, Codex for Large. With neither flag the loop stops and asks. Lethanial approved Opus as the reviewer on Claude Max; any other Opus use still needs his approval.
+- **Reviewer.** `--reviewer claude` is a fresh Opus session that did not write the code: a new headless session with read only tools, started in a scratch copy. `--reviewer codex` is Codex on Astra High, read only. Without `--reviewer`, the tier picks: Claude for Small and Medium, Codex for Large. With neither flag the loop stops and asks. Opus is approved without asking for Large tier builds, for planning and contracts, and as the reviewer. Small and Medium builds stay on Sonnet. Any other Opus use still needs his approval.
 - Either reviewer reads only the diff, the files it touches and the contract, never the whole repo. Neither deploys or touches production. The fixer is a separate Sonnet session, so the reviewer never reviews its own work.
 - Before a Codex run, check usage with `python3 ~/.codex/usage.py` (the loop does this) and tell Lethanial if it is over its threshold. The Claude reviewer has no usage check.
 
