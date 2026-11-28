@@ -441,6 +441,10 @@ def _due_matches(due, timing, now):
         when = datetime.fromisoformat(due)
     except (TypeError, ValueError):
         return False
+    if when.tzinfo is not None:
+        # The model may send an offset. Compare it as local clock time, never
+        # subtract an aware time from the naive clock.
+        when = when.astimezone().replace(tzinfo=None)
     seconds = spoken_seconds(timing)
     if seconds is not None:
         return abs((when - now).total_seconds() - seconds) <= 120

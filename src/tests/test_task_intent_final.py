@@ -165,3 +165,15 @@ def test_a_compound_timer_request_goes_through(turn, db):
     result = asyncio.run(turn.run(said, [block("set_timer", {"amount": 90, "unit": "minutes"})],
                                   intent=Intent("timer", "timer", "an hour and a half")))
     assert "Nothing was changed" not in result.text
+
+
+# ── E7: a compact clock time is understood ──
+
+@pytest.mark.parametrize("timing", ["at 5pm", "at 5 pm", "at 5:30pm", "5pm"])
+def test_a_compact_clock_time_is_accepted(timing):
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    minute = 30 if ":30" in timing else 0
+    when = (now + timedelta(days=1)).replace(hour=17, minute=minute, second=0, microsecond=0)
+    assert task_intent._due_matches(when.isoformat(), timing, now)
+    assert not task_intent._due_matches(when.replace(hour=16).isoformat(), timing, now)
