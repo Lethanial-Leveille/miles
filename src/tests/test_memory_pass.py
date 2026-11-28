@@ -106,8 +106,9 @@ def test_switched_off_it_does_nothing(monkeypatch):
 def test_the_turn_starts_it_only_for_him():
     import inspect
     import brain
-    source = inspect.getsource(brain.ask_nova_async)
-    assert 'if tier == "hokage" and not ignored:' in source
+    # The turn body moved into _committed_turn. It also skips a cancelled turn.
+    source = inspect.getsource(brain._committed_turn)
+    assert 'if tier == "hokage" and not ignored' in source
     assert "memory_pass.notice_later(user_text" in source
 
 

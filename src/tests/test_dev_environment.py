@@ -18,6 +18,7 @@ import apple_keys
 import approvals
 from auth import AGENT_SCOPE, DEVICE_SCOPE, create_token
 import calendar_tools
+import database
 import deepgram_stt
 import evallo_tools
 import hevy_tools
@@ -50,10 +51,14 @@ def rejected(kind):
             attempt_log.pop()
 
 
+# Read from the migration list so the next migration does not break these.
+HEAD_SCHEMA = max(version for version, _ in database.MIGRATIONS)
+
+
 def test_early_app_import_used_the_guarded_worktree_state():
     state = runtime_profile.current()
     with closing(sqlite3.connect(state.db_path)) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(45,)]
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(HEAD_SCHEMA,)]
     assert os.environ["HOME"] == str(state.root)
     assert os.environ["MILES_MODE"] == "test"
     assert not ({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "ANTHROPIC_API_KEY",
@@ -69,7 +74,7 @@ def test_seed_is_repeatable_and_schema_is_file_backed(db):
     with closing(sqlite3.connect(db.DB_PATH)) as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone() == ("wal",)
         assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(45,)]
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(HEAD_SCHEMA,)]
         conn.execute("CREATE VIRTUAL TABLE fts_acceptance USING fts5(text)")
         for table in ("lists", "list_items", "tasks", "reminders", "sessions", "capture_keys", "capture_log"):
             assert conn.execute(f"SELECT count(*) FROM {table}").fetchone() == (1,)
