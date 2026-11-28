@@ -227,26 +227,6 @@ def no_change_gate(question=False):
     return IntentGate(others=True, question=question)
 
 
-# ── A claim of a change on a turn that changed nothing ──
-
-_DID = (r"added|archived|saved|set|marked|removed|deleted|created|cancell?ed|completed|checked off|crossed off|"
-        r"ticked off|skipped|scheduled|booked|logged|updated|renamed|stored|put|stopped tracking|noted|"
-        r"started (?:a|the|your) timer")
-_CLAIM = re.compile(
-    rf"\b(?:i|we)(?: have|'ve|'d)?\s+(?:(?:just|now|already|also|gone ahead and|went ahead and)\s+)*(?:{_DID})\b"
-    rf"|(?:^|[.!?]\s+)(?:{_DID.replace('|set|', '|')})\b"
-    r"|^(?:all )?(?:done|set)[.!]*$|\b(?:timer|reminder) (?:is )?set\b", re.I)
-
-
-def claims_a_change(text):
-    """True when a reply says, in first person past tense, that something was
-    done ("I added", "I've marked it done", "Done, I saved it"). Wide on purpose:
-    it is a safety net for a turn that ran nothing, and a miss is the same as
-    before it existed. A statement about his own past ("You finished reading
-    yesterday") or a state ("Reading is done") is not a claim."""
-    return bool(_CLAIM.search((text or "").replace("\u2019", "'").strip()))
-
-
 def _refuse(text):
     return Verdict("refuse", f"Nothing was changed. {text}")
 
